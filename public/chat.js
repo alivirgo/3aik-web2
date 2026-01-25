@@ -1,178 +1,70 @@
 /**
- * LLM Chat App Frontend
- *
- * Handles the chat UI interactions and communication with the backend API.
+ * 3aikGPT Frontend Logic
+ * Supports streaming text + image generation
  */
 
-// DOM elements
 const chatMessages = document.getElementById("chat-messages");
 const userInput = document.getElementById("user-input");
 const sendButton = document.getElementById("send-button");
 const typingIndicator = document.getElementById("typing-indicator");
 
-// Chat state
 let chatHistory = [
 	{
 		role: "assistant",
 		content:
-			"Hello! I'm an AI assistant that can generate text and images. Use `image:` to create images.",
+			"Hello. I can generate text and images. Start image prompts with `image:`.",
 	},
 ];
+
 let isProcessing = false;
 
-// Detect image intent
 function isImagePrompt(text) {
-	return text.toLowerCase().startsWith("image:");
+	return text.trim().toLowerCase().startsWith("image:");
 }
 
-// Auto-resize textarea as user types
-userInput.addEventListener("input", function () {
-	this.style.height = "auto";
-	this.style.height = this.scrollHeight + "px";
+userInput.addEventListener("input", () => {
+	userInput.style.height = "auto";
+	userInput.style.height = userInput.scrollHeight + "px";
 });
 
-// Send message on Enter (without Shift)
-userInput.addEventListener("keydown", function (e) {
+userInput.addEventListener("keydown", (e) => {
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault();
 		sendMessage();
 	}
 });
 
-// Send button click handler
 sendButton.addEventListener("click", sendMessage);
 
-/**
- * Sends a message to the chat API and processes the response
- */
 async function sendMessage() {
 	const message = userInput.value.trim();
-	if (message === "" || isProcessing) return;
+	if (!message || isProcessing) return;
 
 	const imageMode = isImagePrompt(message);
 
-	// Disable input while processing
 	isProcessing = true;
 	userInput.disabled = true;
 	sendButton.disabled = true;
 
-	// Add user message
-	addMessageToChat("user", message);
-
-	// Clear input
+	addTextMessage("user", message);
 	userInput.value = "";
 	userInput.style.height = "auto";
 
-	// Show typing indicator
 	typingIndicator.classList.add("visible");
 
-	// Always add user message to chatHistory
 	chatHistory.push({ role: "user", content: message });
 
 	try {
-		// Image generation path
 		if (imageMode) {
-			const prompt = message.replace(/^image:\s*/i, "");
-			const response = await fetch("/api/image", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt }),
-			});
-
-			if (!response.ok) {
-				throw new Error("Image generation failed");
-			}
-
-			const result = await response.json();
-
-			if (!result.images || !result.images[0]) {
-				throw new Error("No image returned from API");
-			}
-
-			const img = document.createElement("img");
-			img.src = `data:image/png;base64,${result.images[0]}`;
-			img.style.maxWidth = "100%";
-			img.style.borderRadius = "8px";
-
-			const imgWrapper = document.createElement("div");
-			imgWrapper.className = "message assistant-message";
-			imgWrapper.appendChild(img);
-
-			chatMessages.appendChild(imgWrapper);
-			// Ensure scroll after DOM update
-			setTimeout(() => {
-				chatMessages.scrollTop = chatMessages.scrollHeight;
-			}, 50);
-
-			// Done processing image
-			typingIndicator.classList.remove("visible");
-			isProcessing = false;
-			userInput.disabled = false;
-			sendButton.disabled = false;
-			userInput.focus();
-			return;
+			await handleImageGeneration(message);
+		} else {
+			await handleTextGeneration();
 		}
-
-		// Text chat path (unchanged SSE logic)
-		const assistantMessageEl = document.createElement("div");
-		assistantMessageEl.className = "message assistant-message";
-		assistantMessageEl.innerHTML = "<p></p>";
-		chatMessages.appendChild(assistantMessageEl);
-		const assistantTextEl = assistantMessageEl.querySelector("p");
-
-		const response = await fetch("/api/chat", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ messages: chatHistory }),
-		});
-
-		if (!response.ok || !response.body) {
-			throw new Error("Chat request failed");
-		}
-
-		const reader = response.body.getReader();
-		const decoder = new TextDecoder();
-		let responseText = "";
-		let buffer = "";
-
-		const flush = () => {
-			assistantTextEl.textContent = responseText;
-			chatMessages.scrollTop = chatMessages.scrollHeight;
-		};
-
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-
-			buffer += decoder.decode(value, { stream: true });
-			const parsed = consumeSseEvents(buffer);
-			buffer = parsed.buffer;
-
-			for (const data of parsed.events) {
-				if (data === "[DONE]") break;
-				try {
-					const json = JSON.parse(data);
-					const content =
-						json.response ||
-						json.choices?.[0]?.delta?.content ||
-						json.content ||
-						"";
-					if (content) {
-						responseText += content;
-						flush();
-					}
-				} catch {}
-			}
-		}
-
-		if (responseText) {
-			chatHistory.push({ role: "assistant", content: responseText });
-		}
-	} catch (error) {
-		console.error(error);
-		addMessageToChat(
+	} catch (err) {
+		console.error(err);
+		addTextMessage(
 			"assistant",
-			"Sorry, something went wrong. Please try again.",
+			"An error occurred. Please try again.",
 		);
 	} finally {
 		typingIndicator.classList.remove("visible");
@@ -183,37 +75,128 @@ async function sendMessage() {
 	}
 }
 
-/**
- * Helper function to add message to chat
- */
-function addMessageToChat(role, content) {
-	const messageEl = document.createElement("div");
-	messageEl.className = `message ${role}-message`;
-	messageEl.innerHTML = `<p>${content}</p>`;
-	chatMessages.appendChild(messageEl);
-	setTimeout(() => {
-		chatMessages.scrollTop = chatMessages.scrollHeight;
-	}, 50);
+async function handleImageGeneration(message) {
+	const prompt = message.replace(/^image:\s*/i, "");
+
+	const res = await fetch("/api/image", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ prompt }),
+	});
+
+	if (!res.ok) throw new Error("Image API failed");
+
+	const data = await res.json();
+	if (!data.images || !data.images[0])
+		throw new Error("No image returned");
+
+	const wrapper = document.createElement("div");
+	wrapper.className = "message assistant-message";
+
+	const img = document.createElement("img");
+	img.src = `data:image/png;base64,${data.images[0]}`;
+	img.alt = prompt;
+
+	const caption = document.createElement("div");
+	caption.className = "image-caption";
+	caption.textContent = prompt;
+
+	wrapper.appendChild(img);
+	wrapper.appendChild(caption);
+	chatMessages.appendChild(wrapper);
+
+	scrollToBottom();
+
+	chatHistory.push({
+		role: "assistant",
+		content: `[Image generated: ${prompt}]`,
+	});
 }
 
-function consumeSseEvents(buffer) {
-	let normalized = buffer.replace(/\r/g, "");
-	const events = [];
-	let index;
+async function handleTextGeneration() {
+	const msgEl = document.createElement("div");
+	msgEl.className = "message assistant-message";
+	const p = document.createElement("p");
+	msgEl.appendChild(p);
+	chatMessages.appendChild(msgEl);
 
-	while ((index = normalized.indexOf("\n\n")) !== -1) {
-		const raw = normalized.slice(0, index);
-		normalized = normalized.slice(index + 2);
+	const res = await fetch("/api/chat", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ messages: chatHistory }),
+	});
 
-		const lines = raw.split("\n");
-		const dataLines = lines
-			.filter((l) => l.startsWith("data:"))
-			.map((l) => l.slice(5).trimStart());
+	if (!res.body) throw new Error("No response body");
 
-		if (dataLines.length) {
-			events.push(dataLines.join("\n"));
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+
+	let buffer = "";
+	let fullText = "";
+
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+
+		buffer += decoder.decode(value, { stream: true });
+		const parsed = consumeSseEvents(buffer);
+		buffer = parsed.buffer;
+
+		for (const event of parsed.events) {
+			if (event === "[DONE]") continue;
+			try {
+				const json = JSON.parse(event);
+				const delta =
+					json.response ||
+					json.choices?.[0]?.delta?.content ||
+					json.content ||
+					"";
+
+				if (delta) {
+					fullText += delta;
+					p.textContent = fullText;
+					scrollToBottom();
+				}
+			} catch {}
 		}
 	}
 
-	return { events, buffer: normalized };
+	if (fullText) {
+		chatHistory.push({ role: "assistant", content: fullText });
+	}
+}
+
+function addTextMessage(role, text) {
+	const el = document.createElement("div");
+	el.className = `message ${role}-message`;
+	el.textContent = text;
+	chatMessages.appendChild(el);
+	scrollToBottom();
+}
+
+function scrollToBottom() {
+	setTimeout(() => {
+		chatMessages.scrollTop = chatMessages.scrollHeight;
+	}, 30);
+}
+
+function consumeSseEvents(buffer) {
+	const events = [];
+	let index;
+
+	buffer = buffer.replace(/\r/g, "");
+
+	while ((index = buffer.indexOf("\n\n")) !== -1) {
+		const raw = buffer.slice(0, index);
+		buffer = buffer.slice(index + 2);
+
+		const lines = raw.split("\n");
+		const data = lines
+			.filter((l) => l.startsWith("data:"))
+			.map((l) => l.slice(5).trim());
+
+		if (data.length) events.push(data.join("\n"));
+	}
+
+	return { events, buffer };
 }
