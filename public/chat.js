@@ -66,19 +66,17 @@ async function sendMessage() {
 	// Show typing indicator
 	typingIndicator.classList.add("visible");
 
-	if (!imageMode) {
-		chatHistory.push({ role: "user", content: message });
-	}
+	// Always add user message to chatHistory
+	chatHistory.push({ role: "user", content: message });
 
 	try {
 		// Image generation path
 		if (imageMode) {
+			const prompt = message.replace(/^image:\s*/i, "");
 			const response = await fetch("/api/image", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					prompt: message.replace(/^image:\s*/i, ""),
-				}),
+				body: JSON.stringify({ prompt }),
 			});
 
 			if (!response.ok) {
@@ -86,6 +84,10 @@ async function sendMessage() {
 			}
 
 			const result = await response.json();
+
+			if (!result.images || !result.images[0]) {
+				throw new Error("No image returned from API");
+			}
 
 			const img = document.createElement("img");
 			img.src = `data:image/png;base64,${result.images[0]}`;
@@ -97,8 +99,17 @@ async function sendMessage() {
 			imgWrapper.appendChild(img);
 
 			chatMessages.appendChild(imgWrapper);
-			chatMessages.scrollTop = chatMessages.scrollHeight;
+			// Ensure scroll after DOM update
+			setTimeout(() => {
+				chatMessages.scrollTop = chatMessages.scrollHeight;
+			}, 50);
 
+			// Done processing image
+			typingIndicator.classList.remove("visible");
+			isProcessing = false;
+			userInput.disabled = false;
+			sendButton.disabled = false;
+			userInput.focus();
 			return;
 		}
 
@@ -144,6 +155,7 @@ async function sendMessage() {
 					const content =
 						json.response ||
 						json.choices?.[0]?.delta?.content ||
+						json.content ||
 						"";
 					if (content) {
 						responseText += content;
@@ -179,7 +191,9 @@ function addMessageToChat(role, content) {
 	messageEl.className = `message ${role}-message`;
 	messageEl.innerHTML = `<p>${content}</p>`;
 	chatMessages.appendChild(messageEl);
-	chatMessages.scrollTop = chatMessages.scrollHeight;
+	setTimeout(() => {
+		chatMessages.scrollTop = chatMessages.scrollHeight;
+	}, 50);
 }
 
 function consumeSseEvents(buffer) {
