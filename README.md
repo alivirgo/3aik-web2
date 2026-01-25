@@ -1,2 +1,2 @@
-3aikGPT
+3aikGPT at 3aik.com
 Provided by Ali.
