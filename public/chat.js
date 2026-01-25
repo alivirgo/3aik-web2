@@ -1,6 +1,6 @@
 /**
  * 3aikGPT Frontend Logic
- * Robust image + text handling
+ * Bulletproof image handling + debug visibility
  */
 
 const chatMessages = document.getElementById("chat-messages");
@@ -51,7 +51,6 @@ async function sendMessage() {
 	userInput.style.height = "auto";
 
 	typingIndicator.classList.add("visible");
-
 	chatHistory.push({ role: "user", content: message });
 
 	try {
@@ -61,11 +60,7 @@ async function sendMessage() {
 			await handleTextGeneration();
 		}
 	} catch (error) {
-		console.error(error);
-		addTextMessage(
-			"assistant",
-			error.message || "Image generation failed.",
-		);
+		addTextMessage("assistant", error.message);
 	} finally {
 		typingIndicator.classList.remove("visible");
 		isProcessing = false;
@@ -75,7 +70,7 @@ async function sendMessage() {
 	}
 }
 
-/* ---------- IMAGE HANDLING (FIXED) ---------- */
+/* ================= IMAGE HANDLING ================= */
 
 async function handleImageGeneration(message) {
 	const prompt = message.replace(/^image:\s*/i, "");
@@ -87,31 +82,34 @@ async function handleImageGeneration(message) {
 	});
 
 	const data = await res.json();
-	console.log("Image API response:", data);
+
+	console.log("RAW /api/image RESPONSE:", data);
 
 	if (!res.ok) {
-		throw new Error(data.error || "Image API request failed");
+		throw new Error(data?.error || "Image API request failed");
 	}
 
 	let imageSrc = null;
 
-	// Case 1: { images: ["base64"] }
+	// Known formats (expanded)
 	if (Array.isArray(data.images) && data.images[0]) {
 		imageSrc = `data:image/png;base64,${data.images[0]}`;
-	}
-
-	// Case 2: OpenAI-style { data: [{ b64_json }] }
-	else if (data.data?.[0]?.b64_json) {
+	} else if (data.image) {
+		imageSrc = `data:image/png;base64,${data.image}`;
+	} else if (data.output?.image) {
+		imageSrc = `data:image/png;base64,${data.output.image}`;
+	} else if (data.data?.[0]?.b64_json) {
 		imageSrc = `data:image/png;base64,${data.data[0].b64_json}`;
-	}
-
-	// Case 3: URL-based image
-	else if (data.data?.[0]?.url) {
+	} else if (data.data?.[0]?.url) {
 		imageSrc = data.data[0].url;
 	}
 
+	// 🚨 STILL NO IMAGE → SHOW DEBUG INFO IN CHAT
 	if (!imageSrc) {
-		throw new Error("No usable image returned by API");
+		addDebugMessage(data);
+		throw new Error(
+			"No image returned by backend. Check /api/image response format.",
+		);
 	}
 
 	const wrapper = document.createElement("div");
@@ -138,7 +136,7 @@ async function handleImageGeneration(message) {
 	});
 }
 
-/* ---------- TEXT STREAMING ---------- */
+/* ================= TEXT HANDLING ================= */
 
 async function handleTextGeneration() {
 	const msgEl = document.createElement("div");
@@ -193,7 +191,19 @@ async function handleTextGeneration() {
 	}
 }
 
-/* ---------- HELPERS ---------- */
+/* ================= DEBUG HELPERS ================= */
+
+function addDebugMessage(data) {
+	const el = document.createElement("div");
+	el.className = "message assistant-message";
+	el.innerHTML = `<strong>Image API Debug Output:</strong>\n<pre>${JSON.stringify(
+		data,
+		null,
+		2,
+	)}</pre>`;
+	chatMessages.appendChild(el);
+	scrollToBottom();
+}
 
 function addTextMessage(role, text) {
 	const el = document.createElement("div");
