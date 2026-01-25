@@ -9,8 +9,7 @@
  */
 import { Env, ChatMessage } from "./types";
 
-// Model ID for Workers AI model
-// https://developers.cloudflare.com/workers-ai/models/
+// Model ID for Workers AI Stable Diffusion XL Lightning
 const MODEL_ID = "@cf/bytedance/stable-diffusion-xl-lightning";
 
 // Default system prompt
@@ -67,20 +66,16 @@ async function handleChatRequest(
 			messages.unshift({ role: "system", content: SYSTEM_PROMPT });
 		}
 
+		// Run the Stable Diffusion model
 		const stream = await env.AI.run(
 			MODEL_ID,
 			{
-				messages,
-				max_tokens: 1024,
+				prompt: messages.map((m) => m.content).join("\n"),
+				// You can adjust these params for image generation
+				width: 1024,
+				height: 1024,
+				num_outputs: 1,
 				stream: true,
-			},
-			{
-				// Uncomment to use AI Gateway
-				// gateway: {
-				//   id: "YOUR_GATEWAY_ID", // Replace with your AI Gateway ID
-				//   skipCache: false,      // Set to true to bypass cache
-				//   cacheTtl: 3600,        // Cache time-to-live in seconds
-				// },
 			},
 		);
 
