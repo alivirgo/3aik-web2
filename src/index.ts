@@ -11,7 +11,7 @@ import { Env, ChatMessage } from "./types";
 
 // Models
 const TEXT_MODEL_ID = "@cf/meta/llama-4-scout-17b-16e-instruct";
-const IMAGE_MODEL_ID = "@cf/meta/llama-4-scout-17b-16e-instruct";
+const IMAGE_MODEL_ID = "@cf/stabilityai/stable-diffusion-xl-base-1.0";
 
 // System prompt for chat
 const SYSTEM_PROMPT =
