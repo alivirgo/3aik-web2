@@ -1,6 +1,6 @@
 /**
  * 3aikGPT Frontend Logic
- * Supports streaming text + image generation
+ * Robust image + text handling
  */
 
 const chatMessages = document.getElementById("chat-messages");
@@ -60,11 +60,11 @@ async function sendMessage() {
 		} else {
 			await handleTextGeneration();
 		}
-	} catch (err) {
-		console.error(err);
+	} catch (error) {
+		console.error(error);
 		addTextMessage(
 			"assistant",
-			"An error occurred. Please try again.",
+			error.message || "Image generation failed.",
 		);
 	} finally {
 		typingIndicator.classList.remove("visible");
@@ -75,6 +75,8 @@ async function sendMessage() {
 	}
 }
 
+/* ---------- IMAGE HANDLING (FIXED) ---------- */
+
 async function handleImageGeneration(message) {
 	const prompt = message.replace(/^image:\s*/i, "");
 
@@ -84,18 +86,41 @@ async function handleImageGeneration(message) {
 		body: JSON.stringify({ prompt }),
 	});
 
-	if (!res.ok) throw new Error("Image API failed");
-
 	const data = await res.json();
-	if (!data.images || !data.images[0])
-		throw new Error("No image returned");
+	console.log("Image API response:", data);
+
+	if (!res.ok) {
+		throw new Error(data.error || "Image API request failed");
+	}
+
+	let imageSrc = null;
+
+	// Case 1: { images: ["base64"] }
+	if (Array.isArray(data.images) && data.images[0]) {
+		imageSrc = `data:image/png;base64,${data.images[0]}`;
+	}
+
+	// Case 2: OpenAI-style { data: [{ b64_json }] }
+	else if (data.data?.[0]?.b64_json) {
+		imageSrc = `data:image/png;base64,${data.data[0].b64_json}`;
+	}
+
+	// Case 3: URL-based image
+	else if (data.data?.[0]?.url) {
+		imageSrc = data.data[0].url;
+	}
+
+	if (!imageSrc) {
+		throw new Error("No usable image returned by API");
+	}
 
 	const wrapper = document.createElement("div");
 	wrapper.className = "message assistant-message";
 
 	const img = document.createElement("img");
-	img.src = `data:image/png;base64,${data.images[0]}`;
+	img.src = imageSrc;
 	img.alt = prompt;
+	img.loading = "lazy";
 
 	const caption = document.createElement("div");
 	caption.className = "image-caption";
@@ -112,6 +137,8 @@ async function handleImageGeneration(message) {
 		content: `[Image generated: ${prompt}]`,
 	});
 }
+
+/* ---------- TEXT STREAMING ---------- */
 
 async function handleTextGeneration() {
 	const msgEl = document.createElement("div");
@@ -165,6 +192,8 @@ async function handleTextGeneration() {
 		chatHistory.push({ role: "assistant", content: fullText });
 	}
 }
+
+/* ---------- HELPERS ---------- */
 
 function addTextMessage(role, text) {
 	const el = document.createElement("div");
