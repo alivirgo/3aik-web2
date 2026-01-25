@@ -1,6 +1,6 @@
 /**
  * 3aikGPT Frontend Logic
- * Bulletproof image handling + debug visibility
+ * Clean version with image support
  */
 
 const chatMessages = document.getElementById("chat-messages");
@@ -12,7 +12,7 @@ let chatHistory = [
   {
     role: "assistant",
     content:
-      "Hello. I can generate text and images. Start image prompts with `image:`.",
+      "Hello! I can generate text and images. Use `image:` to create images.",
   },
 ];
 
@@ -22,11 +22,13 @@ function isImagePrompt(text) {
   return text.trim().toLowerCase().startsWith("image:");
 }
 
+// Auto-resize textarea
 userInput.addEventListener("input", () => {
   userInput.style.height = "auto";
   userInput.style.height = userInput.scrollHeight + "px";
 });
 
+// Send message on Enter (without Shift)
 userInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -34,6 +36,7 @@ userInput.addEventListener("keydown", (e) => {
   }
 });
 
+// Send button
 sendButton.addEventListener("click", sendMessage);
 
 async function sendMessage() {
@@ -59,9 +62,6 @@ async function sendMessage() {
     } else {
       await handleTextGeneration();
     }
-  } catch (error) {
-    // Show full backend error JSON in chat
-    addDebugMessage(error);
   } finally {
     typingIndicator.classList.remove("visible");
     isProcessing = false;
@@ -82,23 +82,15 @@ async function handleImageGeneration(message) {
     body: JSON.stringify({ prompt }),
   });
 
-  let data;
-  try {
-    data = await res.json();
-  } catch (err) {
-    addDebugMessage({ error: "Invalid JSON response from backend" });
-    throw err;
+  if (!res.ok) {
+    addTextMessage("assistant", "Image generation failed.");
+    return;
   }
 
-  // If backend returned an error, show it in chat
-  if (!res.ok || data.error) {
-    addDebugMessage(data);
-    throw new Error(data.error || "Image generation failed");
-  }
+  const data = await res.json();
 
   let imageSrc = null;
 
-  // Known formats
   if (Array.isArray(data.images) && data.images[0]) {
     imageSrc = `data:image/png;base64,${data.images[0]}`;
   } else if (data.image) {
@@ -112,8 +104,8 @@ async function handleImageGeneration(message) {
   }
 
   if (!imageSrc) {
-    addDebugMessage(data);
-    throw new Error("No usable image returned by backend");
+    addTextMessage("assistant", "No image returned by backend.");
+    return;
   }
 
   const wrapper = document.createElement("div");
@@ -155,7 +147,10 @@ async function handleTextGeneration() {
     body: JSON.stringify({ messages: chatHistory }),
   });
 
-  if (!res.body) throw new Error("No response body");
+  if (!res.body) {
+    addTextMessage("assistant", "No response from backend.");
+    return;
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -195,19 +190,7 @@ async function handleTextGeneration() {
   }
 }
 
-/* ================= DEBUG HELPERS ================= */
-
-function addDebugMessage(data) {
-  const el = document.createElement("div");
-  el.className = "message assistant-message";
-  el.innerHTML = `<strong>Backend Response / Error:</strong>\n<pre>${JSON.stringify(
-    data,
-    null,
-    2
-  )}</pre>`;
-  chatMessages.appendChild(el);
-  scrollToBottom();
-}
+/* ================= HELPERS ================= */
 
 function addTextMessage(role, text) {
   const el = document.createElement("div");
