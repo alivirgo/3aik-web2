@@ -1,25 +1,23 @@
 /**
- * LLM Chat Application Template
+ * AI Chat + Image Application (Cloudflare Workers AI)
  *
- * A simple chat application using Cloudflare Workers AI.
- * This template demonstrates how to implement an LLM-powered chat interface with
- * streaming responses using Server-Sent Events (SSE).
+ * Supports:
+ * - Text chat via LLaMA
+ * - Image generation via Stable Diffusion XL Lightning
  *
  * @license MIT
  */
 import { Env, ChatMessage } from "./types";
 
-// Model ID for Workers AI Stable Diffusion XL Lightning
-const MODEL_ID = "@cf/bytedance/stable-diffusion-xl-lightning";
+// Models
+const TEXT_MODEL_ID = "@cf/meta/llama-3.1-8b-instruct";
+const IMAGE_MODEL_ID = "@cf/bytedance/stable-diffusion-xl-lightning";
 
-// Default system prompt
+// System prompt for chat
 const SYSTEM_PROMPT =
-	"You are a helpful, friendly assistant. Provide concise and accurate responses.";
+	"You are a helpful, concise, and accurate assistant.";
 
 export default {
-	/**
-	 * Main request handler for the Worker
-	 */
 	async fetch(
 		request: Request,
 		env: Env,
@@ -27,57 +25,46 @@ export default {
 	): Promise<Response> {
 		const url = new URL(request.url);
 
-		// Handle static assets (frontend)
+		// Serve frontend
 		if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
 			return env.ASSETS.fetch(request);
 		}
 
-		// API Routes
-		if (url.pathname === "/api/chat") {
-			// Handle POST requests for chat
-			if (request.method === "POST") {
-				return handleChatRequest(request, env);
-			}
-
-			// Method not allowed for other request types
-			return new Response("Method not allowed", { status: 405 });
+		// Text chat
+		if (url.pathname === "/api/chat" && request.method === "POST") {
+			return handleChatRequest(request, env);
 		}
 
-		// Handle 404 for unmatched routes
+		// Image generation
+		if (url.pathname === "/api/image" && request.method === "POST") {
+			return handleImageRequest(request, env);
+		}
+
 		return new Response("Not found", { status: 404 });
 	},
 } satisfies ExportedHandler<Env>;
 
 /**
- * Handles chat API requests
+ * Text chat handler (LLaMA)
  */
 async function handleChatRequest(
 	request: Request,
 	env: Env,
 ): Promise<Response> {
 	try {
-		// Parse JSON request body
 		const { messages = [] } = (await request.json()) as {
 			messages: ChatMessage[];
 		};
 
-		// Add system prompt if not present
-		if (!messages.some((msg) => msg.role === "system")) {
+		if (!messages.some((m) => m.role === "system")) {
 			messages.unshift({ role: "system", content: SYSTEM_PROMPT });
 		}
 
-		// Run the Stable Diffusion model
-		const stream = await env.AI.run(
-			MODEL_ID,
-			{
-				prompt: messages.map((m) => m.content).join("\n"),
-				// You can adjust these params for image generation
-				width: 1024,
-				height: 1024,
-				num_outputs: 1,
-				stream: true,
-			},
-		);
+		const stream = await env.AI.run(TEXT_MODEL_ID, {
+			messages,
+			stream: true,
+			max_tokens: 1024,
+		});
 
 		return new Response(stream, {
 			headers: {
@@ -86,14 +73,40 @@ async function handleChatRequest(
 				connection: "keep-alive",
 			},
 		});
-	} catch (error) {
-		console.error("Error processing chat request:", error);
-		return new Response(
-			JSON.stringify({ error: "Failed to process request" }),
-			{
-				status: 500,
-				headers: { "content-type": "application/json" },
-			},
-		);
+	} catch (err) {
+		console.error(err);
+		return new Response("Chat failed", { status: 500 });
+	}
+}
+
+/**
+ * Image generation handler (Stable Diffusion)
+ */
+async function handleImageRequest(
+	request: Request,
+	env: Env,
+): Promise<Response> {
+	try {
+		const { prompt } = (await request.json()) as {
+			prompt: string;
+		};
+
+		if (!prompt) {
+			return new Response("Prompt required", { status: 400 });
+		}
+
+		const result = await env.AI.run(IMAGE_MODEL_ID, {
+			prompt,
+			width: 1024,
+			height: 1024,
+			num_outputs: 1,
+		});
+
+		return new Response(JSON.stringify(result), {
+			headers: { "content-type": "application/json" },
+		});
+	} catch (err) {
+		console.error(err);
+		return new Response("Image generation failed", { status: 500 });
 	}
 }
