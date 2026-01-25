@@ -10,7 +10,7 @@
 import { Env, ChatMessage } from "./types";
 
 // Models
-const TEXT_MODEL_ID = "@cf/meta/llama-3.1-8b-instruct";
+const TEXT_MODEL_ID = "@cf/openai/gpt-oss-120b";
 const IMAGE_MODEL_ID = "@cf/bytedance/stable-diffusion-xl-lightning";
 
 // System prompt for chat
