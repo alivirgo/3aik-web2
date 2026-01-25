@@ -81,18 +81,20 @@ async function handleChatRequest(
 
 /**
  * Image generation handler (Stable Diffusion)
+ * ✅ Fixed to return base64 in a stable JSON shape
  */
 async function handleImageRequest(
 	request: Request,
 	env: Env,
 ): Promise<Response> {
 	try {
-		const { prompt } = (await request.json()) as {
-			prompt: string;
-		};
+		const { prompt } = (await request.json()) as { prompt: string };
 
 		if (!prompt) {
-			return new Response("Prompt required", { status: 400 });
+			return new Response(
+				JSON.stringify({ error: "Prompt required" }),
+				{ status: 400, headers: { "content-type": "application/json" } },
+			);
 		}
 
 		const result = await env.AI.run(IMAGE_MODEL_ID, {
@@ -102,11 +104,51 @@ async function handleImageRequest(
 			num_outputs: 1,
 		});
 
-		return new Response(JSON.stringify(result), {
-			headers: { "content-type": "application/json" },
-		});
+		/**
+		 * Cloudflare Workers AI may return:
+		 * - { image: Uint8Array }
+		 * - { images: Uint8Array[] }
+		 * - { result: { image: Uint8Array } }
+		 */
+
+		let base64Image: string | null = null;
+
+		// Case 1: result.image
+		if (result?.image instanceof Uint8Array) {
+			base64Image = btoa(String.fromCharCode(...result.image));
+		}
+
+		// Case 2: result.images[0]
+		else if (
+			Array.isArray(result?.images) &&
+			result.images[0] instanceof Uint8Array
+		) {
+			base64Image = btoa(String.fromCharCode(...result.images[0]));
+		}
+
+		// Case 3: result.result.image
+		else if (result?.result?.image instanceof Uint8Array) {
+			base64Image = btoa(String.fromCharCode(...result.result.image));
+		}
+
+		if (!base64Image) {
+			console.error("Unexpected image result:", result);
+			return new Response(
+				JSON.stringify({ error: "Image generation failed" }),
+				{ status: 500, headers: { "content-type": "application/json" } },
+			);
+		}
+
+		// ✅ Stable, frontend-friendly response
+		return new Response(
+			JSON.stringify({ images: [base64Image] }),
+			{ headers: { "content-type": "application/json" } },
+		);
 	} catch (err) {
 		console.error(err);
-		return new Response("Image generation failed", { status: 500 });
+		return new Response(
+			JSON.stringify({ error: "Image generation failed" }),
+			{ status: 500, headers: { "content-type": "application/json" } },
+		);
 	}
 }
