@@ -11,7 +11,7 @@ import { Env, ChatMessage } from "./types";
 
 // Models
 const TEXT_MODEL_ID = "@cf/openai/gpt-oss-120b";
-const IMAGE_MODEL_ID = "@cf/bytedance/stable-diffusion-xl-lightning";
+const IMAGE_MODEL_ID = "@cf/stabilityai/stable-diffusion-xl-base-1.0";
 
 // System prompt for chat
 const SYSTEM_PROMPT =
