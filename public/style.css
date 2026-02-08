@@ -179,6 +179,62 @@ body {
   margin-bottom: 20px;
 }
 
+.search-toggle-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--btn-radius);
+}
+
+/* Switch Styling */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider-round {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: hsla(210, 15%, 25%, 0.8);
+  transition: .4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  border-radius: 24px;
+}
+
+.slider-round:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  border-radius: 50%;
+}
+
+input:checked+.slider-round {
+  background: var(--primary-gradient);
+}
+
+input:checked+.slider-round:before {
+  transform: translateX(20px);
+}
+
 .section-label {
   font-size: 10px;
   color: var(--text-muted);
@@ -472,6 +528,19 @@ body {
 
 .msg-text li {
   margin-bottom: 6px;
+}
+
+/* Citations Styling */
+.msg-text a[href*="http"],
+.citation-bracket {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.85em;
+  background: hsla(245, 90%, 65%, 0.1);
+  padding: 1px 4px;
+  border-radius: 4px;
+  margin: 0 2px;
 }
 
 .msg-text code {

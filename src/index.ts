@@ -27,7 +27,8 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/google/gemma-3-12b-it",
   "@cf/meta/llama-4-scout-17b-16e-instruct",
   "pollinations-chat",
-  "pollinations-code"
+  "pollinations-code",
+  "gemini-search"
 ];
 
 const ALLOWED_IMAGE_MODELS = [
@@ -92,17 +93,24 @@ async function handleChatRequest(
       model = DEFAULT_TEXT_MODEL,
       temperature = 0.7,
       max_tokens = 1024,
-      systemPrompt = ""
+      systemPrompt = "",
+      search = false
     } = (await request.json()) as {
       messages: ChatMessage[],
       model?: string,
       temperature?: number,
       max_tokens?: number,
-      systemPrompt?: string
+      systemPrompt?: string,
+      search?: boolean
     };
 
     // Safety check for model ID
-    const modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
+    let modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
+
+    // Handle Search Feature (Out of the box: Override to specialized search model)
+    if (search) {
+      modelToUse = "gemini-search";
+    }
 
     // Sanitize messages: only keep role and content to prevent token bloating from metadata
     const sanitizedMessages = messages.map(m => ({
@@ -117,8 +125,10 @@ async function handleChatRequest(
     console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
 
     // Pollinations Chat Logic
-    if (modelToUse.startsWith("pollinations-")) {
-      const pModel = modelToUse === "pollinations-code" ? "qwen-coder" : "openai";
+    if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
+      let pModel = "openai";
+      if (modelToUse === "pollinations-code") pModel = "qwen-coder";
+      if (modelToUse === "gemini-search") pModel = "searchgpt"; // Optimized for search
       const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: {
