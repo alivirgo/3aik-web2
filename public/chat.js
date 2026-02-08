@@ -1,228 +1,214 @@
-/**
- * 3aikGPT Frontend Logic
- * Clean version with image support
- */
+const messagesEl = document.getElementById("messages");
+const promptInput = document.getElementById("prompt-input");
+const sendBtn = document.getElementById("send");
+const imageModeBtn = document.getElementById("image-mode");
+const textModeBtn = document.getElementById("text-mode");
+const modelSelect = document.getElementById("model-select");
+const newConvoBtn = document.getElementById("new-convo");
+const imageSize = document.getElementById("image-size");
 
-const chatMessages = document.getElementById("chat-messages");
-const userInput = document.getElementById("user-input");
-const sendButton = document.getElementById("send-button");
-const typingIndicator = document.getElementById("typing-indicator");
+let conversation = [{ role: "assistant", content: "Welcome — try a prompt." }];
+let mode = "text"; // or 'image'
+let processing = false;
 
-let chatHistory = [
-  {
-    role: "assistant",
-    content:
-      "Hello! I can generate text and images. Use `image:` to create images.",
-  },
-];
-
-let isProcessing = false;
-
-function isImagePrompt(text) {
-  return text.trim().toLowerCase().startsWith("image:");
+function setMode(m) {
+  mode = m;
+  if (m === "image") {
+    imageModeBtn.classList.add("active");
+    textModeBtn.classList.remove("active");
+  } else {
+    textModeBtn.classList.add("active");
+    imageModeBtn.classList.remove("active");
+  }
 }
 
-// Auto-resize textarea
-userInput.addEventListener("input", () => {
-  userInput.style.height = "auto";
-  userInput.style.height = userInput.scrollHeight + "px";
+imageModeBtn.addEventListener("click", () => setMode("image"));
+textModeBtn.addEventListener("click", () => setMode("text"));
+newConvoBtn.addEventListener("click", () => {
+  conversation = [];
+  messagesEl.innerHTML = "";
+  appendAssistant("New conversation started.");
 });
 
-// Send message on Enter (without Shift)
-userInput.addEventListener("keydown", (e) => {
+sendBtn.addEventListener("click", () => {
+  void onSend();
+});
+
+promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    sendMessage();
+    void onSend();
   }
 });
 
-// Send button
-sendButton.addEventListener("click", sendMessage);
+function appendUser(text) {
+  const el = document.createElement("div");
+  el.className = "msg user";
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollBottom();
+}
 
-async function sendMessage() {
-  const message = userInput.value.trim();
-  if (!message || isProcessing) return;
+function appendAssistant(text) {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollBottom();
+}
 
-  const imageMode = isImagePrompt(message);
+function appendImage(b64, mime, caption) {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  const img = document.createElement("img");
+  img.src = `data:${mime};base64,${b64}`;
+  img.alt = caption || "generated image";
+  el.appendChild(img);
+  if (caption) {
+    const c = document.createElement("div");
+    c.style.opacity = "0.7";
+    c.style.marginTop = "6px";
+    c.textContent = caption;
+    el.appendChild(c);
+  }
 
-  isProcessing = true;
-  userInput.disabled = true;
-  sendButton.disabled = true;
+  // download button
+  const dl = document.createElement("button");
+  dl.textContent = "Download";
+  dl.style.marginTop = "8px";
+  dl.style.padding = "6px 8px";
+  dl.style.borderRadius = "6px";
+  dl.style.border = "none";
+  dl.style.cursor = "pointer";
+  dl.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = img.src;
+    a.download = "3aik-image.png";
+    a.click();
+  });
+  el.appendChild(dl);
 
-  addTextMessage("user", message);
-  userInput.value = "";
-  userInput.style.height = "auto";
+  messagesEl.appendChild(el);
+  scrollBottom();
+}
 
-  typingIndicator.classList.add("visible");
-  chatHistory.push({ role: "user", content: message });
+function scrollBottom() {
+  setTimeout(() => (messagesEl.scrollTop = messagesEl.scrollHeight), 50);
+}
+
+async function onSend() {
+  const prompt = promptInput.value.trim();
+  if (!prompt || processing) return;
+  processing = true;
+  promptInput.disabled = true;
+  sendBtn.disabled = true;
+
+  appendUser(prompt);
+  conversation.push({ role: "user", content: prompt });
+  promptInput.value = "";
 
   try {
-    if (imageMode) {
-      await handleImageGeneration(message);
+    if (mode === "image") {
+      await generateImage(prompt);
     } else {
-      await handleTextGeneration();
+      await generateText();
     }
+  } catch (e) {
+    appendAssistant("Error: " + (e instanceof Error ? e.message : String(e)));
   } finally {
-    typingIndicator.classList.remove("visible");
-    isProcessing = false;
-    userInput.disabled = false;
-    sendButton.disabled = false;
-    userInput.focus();
+    processing = false;
+    promptInput.disabled = false;
+    sendBtn.disabled = false;
+    promptInput.focus();
   }
 }
 
-/* ================= IMAGE HANDLING ================= */
-
-async function handleImageGeneration(message) {
-  const prompt = message.replace(/^image:\s*/i, "");
-
+async function generateImage(prompt) {
+  const size = parseInt(imageSize.value || "1024", 10);
   const res = await fetch("/api/image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, size }),
   });
-
   if (!res.ok) {
-    addTextMessage("assistant", "Image generation failed.");
+    appendAssistant("Image generation failed.");
     return;
   }
-
   const data = await res.json();
-
-  let imageSrc = null;
-
-  if (Array.isArray(data.images) && data.images[0]) {
-    imageSrc = `data:image/png;base64,${data.images[0]}`;
-  } else if (data.image) {
-    imageSrc = `data:image/png;base64,${data.image}`;
-  } else if (data.output?.image) {
-    imageSrc = `data:image/png;base64,${data.output.image}`;
-  } else if (data.data?.[0]?.b64_json) {
-    imageSrc = `data:image/png;base64,${data.data[0].b64_json}`;
-  } else if (data.data?.[0]?.url) {
-    imageSrc = data.data[0].url;
-  }
-
-  if (!imageSrc) {
-    addTextMessage("assistant", "No image returned by backend.");
+  if (!Array.isArray(data.images) || !data.images.length) {
+    appendAssistant("No image returned by backend.");
     return;
   }
-
-  const wrapper = document.createElement("div");
-  wrapper.className = "message assistant-message";
-
-  const img = document.createElement("img");
-  img.src = imageSrc;
-  img.alt = prompt;
-  img.loading = "lazy";
-
-  const caption = document.createElement("div");
-  caption.className = "image-caption";
-  caption.textContent = prompt;
-
-  wrapper.appendChild(img);
-  wrapper.appendChild(caption);
-  chatMessages.appendChild(wrapper);
-
-  scrollToBottom();
-
-  chatHistory.push({
-    role: "assistant",
-    content: `[Image generated: ${prompt}]`,
-  });
+  for (const img of data.images) {
+    appendImage(img.b64, img.mime || "image/png", prompt);
+  }
+  conversation.push({ role: "assistant", content: `[Image generated: ${prompt}]` });
 }
 
-/* ================= TEXT HANDLING ================= */
-
-async function handleTextGeneration() {
-  const msgEl = document.createElement("div");
-  msgEl.className = "message assistant-message";
-  const p = document.createElement("p");
-  msgEl.appendChild(p);
-  chatMessages.appendChild(msgEl);
+async function generateText() {
+  const placeholder = document.createElement("div");
+  placeholder.className = "msg assistant";
+  const p = document.createElement("div");
+  p.textContent = "...";
+  placeholder.appendChild(p);
+  messagesEl.appendChild(placeholder);
+  scrollBottom();
 
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: chatHistory }),
+    body: JSON.stringify({ messages: conversation }),
   });
 
+  if (!res.ok) {
+    p.textContent = "No response from backend.";
+    return;
+  }
+
   if (!res.body) {
-    addTextMessage("assistant", "No response from backend.");
+    p.textContent = await res.text();
     return;
   }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-
-  let buffer = "";
-  let fullText = "";
+  let buf = "";
+  let full = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const parsed = consumeSseEvents(buffer);
-    buffer = parsed.buffer;
-
-    for (const event of parsed.events) {
-      if (event === "[DONE]") continue;
+    buf += decoder.decode(value, { stream: true });
+    const parsed = parseSSE(buf);
+    buf = parsed.buffer;
+    for (const ev of parsed.events) {
+      if (ev === "[DONE]") continue;
       try {
-        const json = JSON.parse(event);
-        const delta =
-          json.response ||
-          json.choices?.[0]?.delta?.content ||
-          json.content ||
-          "";
-
+        const j = JSON.parse(ev);
+        const delta = j.response || j.choices?.[0]?.delta?.content || j.content || "";
         if (delta) {
-          fullText += delta;
-          p.textContent = fullText;
-          scrollToBottom();
+          full += delta;
+          p.textContent = full;
+          scrollBottom();
         }
-      } catch {}
+      } catch (e) {
+        // ignore parse
+      }
     }
   }
 
-  if (fullText) {
-    chatHistory.push({ role: "assistant", content: fullText });
-  }
+  conversation.push({ role: "assistant", content: full });
 }
 
-/* ================= HELPERS ================= */
-
-function addTextMessage(role, text) {
-  const el = document.createElement("div");
-  el.className = `message ${role}-message`;
-  el.textContent = text;
-  chatMessages.appendChild(el);
-  scrollToBottom();
-}
-
-function scrollToBottom() {
-  setTimeout(() => {
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  }, 30);
-}
-
-function consumeSseEvents(buffer) {
+function parseSSE(buffer) {
   const events = [];
-  let index;
-
   buffer = buffer.replace(/\r/g, "");
-
-  while ((index = buffer.indexOf("\n\n")) !== -1) {
-    const raw = buffer.slice(0, index);
-    buffer = buffer.slice(index + 2);
-
+  let idx;
+  while ((idx = buffer.indexOf("\n\n")) !== -1) {
+    const raw = buffer.slice(0, idx);
+    buffer = buffer.slice(idx + 2);
     const lines = raw.split("\n");
-    const data = lines
-      .filter((l) => l.startsWith("data:"))
-      .map((l) => l.slice(5).trim());
-
+    const data = lines.filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim());
     if (data.length) events.push(data.join("\n"));
   }
-
   return { events, buffer };
-}

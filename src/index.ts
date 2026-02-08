@@ -100,22 +100,54 @@ async function handleImageRequest(
       width: 1024,
       height: 1024,
       num_outputs: 1,
-      guidance_scale: 7.5,       // Optional but recommended
-      num_inference_steps: 30,   // Optional but recommended
+      guidance_scale: 7.5,
+      num_inference_steps: 30,
     });
 
-    // Convert returned binary to base64
-    let base64Image: string | null = null;
-
-    if (result?.image instanceof Uint8Array) {
-      base64Image = btoa(String.fromCharCode(...result.image));
-    } else if (Array.isArray(result?.images) && result.images[0] instanceof Uint8Array) {
-      base64Image = btoa(String.fromCharCode(...result.images[0]));
-    } else if (result?.result?.image instanceof Uint8Array) {
-      base64Image = btoa(String.fromCharCode(...result.result.image));
+    // Helper: convert Uint8Array to base64 in chunks
+    function uint8ToBase64(u8) {
+      if (!(u8 instanceof Uint8Array)) return null;
+      const CHUNK_SIZE = 0x8000;
+      let index = 0;
+      let result = "";
+      while (index < u8.length) {
+        const slice = u8.subarray(index, Math.min(index + CHUNK_SIZE, u8.length));
+        result += String.fromCharCode.apply(null, slice);
+        index += CHUNK_SIZE;
+      }
+      return btoa(result);
     }
 
-    if (!base64Image) {
+    // Normalize many possible return shapes from Workers AI
+    const images = [];
+
+    // Direct Uint8Array
+    if (result?.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(result.image) });
+    if (Array.isArray(result?.images)) {
+      for (const img of result.images) {
+        if (img instanceof Uint8Array) images.push({ b64: uint8ToBase64(img) });
+      }
+    }
+
+    // Common AI output shapes
+    const maybeOutputs = result?.output || result?.outputs || result?.result || result?.outputs?.[0] || null;
+
+    if (Array.isArray(maybeOutputs)) {
+      for (const out of maybeOutputs) {
+        if (typeof out?.b64_json === "string") images.push({ b64: out.b64_json });
+        if (out?.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(out.image) });
+      }
+    } else if (maybeOutputs && typeof maybeOutputs === "object") {
+      if (typeof maybeOutputs.b64_json === "string") images.push({ b64: maybeOutputs.b64_json });
+      if (maybeOutputs.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(maybeOutputs.image));
+    }
+
+    // Fallback: if result contains base64 string fields
+    if (!images.length && typeof result?.b64_json === "string") images.push({ b64: result.b64_json });
+
+    // Validate and respond
+    const valid = images.filter((i) => i?.b64);
+    if (!valid.length) {
       console.error("Unexpected image result:", result);
       return new Response(
         JSON.stringify({ error: "Image generation failed" }),
@@ -123,11 +155,10 @@ async function handleImageRequest(
       );
     }
 
-    // Return stable JSON
-    return new Response(
-      JSON.stringify({ images: [base64Image] }),
-      { headers: { "content-type": "application/json" } }
-    );
+    // Return standardized JSON: images array of objects { b64, mime }
+    return new Response(JSON.stringify({ images: valid.map((i) => ({ b64: i.b64, mime: "image/png" })) }), {
+      headers: { "content-type": "application/json" },
+    });
   } catch (err) {
     console.error(err);
     return new Response(
