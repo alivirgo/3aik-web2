@@ -20,7 +20,7 @@ const videoModelSelect = document.getElementById("video-model-select");
 const gifModelSelect = document.getElementById("gif-model-select");
 const codingModelSelect = document.getElementById("coding-model-select");
 const modelSeoInfo = document.getElementById("model-seo-info");
-const textModelSection = document.querySelector(".sidebar-section:not(#image-model-section):not(#video-model-section):not(#gif-model-section):not(#coding-model-section)");
+const textModelSection = document.getElementById("text-model-section");
 const closeModalBtn = document.getElementById("close-modal");
 const saveSettingsBtn = document.getElementById("save-settings-btn");
 const systemPromptInput = document.getElementById("system-prompt");
@@ -75,11 +75,13 @@ marked.setOptions({
 });
 
 function updateModelSEOInfo() {
-  let selectedModel = modelSelect.value;
-  if (currentMode === "image") selectedModel = imageModelSelect.value;
-  if (currentMode === "video") selectedModel = videoModelSelect.value;
-  if (currentMode === "gif") selectedModel = gifModelSelect.value;
-  if (currentMode === "coding") selectedModel = codingModelSelect.value;
+  if (!modelSeoInfo) return;
+
+  let selectedModel = (modelSelect && modelSelect.value) || "";
+  if (currentMode === "image" && imageModelSelect) selectedModel = imageModelSelect.value;
+  if (currentMode === "video" && videoModelSelect) selectedModel = videoModelSelect.value;
+  if (currentMode === "gif" && gifModelSelect) selectedModel = gifModelSelect.value;
+  if (currentMode === "coding" && codingModelSelect) selectedModel = codingModelSelect.value;
 
   const info = MODEL_INFO[selectedModel] || "3aikGPT: Advanced AI Studio for text, image, video, and code generation.";
   modelSeoInfo.textContent = info;
@@ -89,68 +91,102 @@ function updateModelSEOInfo() {
 }
 
 function init() {
-  loadSettings();
-  setupEventListeners();
-  updateModeUI();
-  updateModelSEOInfo();
-  loadConversationHistory();
+  try {
+    loadSettings();
+    setupEventListeners();
+    updateModeUI();
+    updateModelSEOInfo();
+    loadConversationHistory();
+  } catch (err) {
+    console.error("Initialization failed:", err);
+    // Safe attempt to show error to user
+    const errorBanner = document.createElement("div");
+    errorBanner.style.cssText = "position:fixed;top:0;left:0;width:100%;background:red;color:white;padding:10px;z-index:9999;text-align:center;font-size:12px;";
+    errorBanner.textContent = "Application Error: Please check console or contact support. " + err.message;
+    document.body.appendChild(errorBanner);
+  }
 }
 
 function setupEventListeners() {
   // Mode buttons
-  navButtons.forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const mode = e.currentTarget.dataset.mode;
-      setMode(mode);
+  if (navButtons) {
+    navButtons.forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const mode = e.currentTarget.dataset.mode;
+        setMode(mode);
+      });
     });
-  });
+  }
 
   // Send button and input
-  sendBtn.addEventListener("click", handleSend);
-  promptInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  });
+  if (sendBtn) sendBtn.addEventListener("click", handleSend);
+  if (promptInput) {
+    promptInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    });
+  }
 
   // Clear history
-  clearBtn.addEventListener("click", clearHistory);
+  if (clearBtn) clearBtn.addEventListener("click", clearHistory);
 
   // Settings
-  settingsBtn.addEventListener("click", () => {
-    settingsModal.style.display = "flex";
-  });
-  closeModalBtn.addEventListener("click", () => {
-    settingsModal.style.display = "none";
-  });
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", () => {
+      if (settingsModal) settingsModal.style.display = "flex";
+    });
+  }
+  if (closeModalBtn) {
+    closeModalBtn.addEventListener("click", () => {
+      if (settingsModal) settingsModal.style.display = "none";
+    });
+  }
 
   // Image size selector
-  imageSize.addEventListener("change", saveSettings);
+  if (imageSize) imageSize.addEventListener("change", saveSettings);
 
   // Model selectors
-  modelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
-  imageModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
-  videoModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
-  gifModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
-  codingModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
+  const selectors = [
+    { el: modelSelect, trigger: true },
+    { el: imageModelSelect, trigger: true },
+    { el: videoModelSelect, trigger: true },
+    { el: gifModelSelect, trigger: true },
+    { el: codingModelSelect, trigger: true }
+  ];
 
-  // Settings modal controls
-  saveSettingsBtn.addEventListener("click", () => {
-    saveSettings();
-    settingsModal.style.display = "none";
-  });
-
-  temperatureInput.addEventListener("input", (e) => {
-    tempValueDisplay.textContent = e.target.value;
-  });
-
-  // Close modal on background click
-  settingsModal.addEventListener("click", (e) => {
-    if (e.target === settingsModal) {
-      settingsModal.style.display = "none";
+  selectors.forEach(sel => {
+    if (sel.el) {
+      sel.el.addEventListener("change", () => {
+        saveSettings();
+        if (sel.trigger) updateModelSEOInfo();
+      });
     }
   });
+
+  // Settings modal controls
+  if (saveSettingsBtn) {
+    saveSettingsBtn.addEventListener("click", () => {
+      saveSettings();
+      if (settingsModal) settingsModal.style.display = "none";
+    });
+  }
+
+  if (temperatureInput) {
+    temperatureInput.addEventListener("input", (e) => {
+      if (tempValueDisplay) tempValueDisplay.textContent = e.target.value;
+    });
+  }
+
+  // Close modal on background click
+  if (settingsModal) {
+    settingsModal.addEventListener("click", (e) => {
+      if (e.target === settingsModal) {
+        settingsModal.style.display = "none";
+      }
+    });
+  }
 }
 
 function setMode(mode) {
@@ -167,8 +203,10 @@ function setMode(mode) {
 
 function updateModeUI() {
   const allSections = [textModelSection, imageModelSection, videoModelSection, gifModelSection, codingModelSection];
-  allSections.forEach(s => s.style.display = "none");
-  inputOptions.style.display = "none";
+  allSections.forEach(s => {
+    if (s) s.style.display = "none";
+  });
+  if (inputOptions) inputOptions.style.display = "none";
 
   if (currentMode === "image") {
     modeTitle.textContent = "Image Generation";
