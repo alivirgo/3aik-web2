@@ -1,10 +1,12 @@
 // DOM Elements
 const messagesEl = document.getElementById("messages");
+const messagesContainer = document.querySelector(".messages-container");
 const promptInput = document.getElementById("prompt-input");
 const btnSend = document.getElementById("send-btn");
 const modelSelect = document.getElementById("model-select");
 const imageModelSelect = document.getElementById("image-model-select");
 const codingModelSelect = document.getElementById("coding-model-select");
+const videoModelSelect = document.getElementById("video-model-select");
 const systemPromptInput = document.getElementById("system-prompt");
 const temperatureInput = document.getElementById("temperature");
 const maxTokensInput = document.getElementById("max-tokens");
@@ -20,6 +22,7 @@ const saveSettingsBtn = document.getElementById("save-settings-btn");
 // State
 let conversation = [];
 let currentMode = "text"; // text, image, video, gif, coding
+let isAutoScrollEnabled = true;
 
 const MODEL_INFO = {
   // Text Models
@@ -53,11 +56,27 @@ const MODEL_INFO = {
 };
 
 /**
- * UI: Scroll chat to bottom
+ * UI: Scroll chat to bottom with improved reliability
  */
-function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+function scrollToBottom(force = false) {
+  if (!isAutoScrollEnabled && !force) return;
+
+  // Use requestAnimationFrame to ensure DOM is updated
+  requestAnimationFrame(() => {
+    messagesContainer.scrollTo({
+      top: messagesContainer.scrollHeight,
+      behavior: force ? "auto" : "smooth"
+    });
+  });
 }
+
+// User scroll detection to toggle auto-scroll
+messagesContainer.addEventListener("scroll", () => {
+  const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+  // If user scrolls up significantly, disable auto-scroll
+  const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+  isAutoScrollEnabled = isAtBottom;
+});
 
 /**
  * UI: Render a text message
@@ -88,7 +107,10 @@ function addTextMessage(role, content) {
     const header = document.createElement("div");
     header.className = "reasoning-header";
     header.textContent = "Thought Process";
-    header.onclick = () => reasoningBlock.classList.toggle("collapsed");
+    header.onclick = () => {
+      reasoningBlock.classList.toggle("collapsed");
+      scrollToBottom();
+    };
 
     const reasoningContent = document.createElement("div");
     reasoningContent.className = "reasoning-content";
@@ -107,7 +129,9 @@ function addTextMessage(role, content) {
   el.appendChild(avatar);
   el.appendChild(contentEl);
   messagesEl.appendChild(el);
-  scrollToBottom();
+
+  // Wait for animations/rendering before scrolling
+  setTimeout(() => scrollToBottom(), 50);
   return textEl;
 }
 
@@ -134,6 +158,7 @@ function addMediaMessage(mediaSrc, caption, type = "image") {
     mediaEl.loop = true;
     mediaEl.muted = true;
     mediaEl.playsInline = true;
+    mediaEl.onloadedmetadata = () => scrollToBottom(true);
 
     const source = document.createElement("source");
     source.src = mediaSrc;
@@ -145,6 +170,7 @@ function addMediaMessage(mediaSrc, caption, type = "image") {
     mediaEl.src = mediaSrc;
     mediaEl.alt = caption;
     mediaEl.loading = "lazy";
+    mediaEl.onload = () => scrollToBottom(true);
   }
 
   const captionEl = document.createElement("div");
@@ -169,7 +195,8 @@ function addMediaMessage(mediaSrc, caption, type = "image") {
   el.appendChild(avatar);
   el.appendChild(content);
   messagesEl.appendChild(el);
-  scrollToBottom();
+
+  scrollToBottom(true);
 }
 
 /**
@@ -186,6 +213,9 @@ async function generateText() {
 
   const textEl = addTextMessage("assistant", "...");
   let fullResponse = "";
+
+  // Enable auto-scroll for streaming
+  isAutoScrollEnabled = true;
 
   try {
     const isCoding = currentMode === "coding";
@@ -247,6 +277,8 @@ async function generateText() {
               displayResponse = "Thinking...";
             }
             textEl.innerHTML = marked.parse(displayResponse);
+
+            // Continuous auto-scroll during stream
             scrollToBottom();
           }
         } catch (e) {
@@ -263,6 +295,11 @@ async function generateText() {
   } catch (error) {
     console.error("[Chat] Error:", error);
     textEl.textContent = `Error: ${error.message}`;
+  } finally {
+    // Highlight any new code blocks
+    textEl.querySelectorAll('pre code').forEach((block) => {
+      hljs.highlightElement(block);
+    });
   }
 }
 
@@ -385,6 +422,7 @@ if (btnClear) {
           </div>
         </div>
       `;
+      scrollToBottom(true);
     }
   });
 }
@@ -418,5 +456,5 @@ if (menuToggle) {
 }
 
 // Initializations
-hljs.highlightAll();
-scrollToBottom();
+hljs.configure({ ignoreUnescapedHTML: true });
+scrollToBottom(true);
