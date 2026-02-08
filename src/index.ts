@@ -21,7 +21,9 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.2-3b-instruct",
   "@cf/qwen/qwen2.5-coder-32b-instruct",
   "@cf/openai/gpt-oss-120b",
-  "@cf/deepseek-ai/deepseek-coder-33b-instruct"
+  "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq",
+  "@cf/meta/llama-3.1-70b-instruct",
+  "@cf/qwen/qwq-32b-preview"
 ];
 
 const ALLOWED_IMAGE_MODELS = [
@@ -33,8 +35,11 @@ const ALLOWED_IMAGE_MODELS = [
   "pollinations-flux",
   "pollinations-any",
   "pollinations-dream",
+  "pollinations-pixart",
+  "pollinations-portrait",
   "video-seedance",
   "video-veo",
+  "video-grok-video",
   "gif-animate"
 ];
 
@@ -191,27 +196,43 @@ async function handleImageRequest(
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
+        // Try gen.pollinations.ai with model param for video/animation
         pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
       } else if (modelToUse.startsWith("gif-")) {
         pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
       }
 
       console.log(`[Media Gen] Fetching from endpoint: ${pUrl}`);
-      const pRes = await fetch(pUrl);
 
-      if (!pRes.ok) throw new Error(`${modelToUse} API failed: ${pRes.statusText}`);
+      // Add a 15-second timeout to prevent hangs
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
-      const buffer = await pRes.arrayBuffer();
-      const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      try {
+        const pRes = await fetch(pUrl, { signal: controller.signal });
+        clearTimeout(timeout);
 
-      // Determine mime type
-      let mime = "image/png";
-      if (modelToUse.startsWith("video-")) mime = "video/mp4";
-      if (modelToUse.startsWith("gif-")) mime = "image/gif";
+        if (!pRes.ok) throw new Error(`${modelToUse} API failed: ${pRes.status} ${pRes.statusText}`);
 
-      return new Response(JSON.stringify({ images: [{ b64, mime }] }), {
-        headers: { "content-type": "application/json" },
-      });
+        const buffer = await pRes.arrayBuffer();
+        if (buffer.byteLength < 100) throw new Error(`${modelToUse} returned invalid or empty data.`);
+
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+
+        // Determine mime type
+        let mime = "image/png";
+        if (modelToUse.startsWith("video-")) mime = "video/mp4";
+        if (modelToUse.startsWith("gif-")) mime = "image/gif";
+
+        return new Response(JSON.stringify({ images: [{ b64, mime }] }), {
+          headers: { "content-type": "application/json" },
+        });
+      } catch (e: any) {
+        if (e.name === 'AbortError') {
+          throw new Error(`${modelToUse} request timed out. Please try again.`);
+        }
+        throw e;
+      }
     }
 
     let lastError: Error | null = null;
@@ -247,10 +268,11 @@ async function handleImageRequest(
     function u8ToBase64(u8: any): string | undefined {
       if (!u8) return undefined;
       const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
+      // Use chunking to avoid stack limit errors on very large buffers (videos)
       let binary = "";
-      const len = bytes.byteLength;
-      for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
+      const CHUNK_SIZE = 8192;
+      for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK_SIZE)));
       }
       return btoa(binary);
     }

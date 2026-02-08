@@ -42,16 +42,20 @@ const MODEL_INFO = {
   "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": "DeepSeek R1 32B: Specialized reasoning model with advanced chain-of-thought capabilities.",
   "@cf/meta/llama-3.1-8b-instruct": "Llama 3.1 8B: Meta's versatile AI assistant for creative writing and daily tasks.",
   "@cf/meta/llama-3.2-3b-instruct": "Llama 3.2 3B: Lightweight and efficient AI for mobile-friendly quick chat interactions.",
-  "@cf/qwen/qwen2.5-coder-32b-instruct": "Qwen 2.5 Coder: Powerful Alibaba AI optimized for programming and technical analysis.",
+  "@cf/qwen/qwen2.5-coder-32b-instruct": "Qwen 2.5 Coder 32B: Powerful Alibaba AI optimized for programming and technical analysis.",
   "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text generation.",
+  "@cf/meta/llama-3.1-70b-instruct": "Llama 3.1 70B: High-capacity Meta AI for deep comprehension and creative writing.",
+  "@cf/qwen/qwq-32b-preview": "QwQ 32B: Experimental reasoning model specialized in solving complex math and logic puzzles.",
 
   // Coding Models
-  "@cf/deepseek-ai/deepseek-coder-33b-instruct": "DeepSeek Coder: State-of-the-art AI for bug fixing, code optimization, and software development.",
+  "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
 
   // Image Models
   "pollinations-flux": "Flux Pro AI: Generation of ultra-realistic 4K high-definition images with precision detail.",
   "pollinations-any": "Anime AI: specialized Stable Diffusion model for high-quality anime and digital art styles.",
   "pollinations-dream": "Dream Artist: Artistic AI model for creating stylized, imaginative, and surreal masterpieces.",
+  "pollinations-pixart": "PixArt 1024: Next-gen transformer-based image generation for high spatial accuracy.",
+  "pollinations-portrait": "Realistic Portrait: Specialized model for human features, skin textures, and cinematic lighting.",
   "@cf/bytedance/sdxl-lightning": "SDXL Lightning: Zero-latency high-speed image generator powered by Bytedance AI tech.",
   "@cf/black-forest-labs/flux-1-schnell": "Flux Schnell: Efficient high-fidelity image generation for rapid creative prototyping.",
   "@cf/leonardoai/phoenix-1.0": "Phoenix 1.0: Advanced AI for cinematic lighting and high-contrast professional photography.",
@@ -59,6 +63,7 @@ const MODEL_INFO = {
   // Video & GIF
   "video-seedance": "Seedance AI Video: Transform text into 10-second high-motion cinematic video clips instantly.",
   "video-veo": "Google Veo: Next-gen video generation for high-consistency character and scene movements.",
+  "video-grok-video": "Grok Video AI: Experimental X-powered video generation for high-fidelity social content.",
   "gif-animate": "AI GIF Maker: Create looping animated memes and digital reaction GIFs from text descriptions."
 };
 
