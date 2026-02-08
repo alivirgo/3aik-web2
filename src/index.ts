@@ -107,6 +107,8 @@ async function handleImageRequest(
     });
 
     console.log(`[Image Gen] AI result type:`, typeof aiResult);
+    console.log(`[Image Gen] AI result keys:`, Object.keys(aiResult as any));
+    console.log(`[Image Gen] Full result:`, JSON.stringify(aiResult, null, 2));
 
     // Cast to any to handle various response shapes from different AI models
     const result = aiResult as any;
