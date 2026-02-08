@@ -102,11 +102,17 @@ async function handleChatRequest(
     // Safety check for model ID
     const modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
 
-    if (!messages.some((m) => m.role === "system")) {
-      messages.unshift({ role: "system", content: systemPrompt || SYSTEM_PROMPT });
+    // Sanitize messages: only keep role and content to prevent token bloating from metadata
+    const sanitizedMessages = messages.map(m => ({
+      role: m.role,
+      content: m.content || ""
+    }));
+
+    if (!sanitizedMessages.some((m) => m.role === "system")) {
+      sanitizedMessages.unshift({ role: "system", content: systemPrompt || SYSTEM_PROMPT });
     }
 
-    console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens}`);
+    console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
 
     let stream: any;
     try {
@@ -115,7 +121,7 @@ async function handleChatRequest(
       const safeTokens = Math.max(1, Math.min(4000, max_tokens));
 
       stream = await env.AI.run(modelToUse as any, {
-        messages,
+        messages: sanitizedMessages,
         stream: true,
         max_tokens: safeTokens,
         temperature: safeTemp,
