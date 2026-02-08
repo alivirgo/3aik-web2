@@ -6,9 +6,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>3aikGPT — Text & image AI — no login required</title>
   <meta name="description"
-    content="3aikGPT. The best AI Studio for text and image generation. Experience Llama 3.3, DeepSeek R1, Qwen 2.5, Flux-1, and more. No login required. Fast and free AI chat and image studio." />
+    content="3aikGPT - All-in-one free AI Studio for Text, Image, Video, and Code. Experience Llama 3.3, DeepSeek, Qwen 2.5, Flux-1, and more. No login required." />
   <meta name="keywords"
-    content="3aikGPT, AI Studio, OpenAI, ChatGPT, GPT-4, Gemini, Google Gemini, Google AI Studio, Grok, xAI, Claude, Anthropic, DeepSeek, DeepSeek R1, Llama 3.3, Meta AI, Qwen, Flux, Stable Diffusion, Free AI Chat, No Login AI, Image Generation" />
+    content="3aikGPT, AI Studio, AI Video Generator, AI GIF Generator, AI Code Assistant, OpenAI, DeepSeek, Llama 3.3, Meta AI, Qwen, Flux, Free AI, No Login AI" />
   <meta name="author" content="Ali" />
 
   <!-- Open Graph / Facebook -->
@@ -48,9 +48,21 @@
           <span class="icon">💬</span>
           <span>Chat</span>
         </button>
+        <button class="nav-btn" data-mode="coding">
+          <span class="icon">💻</span>
+          <span>Coding</span>
+        </button>
         <button class="nav-btn" data-mode="image">
-          <span class="icon">🖼️</span>
-          <span>Image Gen</span>
+          <span class="icon">🎨</span>
+          <span>Image</span>
+        </button>
+        <button class="nav-btn" data-mode="video">
+          <span class="icon">🎬</span>
+          <span>Video</span>
+        </button>
+        <button class="nav-btn" data-mode="gif">
+          <span class="icon">🎞️</span>
+          <span>GIF</span>
         </button>
       </nav>
 
@@ -69,13 +81,35 @@
       <div class="sidebar-section" id="image-model-section" style="display: none;">
         <div class="section-label">Image Model</div>
         <select id="image-model-select" class="modern-select">
-          <option value="pollinations-flux" selected>Flux Pro (Ultra-HD Free)</option>
-          <option value="pollinations-any">Anime & Art (High Precision)</option>
-          <option value="pollinations-dream">Dream Artist (Stylized)</option>
-          <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning (Ultra Fast)</option>
-          <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell (CF)</option>
-          <option value="@cf/leonardoai/phoenix-1.0">Phoenix 1.0 (CF)</option>
-          <option value="@cf/stabilityai/stable-diffusion-3-large-turbo">SD3 Large Turbo</option>
+          <option value="pollinations-flux" selected>Flux Pro (Ultra-HD)</option>
+          <option value="pollinations-any">Anime & Art</option>
+          <option value="pollinations-dream">Dream Artist</option>
+          <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning</option>
+          <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell</option>
+          <option value="@cf/leonardoai/phoenix-1.0">Phoenix 1.0</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section" id="video-model-section" style="display: none;">
+        <div class="section-label">Video Model</div>
+        <select id="video-model-select" class="modern-select">
+          <option value="video-seedance" selected>Seedance (Dynamic)</option>
+          <option value="video-veo">Google Veo (Alpha)</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section" id="gif-model-section" style="display: none;">
+        <div class="section-label">GIF Model</div>
+        <select id="gif-model-select" class="modern-select">
+          <option value="gif-animate" selected>Animate (Text to GIF)</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section" id="coding-model-section" style="display: none;">
+        <div class="section-label">Coding Model</div>
+        <select id="coding-model-select" class="modern-select">
+          <option value="@cf/deepseek-ai/deepseek-coder-33b-instruct" selected>DeepSeek Coder</option>
+          <option value="@cf/qwen/qwen2.5-coder-32b-instruct">Qwen 2.5 Coder</option>
         </select>
       </div>
 

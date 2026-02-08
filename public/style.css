@@ -108,8 +108,8 @@ body {
 .nav-menu {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 30px;
+  gap: 6px;
+  margin-bottom: 25px;
 }
 
 .nav-btn {
@@ -367,17 +367,26 @@ body {
   margin-top: 4px;
 }
 
-.msg-image {
+.msg-image,
+.msg-video {
   max-width: 100%;
   border-radius: 12px;
   margin-top: 8px;
   cursor: pointer;
   transition: all 0.3s ease;
+  display: block;
 }
 
-.msg-image:hover {
+.msg-video {
+  width: 100%;
+  background: #000;
+  max-height: 480px;
+}
+
+.msg-image:hover,
+.msg-video:hover {
   box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
-  transform: scale(1.02);
+  transform: scale(1.01);
 }
 
 .msg-download {
