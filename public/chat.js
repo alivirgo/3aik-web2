@@ -48,6 +48,8 @@ const MODEL_INFO = {
   "@cf/qwen/qwq-32b-preview": "QwQ 32B: Experimental reasoning model specialized in solving complex math and logic puzzles.",
   "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's latest multimodal open model with high-performance reasoning.",
   "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient model for fast and accurate chat.",
+  "pollinations-chat": "Pollinations AI: Advanced multimodal chat powered by various state-of-the-art models.",
+  "pollinations-code": "Pollinations Coder: Specialized AI for high-quality code generation and technical problem solving.",
 
   // Coding Models
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
