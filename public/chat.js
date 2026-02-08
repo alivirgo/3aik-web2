@@ -46,6 +46,8 @@ const MODEL_INFO = {
   "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text generation.",
   "@cf/meta/llama-3.1-70b-instruct": "Llama 3.1 70B: High-capacity Meta AI for deep comprehension and creative writing.",
   "@cf/qwen/qwq-32b-preview": "QwQ 32B: Experimental reasoning model specialized in solving complex math and logic puzzles.",
+  "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's latest multimodal open model with high-performance reasoning.",
+  "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient model for fast and accurate chat.",
 
   // Coding Models
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
@@ -515,9 +517,17 @@ async function generateMedia(prompt) {
     if (mediaList.length === 0) throw new Error("No media returned by the backend.");
 
     const media = mediaList[0];
-    if (!media || !media.b64) throw new Error("Media data missing (b64 field empty).");
+    if (!media) throw new Error("Media data missing.");
 
-    const mediaSrc = `data:${media.mime || "image/png"};base64,${media.b64}`;
+    let mediaSrc = "";
+    if (media.url) {
+      mediaSrc = media.url;
+    } else if (media.b64) {
+      mediaSrc = `data:${media.mime || "image/png"};base64,${media.b64}`;
+    } else {
+      throw new Error("Invalid media response: neither URL nor Base64 found.");
+    }
+
     const type = currentMode === "video" ? "video" : (currentMode === "gif" ? "gif" : "image");
 
     addMediaMessage(mediaSrc, prompt, type);
