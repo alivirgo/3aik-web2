@@ -13,6 +13,7 @@ import { Env, ChatMessage } from "./types";
 // Models
 const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+const POLLINATIONS_API_KEY = ""; // Now empty, use env.POLLINATIONS_API_KEY if desired
 
 const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
@@ -23,7 +24,9 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/openai/gpt-oss-120b",
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq",
   "@cf/meta/llama-3.1-70b-instruct",
-  "@cf/qwen/qwq-32b-preview"
+  "@cf/qwen/qwq-32b-preview",
+  "@cf/google/gemma-3-12b-it",
+  "@cf/meta/llama-4-scout-17b-16e-instruct"
 ];
 
 const ALLOWED_IMAGE_MODELS = [
@@ -186,7 +189,7 @@ async function handleImageRequest(
     const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
     console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
 
-    // Pollinations / Video / GIF Logic
+    // Pollinations / Video / GIF Logic - Optimized to return URL directly
     if (modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
       const seed = Math.floor(Math.random() * 10000000);
       let pUrl = "";
@@ -196,49 +199,20 @@ async function handleImageRequest(
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
-        // Try gen.pollinations.ai with model param for video/animation
         pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
       } else if (modelToUse.startsWith("gif-")) {
         pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
       }
 
-      console.log(`[Media Gen] Fetching from endpoint: ${pUrl}`);
+      console.log(`[Media Gen] Returning direct URL: ${pUrl}`);
 
-      // Add a 15-second timeout to prevent hangs
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      let mime = "image/png";
+      if (modelToUse.startsWith("video-")) mime = "video/mp4";
+      if (modelToUse.startsWith("gif-")) mime = "image/gif";
 
-      const t0 = performance.now();
-      try {
-        const pRes = await fetch(pUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-        const t1 = performance.now();
-        console.log(`[Perf] Fetch ${modelToUse} took ${Math.round(t1 - t0)}ms`);
-
-        if (!pRes.ok) throw new Error(`${modelToUse} API failed: ${pRes.status} ${pRes.statusText}`);
-
-        const buffer = await pRes.arrayBuffer();
-        if (buffer.byteLength < 100) throw new Error(`${modelToUse} returned invalid or empty data.`);
-
-        const t2 = performance.now();
-        const b64 = u8ToBase64(new Uint8Array(buffer));
-        const t3 = performance.now();
-        console.log(`[Perf] Base64 encoding took ${Math.round(t3 - t2)}ms`);
-
-        // Determine mime type
-        let mime = "image/png";
-        if (modelToUse.startsWith("video-")) mime = "video/mp4";
-        if (modelToUse.startsWith("gif-")) mime = "image/gif";
-
-        return new Response(JSON.stringify({ images: [{ b64, mime }] }), {
-          headers: { "content-type": "application/json" },
-        });
-      } catch (e: any) {
-        if (e.name === 'AbortError') {
-          throw new Error(`${modelToUse} request timed out. Please try again.`);
-        }
-        throw e;
-      }
+      return new Response(JSON.stringify({ images: [{ url: pUrl, mime }] }), {
+        headers: { "content-type": "application/json" },
+      });
     }
 
     let lastError: Error | null = null;
@@ -270,16 +244,6 @@ async function handleImageRequest(
       throw new Error(`All models failed. Last error: ${lastError?.message || "unknown"}`);
     }
 
-    // Convert Uint8Array to Base64 efficiently
-    function u8ToBase64(u8: any): string | undefined {
-      if (!u8) return undefined;
-      const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
-      // Use TextDecoder with latin1 for near-native performance binary conversion
-      const decoder = new TextDecoder('latin1');
-      const binary = decoder.decode(bytes);
-      return btoa(binary);
-    }
-
     let b64: string | undefined;
 
     // Detection logic
@@ -302,7 +266,6 @@ async function handleImageRequest(
       }
       b64 = u8ToBase64(combined);
     } else if (typeof result === "object") {
-      // Check for common keys
       const data = result.image || result.images?.[0] || result.output || result.result;
       if (data instanceof Uint8Array) {
         b64 = u8ToBase64(data);
@@ -329,4 +292,16 @@ async function handleImageRequest(
       headers: { "content-type": "application/json" },
     });
   }
+}
+
+/**
+ * Utility: Convert Uint8Array to Base64 efficiently
+ */
+function u8ToBase64(u8: any): string | undefined {
+  if (!u8) return undefined;
+  const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
+  // Use TextDecoder with latin1 for near-native performance binary conversion
+  const decoder = new TextDecoder('latin1');
+  const binary = decoder.decode(bytes);
+  return btoa(binary);
 }
