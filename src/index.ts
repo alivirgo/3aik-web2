@@ -94,7 +94,9 @@ async function handleImageRequest(
       );
     }
 
-    // SD XL Base image generation parameters
+    console.log(`[Image Gen] Starting generation with prompt: "${prompt}"`);
+
+    // Cast to any to handle various response shapes from different AI models
     const aiResult = await env.AI.run(IMAGE_MODEL_ID, {
       prompt,
       width: 1024,
@@ -103,6 +105,8 @@ async function handleImageRequest(
       guidance_scale: 7.5,
       num_inference_steps: 30,
     });
+
+    console.log(`[Image Gen] AI result type:`, typeof aiResult);
 
     // Cast to any to handle various response shapes from different AI models
     const result = aiResult as any;
@@ -125,10 +129,16 @@ async function handleImageRequest(
     const images: Array<{ b64?: string }> = [];
 
     // Direct Uint8Array
-    if (result?.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(result.image) });
+    if (result?.image instanceof Uint8Array) {
+      const b64 = uint8ToBase64(result.image);
+      if (b64) images.push({ b64 });
+    }
     if (Array.isArray(result?.images)) {
       for (const img of result.images) {
-        if (img instanceof Uint8Array) images.push({ b64: uint8ToBase64(img) });
+        if (img instanceof Uint8Array) {
+          const b64 = uint8ToBase64(img);
+          if (b64) images.push({ b64 });
+        }
       }
     }
 
@@ -138,11 +148,17 @@ async function handleImageRequest(
     if (Array.isArray(maybeOutputs)) {
       for (const out of maybeOutputs) {
         if (typeof out?.b64_json === "string") images.push({ b64: out.b64_json });
-        if (out?.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(out.image) });
+        if (out?.image instanceof Uint8Array) {
+          const b64 = uint8ToBase64(out.image);
+          if (b64) images.push({ b64 });
+        }
       }
     } else if (maybeOutputs && typeof maybeOutputs === "object") {
       if (typeof (maybeOutputs as any).b64_json === "string") images.push({ b64: (maybeOutputs as any).b64_json });
-      if ((maybeOutputs as any).image instanceof Uint8Array) images.push({ b64: uint8ToBase64((maybeOutputs as any).image) });
+      if ((maybeOutputs as any).image instanceof Uint8Array) {
+        const b64 = uint8ToBase64((maybeOutputs as any).image);
+        if (b64) images.push({ b64 });
+      }
     }
 
     // Fallback: if result contains base64 string fields
@@ -150,20 +166,25 @@ async function handleImageRequest(
 
     // Validate and respond
     const valid = images.filter((i) => i?.b64);
+    
+    console.log(`[Image Gen] Found ${valid.length} valid images`);
+
     if (!valid.length) {
-      console.error("Unexpected image result:", result);
+      console.error("[Image Gen] No valid image data found. Result:", result);
       return new Response(
-        JSON.stringify({ error: "Image generation failed" }),
+        JSON.stringify({ error: "Image generation returned no valid data" }),
         { status: 500, headers: { "content-type": "application/json" } }
       );
     }
+
+    console.log(`[Image Gen] Success - returning ${valid.length} image(s)`);
 
     // Return standardized JSON: images array of objects { b64, mime }
     return new Response(JSON.stringify({ images: valid.map((i) => ({ b64: i.b64, mime: "image/png" })) }), {
       headers: { "content-type": "application/json" },
     });
   } catch (err) {
-    console.error(err);
+    console.error("[Image Gen] Error:", err);
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
       { status: 500, headers: { "content-type": "application/json" } }
