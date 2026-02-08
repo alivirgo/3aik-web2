@@ -11,6 +11,7 @@ const inputOptions = document.getElementById("input-options");
 const loadingIndicator = document.getElementById("loading");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
+const imageModelSelect = document.getElementById("image-model-select");
 const imageModelSection = document.getElementById("image-model-section");
 const videoModelSection = document.getElementById("video-model-section");
 const gifModelSection = document.getElementById("gif-model-section");
@@ -18,6 +19,7 @@ const codingModelSection = document.getElementById("coding-model-section");
 const videoModelSelect = document.getElementById("video-model-select");
 const gifModelSelect = document.getElementById("gif-model-select");
 const codingModelSelect = document.getElementById("coding-model-select");
+const modelSeoInfo = document.getElementById("model-seo-info");
 const textModelSection = document.querySelector(".sidebar-section:not(#image-model-section):not(#video-model-section):not(#gif-model-section):not(#coding-model-section)");
 const closeModalBtn = document.getElementById("close-modal");
 const saveSettingsBtn = document.getElementById("save-settings-btn");
@@ -33,6 +35,33 @@ let conversation = [];
 let currentMode = "text";
 let processing = false;
 
+// SEO Model Descriptions
+const MODEL_INFO = {
+  // Chat Models
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast": "Llama 3.3 70B: High-performance Meta AI model for logical reasoning and fast chat responses.",
+  "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": "DeepSeek R1 32B: Specialized reasoning model with advanced chain-of-thought capabilities.",
+  "@cf/meta/llama-3.1-8b-instruct": "Llama 3.1 8B: Meta's versatile AI assistant for creative writing and daily tasks.",
+  "@cf/meta/llama-3.2-3b-instruct": "Llama 3.2 3B: Lightweight and efficient AI for mobile-friendly quick chat interactions.",
+  "@cf/qwen/qwen2.5-coder-32b-instruct": "Qwen 2.5 Coder: Powerful Alibaba AI optimized for programming and technical analysis.",
+  "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text generation.",
+
+  // Coding Models
+  "@cf/deepseek-ai/deepseek-coder-33b-instruct": "DeepSeek Coder: State-of-the-art AI for bug fixing, code optimization, and software development.",
+
+  // Image Models
+  "pollinations-flux": "Flux Pro AI: Generation of ultra-realistic 4K high-definition images with precision detail.",
+  "pollinations-any": "Anime AI: specialized Stable Diffusion model for high-quality anime and digital art styles.",
+  "pollinations-dream": "Dream Artist: Artistic AI model for creating stylized, imaginative, and surreal masterpieces.",
+  "@cf/bytedance/sdxl-lightning": "SDXL Lightning: Zero-latency high-speed image generator powered by Bytedance AI tech.",
+  "@cf/black-forest-labs/flux-1-schnell": "Flux Schnell: Efficient high-fidelity image generation for rapid creative prototyping.",
+  "@cf/leonardoai/phoenix-1.0": "Phoenix 1.0: Advanced AI for cinematic lighting and high-contrast professional photography.",
+
+  // Video & GIF
+  "video-seedance": "Seedance AI Video: Transform text into 10-second high-motion cinematic video clips instantly.",
+  "video-veo": "Google Veo: Next-gen video generation for high-consistency character and scene movements.",
+  "gif-animate": "AI GIF Maker: Create looping animated memes and digital reaction GIFs from text descriptions."
+};
+
 // Configure Markdown
 marked.setOptions({
   highlight: function (code, lang) {
@@ -45,13 +74,25 @@ marked.setOptions({
   gfm: true
 });
 
-// Initialize
-init();
+function updateModelSEOInfo() {
+  let selectedModel = modelSelect.value;
+  if (currentMode === "image") selectedModel = imageModelSelect.value;
+  if (currentMode === "video") selectedModel = videoModelSelect.value;
+  if (currentMode === "gif") selectedModel = gifModelSelect.value;
+  if (currentMode === "coding") selectedModel = codingModelSelect.value;
+
+  const info = MODEL_INFO[selectedModel] || "3aikGPT: Advanced AI Studio for text, image, video, and code generation.";
+  modelSeoInfo.textContent = info;
+  modelSeoInfo.style.animation = "none";
+  modelSeoInfo.offsetHeight; // trigger reflow
+  modelSeoInfo.style.animation = "fadeIn 0.5s ease";
+}
 
 function init() {
   loadSettings();
   setupEventListeners();
   updateModeUI();
+  updateModelSEOInfo();
   loadConversationHistory();
 }
 
@@ -88,11 +129,11 @@ function setupEventListeners() {
   imageSize.addEventListener("change", saveSettings);
 
   // Model selectors
-  modelSelect.addEventListener("change", saveSettings);
-  imageModelSelect.addEventListener("change", saveSettings);
-  videoModelSelect.addEventListener("change", saveSettings);
-  gifModelSelect.addEventListener("change", saveSettings);
-  codingModelSelect.addEventListener("change", saveSettings);
+  modelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
+  imageModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
+  videoModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
+  gifModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
+  codingModelSelect.addEventListener("change", () => { saveSettings(); updateModelSEOInfo(); });
 
   // Settings modal controls
   saveSettingsBtn.addEventListener("click", () => {
@@ -121,6 +162,7 @@ function setMode(mode) {
   });
 
   updateModeUI();
+  updateModelSEOInfo();
 }
 
 function updateModeUI() {
