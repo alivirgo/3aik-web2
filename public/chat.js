@@ -336,8 +336,15 @@ async function handleSend() {
   promptInput.focus();
 
   try {
-    if (currentMode === "image") {
-      await generateImage(prompt);
+    if (currentMode === "image" || prompt.toLowerCase().startsWith("image:")) {
+      const cleanPrompt = prompt.toLowerCase().startsWith("image:")
+        ? prompt.slice(6).trim()
+        : prompt;
+
+      if (!cleanPrompt) throw new Error("Please provide a prompt after 'image:'");
+
+      modeTitle.textContent = "Image Generation";
+      await generateImage(cleanPrompt);
     } else {
       await generateText(prompt);
     }
@@ -455,10 +462,15 @@ async function generateText(prompt) {
       }),
     });
 
-    console.log("[Chat] Response status:", response.status);
-
     if (!response.ok) {
-      throw new Error(`Chat failed: ${response.status} ${response.statusText}`);
+      let errorDetail = "";
+      try {
+        const errJson = await response.json();
+        errorDetail = errJson.error || errJson.message || "";
+      } catch (e) {
+        errorDetail = await response.text();
+      }
+      throw new Error(errorDetail || `Chat failed: ${response.status} ${response.statusText}`);
     }
 
     if (!response.body) {

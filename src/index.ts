@@ -27,7 +27,11 @@ const ALLOWED_IMAGE_MODELS = [
   "@cf/black-forest-labs/flux-1-schnell",
   "@cf/stabilityai/stable-diffusion-xl-base-1.0",
   "@cf/leonardoai/phoenix-1.0",
-  "@cf/stabilityai/stable-diffusion-3-large-turbo"
+  "@cf/stabilityai/stable-diffusion-3-large-turbo",
+  "@cf/bytedance/sdxl-lightning",
+  "pollinations-flux",
+  "pollinations-any",
+  "pollinations-dream"
 ];
 
 // System prompt for chat
@@ -90,14 +94,24 @@ async function handleChatRequest(
       messages.unshift({ role: "system", content: systemPrompt || SYSTEM_PROMPT });
     }
 
-    console.log(`[Chat] Streaming text response for ${messages.length} messages using ${modelToUse}`);
+    console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens}`);
 
-    const stream = await env.AI.run(modelToUse as any, {
-      messages,
-      stream: true,
-      max_tokens: max_tokens,
-      temperature: temperature,
-    });
+    let stream: any;
+    try {
+      // Validate/Sanitize Params
+      const safeTemp = Math.max(0, Math.min(1, temperature));
+      const safeTokens = Math.max(1, Math.min(4000, max_tokens));
+
+      stream = await env.AI.run(modelToUse as any, {
+        messages,
+        stream: true,
+        max_tokens: safeTokens,
+        temperature: safeTemp,
+      });
+    } catch (apiErr: any) {
+      console.error(`[Chat] Cloudflare AI.run failed for ${modelToUse}:`, apiErr);
+      throw new Error(`AI Model Error (${modelToUse}): ${apiErr.message || "Unknown error"}`);
+    }
 
     // Handle both ReadableStream and direct return
     let responseStream = stream;
@@ -163,6 +177,24 @@ async function handleImageRequest(
     const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
     console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
 
+    // Pollinations Logic
+    if (modelToUse.startsWith("pollinations-")) {
+      const pModel = modelToUse.split("-")[1]; // flux, any, dream
+      const pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true`;
+
+      console.log(`[Image Gen] Fetching from Pollinations: ${pUrl}`);
+      const pRes = await fetch(pUrl);
+
+      if (!pRes.ok) throw new Error(`Pollinations API failed: ${pRes.statusText}`);
+
+      const buffer = await pRes.arrayBuffer();
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+
+      return new Response(JSON.stringify({ images: [{ b64, mime: "image/png" }] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     let lastError: Error | null = null;
     let result: any = null;
     let usedModel = modelToUse;
@@ -172,7 +204,10 @@ async function handleImageRequest(
     } catch (err) {
       console.warn(`[Image Gen] Model ${modelToUse} failed, falling back...`);
       lastError = err as Error;
-      for (const fallbackModel of ALLOWED_IMAGE_MODELS) {
+      // Filter out pollinations models for CF fallback
+      const cfFallbacks = ALLOWED_IMAGE_MODELS.filter(m => !m.startsWith("pollinations-"));
+
+      for (const fallbackModel of cfFallbacks) {
         if (fallbackModel === modelToUse) continue;
         try {
           console.log(`[Image Gen] Trying fallback: ${fallbackModel}`);
