@@ -24,7 +24,6 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/openai/gpt-oss-120b",
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq",
   "@cf/meta/llama-3.1-70b-instruct",
-  "@cf/qwen/qwq-32b-preview",
   "@cf/google/gemma-3-12b-it",
   "@cf/meta/llama-4-scout-17b-16e-instruct",
   "pollinations-chat",
