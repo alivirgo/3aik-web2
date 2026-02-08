@@ -4,13 +4,9 @@ const promptInput = document.getElementById("prompt-input");
 const sendBtn = document.getElementById("send-btn");
 const modeTitle = document.getElementById("mode-title");
 const modeSubtitle = document.getElementById("mode-subtitle");
-const modelSelect = document.getElementById("model-select");
-const clearBtn = document.getElementById("clear-btn");
-const imageSize = document.getElementById("image-size");
-const inputOptions = document.getElementById("input-options");
-const loadingIndicator = document.getElementById("loading");
-const settingsBtn = document.getElementById("settings-btn");
-const settingsModal = document.getElementById("settings-modal");
+const imageModelSelect = document.getElementById("image-model-select");
+const imageModelSection = document.getElementById("image-model-section");
+const textModelSection = document.querySelector(".sidebar-section:not(#image-model-section)");
 const closeModalBtn = document.getElementById("close-modal");
 const navButtons = document.querySelectorAll(".nav-btn");
 
@@ -60,8 +56,9 @@ function setupEventListeners() {
   // Image size selector
   imageSize.addEventListener("change", saveSettings);
 
-  // Model selector
+  // Model selectors
   modelSelect.addEventListener("change", saveSettings);
+  imageModelSelect.addEventListener("change", saveSettings);
 
   // Close modal on background click
   settingsModal.addEventListener("click", (e) => {
@@ -82,27 +79,27 @@ function setMode(mode) {
   updateModeUI();
 }
 
-function updateModeUI() {
-  if (currentMode === "image") {
-    modeTitle.textContent = "Image Generation";
-    modeSubtitle.textContent = "Create stunning images with AI";
-    inputOptions.style.display = "flex";
-    // Hide model selector in image mode (image model is hardcoded)
-    document.querySelector(".sidebar-section").style.display = "none";
-  } else {
-    modeTitle.textContent = "Chat";
-    modeSubtitle.textContent = "Ask anything, get instant answers";
-    inputOptions.style.display = "none";
-    // Show model selector in text mode
-    document.querySelector(".sidebar-section").style.display = "block";
-  }
-  promptInput.focus();
+if (currentMode === "image") {
+  modeTitle.textContent = "Image Generation";
+  modeSubtitle.textContent = "Create stunning images with AI";
+  inputOptions.style.display = "flex";
+  imageModelSection.style.display = "block";
+  textModelSection.style.display = "none";
+} else {
+  modeTitle.textContent = "Chat";
+  modeSubtitle.textContent = "Ask anything, get instant answers";
+  inputOptions.style.display = "none";
+  imageModelSection.style.display = "none";
+  textModelSection.style.display = "block";
+}
+promptInput.focus();
 }
 
 function saveSettings() {
   localStorage.setItem("3aik-settings", JSON.stringify({
     imageSize: imageSize.value,
-    model: modelSelect.value,
+    textModel: modelSelect.value,
+    imageModel: imageModelSelect.value
   }));
 }
 
@@ -146,11 +143,11 @@ function renderMessages() {
 function addUserMessage(text) {
   const el = document.createElement("div");
   el.className = "message user-msg";
-  
+
   const msgContent = document.createElement("div");
   msgContent.className = "msg-content";
   msgContent.innerHTML = sanitizeHTML(text);
-  
+
   el.appendChild(msgContent);
   messagesEl.appendChild(el);
   scrollToBottom();
@@ -166,7 +163,7 @@ function addAssistantMessage(text) {
 
   const content = document.createElement("div");
   content.className = "msg-content";
-  
+
   const textEl = document.createElement("div");
   textEl.className = "msg-text";
   textEl.innerHTML = sanitizeHTML(text);
@@ -278,7 +275,12 @@ async function generateImage(prompt) {
     const response = await fetch("/api/image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, width: sizeVal, height: sizeVal }),
+      body: JSON.stringify({
+        prompt,
+        width: sizeVal,
+        height: sizeVal,
+        model: imageModelSelect.value
+      }),
     });
 
     console.log("[Image Gen] Response status:", response.status);
@@ -358,7 +360,10 @@ async function generateText(prompt) {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: conversation }),
+      body: JSON.stringify({
+        messages: conversation,
+        model: modelSelect.value
+      }),
     });
 
     console.log("[Chat] Response status:", response.status);
