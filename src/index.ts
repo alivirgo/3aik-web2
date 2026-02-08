@@ -108,8 +108,8 @@ async function handleImageRequest(
     const result = aiResult as any;
 
     // Helper: convert Uint8Array to base64 in chunks
-    function uint8ToBase64(u8: unknown): string | null {
-      if (!(u8 instanceof Uint8Array)) return null;
+    function uint8ToBase64(u8: unknown): string | undefined {
+      if (!(u8 instanceof Uint8Array)) return undefined;
       const CHUNK_SIZE = 0x8000;
       let index = 0;
       let resultStr = "";
