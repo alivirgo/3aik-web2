@@ -390,7 +390,10 @@ promptInput.addEventListener("input", () => {
 
 // Settings Logic
 if (settingsBtn) {
-  settingsBtn.addEventListener("click", () => settingsModal.style.display = "flex");
+  settingsBtn.addEventListener("click", () => {
+    console.log("[UI] Opening Settings Modal");
+    settingsModal.style.display = "flex";
+  });
 }
 
 if (closeSettingsBtn) {
