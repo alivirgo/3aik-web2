@@ -225,6 +225,16 @@ body {
   margin-bottom: 8px;
 }
 
+.footer-seo {
+  font-size: 10px;
+  color: var(--primary);
+  opacity: 0.6;
+  margin-bottom: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .status-badge {
   display: inline-block;
   padding: 4px 10px;
