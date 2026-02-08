@@ -178,7 +178,7 @@ function clearHistory() {
   if (confirm("Clear all conversation history? This cannot be undone.")) {
     conversation = [];
     messagesEl.innerHTML = "";
-    addAssistantMessage("Conversation cleared. Start a new chat! 🚀");
+    addAssistantMessage("History cleared. Hello. I can generate text and images. Start image prompts with image:");
     saveConversationHistory();
   }
 }
