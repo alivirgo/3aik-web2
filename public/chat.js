@@ -11,6 +11,7 @@ const systemPromptInput = document.getElementById("system-prompt");
 const temperatureInput = document.getElementById("temperature");
 const maxTokensInput = document.getElementById("max-tokens");
 const sizeSelect = document.getElementById("size-select");
+const searchToggle = document.getElementById("search-toggle");
 const loadingOverlay = document.getElementById("loading-overlay");
 
 // Modals
@@ -218,6 +219,7 @@ async function generateText() {
 
   try {
     const isCoding = currentMode === "coding";
+    const isSearch = searchToggle && searchToggle.checked;
     const selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
     const systemPromptText = isCoding
       ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
@@ -240,7 +242,8 @@ async function generateText() {
         model: selectedModel,
         systemPrompt: systemPromptText,
         temperature: parseFloat(temperatureInput.value),
-        max_tokens: parseInt(maxTokensInput.value, 10)
+        max_tokens: parseInt(maxTokensInput.value, 10),
+        search: isSearch
       }),
     });
 
@@ -274,6 +277,8 @@ async function generateText() {
               displayResponse = fullResponse.replace(/<think>[\s\S]*?<\/think>/, "").trim() || "Thinking complete. Generating response...";
             } else if (fullResponse.includes("<think>")) {
               displayResponse = "Thinking...";
+            } else if (fullResponse.length === 0 && isSearch) {
+              displayResponse = "🔍 *Searching the web for updated information...*";
             }
             textEl.innerHTML = marked.parse(displayResponse);
 
