@@ -1,214 +1,415 @@
+// DOM Elements
 const messagesEl = document.getElementById("messages");
 const promptInput = document.getElementById("prompt-input");
-const sendBtn = document.getElementById("send");
-const imageModeBtn = document.getElementById("image-mode");
-const textModeBtn = document.getElementById("text-mode");
+const sendBtn = document.getElementById("send-btn");
+const modeTitle = document.getElementById("mode-title");
+const modeSubtitle = document.getElementById("mode-subtitle");
 const modelSelect = document.getElementById("model-select");
-const newConvoBtn = document.getElementById("new-convo");
+const clearBtn = document.getElementById("clear-btn");
 const imageSize = document.getElementById("image-size");
+const inputOptions = document.getElementById("input-options");
+const loadingIndicator = document.getElementById("loading");
+const settingsBtn = document.getElementById("settings-btn");
+const settingsModal = document.getElementById("settings-modal");
+const closeModalBtn = document.getElementById("close-modal");
+const navButtons = document.querySelectorAll(".nav-btn");
 
-let conversation = [{ role: "assistant", content: "Welcome — try a prompt." }];
-let mode = "text"; // or 'image'
+// State
+let conversation = [];
+let currentMode = "text";
 let processing = false;
 
-function setMode(m) {
-  mode = m;
-  if (m === "image") {
-    imageModeBtn.classList.add("active");
-    textModeBtn.classList.remove("active");
-  } else {
-    textModeBtn.classList.add("active");
-    imageModeBtn.classList.remove("active");
-  }
+// Initialize
+init();
+
+function init() {
+  setupEventListeners();
+  updateModeUI();
+  loadConversationHistory();
 }
 
-imageModeBtn.addEventListener("click", () => setMode("image"));
-textModeBtn.addEventListener("click", () => setMode("text"));
-newConvoBtn.addEventListener("click", () => {
-  conversation = [];
-  messagesEl.innerHTML = "";
-  appendAssistant("New conversation started.");
-});
-
-sendBtn.addEventListener("click", () => {
-  void onSend();
-});
-
-promptInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    void onSend();
-  }
-});
-
-function appendUser(text) {
-  const el = document.createElement("div");
-  el.className = "msg user";
-  el.textContent = text;
-  messagesEl.appendChild(el);
-  scrollBottom();
-}
-
-function appendAssistant(text) {
-  const el = document.createElement("div");
-  el.className = "msg assistant";
-  el.textContent = text;
-  messagesEl.appendChild(el);
-  scrollBottom();
-}
-
-function appendImage(b64, mime, caption) {
-  const el = document.createElement("div");
-  el.className = "msg assistant";
-  const img = document.createElement("img");
-  img.src = `data:${mime};base64,${b64}`;
-  img.alt = caption || "generated image";
-  el.appendChild(img);
-  if (caption) {
-    const c = document.createElement("div");
-    c.style.opacity = "0.7";
-    c.style.marginTop = "6px";
-    c.textContent = caption;
-    el.appendChild(c);
-  }
-
-  // download button
-  const dl = document.createElement("button");
-  dl.textContent = "Download";
-  dl.style.marginTop = "8px";
-  dl.style.padding = "6px 8px";
-  dl.style.borderRadius = "6px";
-  dl.style.border = "none";
-  dl.style.cursor = "pointer";
-  dl.addEventListener("click", () => {
-    const a = document.createElement("a");
-    a.href = img.src;
-    a.download = "3aik-image.png";
-    a.click();
+function setupEventListeners() {
+  // Mode buttons
+  navButtons.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const mode = e.currentTarget.dataset.mode;
+      setMode(mode);
+    });
   });
-  el.appendChild(dl);
 
+  // Send button and input
+  sendBtn.addEventListener("click", handleSend);
+  promptInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  });
+
+  // Clear history
+  clearBtn.addEventListener("click", clearHistory);
+
+  // Settings
+  settingsBtn.addEventListener("click", () => {
+    settingsModal.style.display = "flex";
+  });
+  closeModalBtn.addEventListener("click", () => {
+    settingsModal.style.display = "none";
+  });
+
+  // Image size selector
+  imageSize.addEventListener("change", saveSettings);
+
+  // Model selector
+  modelSelect.addEventListener("change", saveSettings);
+
+  // Close modal on background click
+  settingsModal.addEventListener("click", (e) => {
+    if (e.target === settingsModal) {
+      settingsModal.style.display = "none";
+    }
+  });
+}
+
+function setMode(mode) {
+  currentMode = mode;
+
+  // Update nav buttons
+  navButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+
+  updateModeUI();
+}
+
+function updateModeUI() {
+  if (currentMode === "image") {
+    modeTitle.textContent = "Image Generation";
+    modeSubtitle.textContent = "Create stunning images with AI";
+    inputOptions.style.display = "flex";
+  } else {
+    modeTitle.textContent = "Chat";
+    modeSubtitle.textContent = "Ask anything, get instant answers";
+    inputOptions.style.display = "none";
+  }
+  promptInput.focus();
+}
+
+function saveSettings() {
+  localStorage.setItem("3aik-settings", JSON.stringify({
+    imageSize: imageSize.value,
+    model: modelSelect.value,
+  }));
+}
+
+function loadConversationHistory() {
+  const saved = localStorage.getItem("3aik-conversation");
+  if (saved) {
+    conversation = JSON.parse(saved);
+    renderMessages();
+  }
+}
+
+function saveConversationHistory() {
+  localStorage.setItem("3aik-conversation", JSON.stringify(conversation));
+}
+
+function clearHistory() {
+  if (confirm("Clear all conversation history? This cannot be undone.")) {
+    conversation = [];
+    messagesEl.innerHTML = "";
+    addAssistantMessage("Conversation cleared. Start a new chat! 🚀");
+    saveConversationHistory();
+  }
+}
+
+function renderMessages() {
+  messagesEl.innerHTML = "";
+  conversation.forEach((msg) => {
+    if (msg.role === "user") {
+      addUserMessage(msg.content);
+    } else if (msg.role === "assistant") {
+      if (msg.isImage) {
+        addImageMessage(msg.imageSrc, msg.imageCaption);
+      } else {
+        addAssistantMessage(msg.content);
+      }
+    }
+  });
+  scrollToBottom();
+}
+
+function addUserMessage(text) {
+  const el = document.createElement("div");
+  el.className = "message user-msg";
+  
+  const msgContent = document.createElement("div");
+  msgContent.className = "msg-content";
+  msgContent.innerHTML = sanitizeHTML(text);
+  
+  el.appendChild(msgContent);
   messagesEl.appendChild(el);
-  scrollBottom();
+  scrollToBottom();
 }
 
-function scrollBottom() {
-  setTimeout(() => (messagesEl.scrollTop = messagesEl.scrollHeight), 50);
+function addAssistantMessage(text) {
+  const el = document.createElement("div");
+  el.className = "message assistant-msg";
+
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
+  avatar.textContent = "🤖";
+
+  const content = document.createElement("div");
+  content.className = "msg-content";
+  
+  const textEl = document.createElement("div");
+  textEl.className = "msg-text";
+  textEl.innerHTML = sanitizeHTML(text);
+
+  content.appendChild(textEl);
+  el.appendChild(avatar);
+  el.appendChild(content);
+  messagesEl.appendChild(el);
+  scrollToBottom();
 }
 
-async function onSend() {
+function addImageMessage(imageSrc, caption) {
+  const el = document.createElement("div");
+  el.className = "message assistant-msg";
+
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
+  avatar.textContent = "🎨";
+
+  const content = document.createElement("div");
+  content.className = "msg-content";
+
+  const img = document.createElement("img");
+  img.className = "msg-image";
+  img.src = imageSrc;
+  img.alt = caption;
+  img.loading = "lazy";
+
+  const captionEl = document.createElement("div");
+  captionEl.className = "msg-subtext";
+  captionEl.textContent = caption;
+
+  const downloadBtn = document.createElement("button");
+  downloadBtn.className = "msg-download";
+  downloadBtn.textContent = "⬇️ Download";
+  downloadBtn.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = imageSrc;
+    a.download = `3aik-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  });
+
+  content.appendChild(img);
+  content.appendChild(captionEl);
+  content.appendChild(downloadBtn);
+  el.appendChild(avatar);
+  el.appendChild(content);
+  messagesEl.appendChild(el);
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  setTimeout(() => {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }, 50);
+}
+
+function sanitizeHTML(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function setLoading(isLoading) {
+  loadingIndicator.style.display = isLoading ? "flex" : "none";
+  sendBtn.disabled = isLoading;
+  promptInput.disabled = isLoading;
+}
+
+async function handleSend() {
   const prompt = promptInput.value.trim();
   if (!prompt || processing) return;
-  processing = true;
-  promptInput.disabled = true;
-  sendBtn.disabled = true;
 
-  appendUser(prompt);
+  processing = true;
+  setLoading(true);
+
+  // Add user message immediately
+  addUserMessage(prompt);
   conversation.push({ role: "user", content: prompt });
+
   promptInput.value = "";
+  promptInput.focus();
 
   try {
-    if (mode === "image") {
+    if (currentMode === "image") {
       await generateImage(prompt);
     } else {
-      await generateText();
+      await generateText(prompt);
     }
-  } catch (e) {
-    appendAssistant("Error: " + (e instanceof Error ? e.message : String(e)));
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    addAssistantMessage(`❌ Error: ${errorMsg}`);
+    conversation.push({ role: "assistant", content: `❌ Error: ${errorMsg}` });
   } finally {
     processing = false;
-    promptInput.disabled = false;
-    sendBtn.disabled = false;
-    promptInput.focus();
+    setLoading(false);
+    saveConversationHistory();
   }
 }
 
 async function generateImage(prompt) {
-  const size = parseInt(imageSize.value || "1024", 10);
-  const res = await fetch("/api/image", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, size }),
-  });
-  if (!res.ok) {
-    appendAssistant("Image generation failed.");
-    return;
+  const sizeVal = parseInt(imageSize.value || "1024", 10);
+
+  try {
+    const response = await fetch("/api/image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, width: sizeVal, height: sizeVal }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Image generation failed: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    if (!data.images || !Array.isArray(data.images) || data.images.length === 0) {
+      throw new Error("No images returned by the backend");
+    }
+
+    const img = data.images[0];
+    const imageSrc = `data:${img.mime || "image/png"};base64,${img.b64}`;
+
+    addImageMessage(imageSrc, prompt);
+    conversation.push({
+      role: "assistant",
+      content: prompt,
+      isImage: true,
+      imageSrc,
+      imageCaption: prompt,
+    });
+  } catch (error) {
+    throw error;
   }
-  const data = await res.json();
-  if (!Array.isArray(data.images) || !data.images.length) {
-    appendAssistant("No image returned by backend.");
-    return;
-  }
-  for (const img of data.images) {
-    appendImage(img.b64, img.mime || "image/png", prompt);
-  }
-  conversation.push({ role: "assistant", content: `[Image generated: ${prompt}]` });
 }
 
-async function generateText() {
+async function generateText(prompt) {
+  // Add placeholder message for assistant response
+  const placeholderId = `msg-${Date.now()}`;
   const placeholder = document.createElement("div");
-  placeholder.className = "msg assistant";
-  const p = document.createElement("div");
-  p.textContent = "...";
-  placeholder.appendChild(p);
+  placeholder.id = placeholderId;
+  placeholder.className = "message assistant-msg";
+
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
+  avatar.textContent = "🤖";
+
+  const content = document.createElement("div");
+  content.className = "msg-content";
+
+  const textEl = document.createElement("div");
+  textEl.className = "msg-text";
+  textEl.textContent = "Thinking...";
+
+  content.appendChild(textEl);
+  placeholder.appendChild(avatar);
+  placeholder.appendChild(content);
   messagesEl.appendChild(placeholder);
-  scrollBottom();
+  scrollToBottom();
 
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: conversation }),
-  });
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: conversation }),
+    });
 
-  if (!res.ok) {
-    p.textContent = "No response from backend.";
-    return;
-  }
+    if (!response.ok) {
+      throw new Error(`Chat failed: ${response.statusText}`);
+    }
 
-  if (!res.body) {
-    p.textContent = await res.text();
-    return;
-  }
+    if (!response.body) {
+      const text = await response.text();
+      throw new Error(text || "No response from backend");
+    }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  let full = "";
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parsed = parseSSE(buf);
-    buf = parsed.buffer;
-    for (const ev of parsed.events) {
-      if (ev === "[DONE]") continue;
-      try {
-        const j = JSON.parse(ev);
-        const delta = j.response || j.choices?.[0]?.delta?.content || j.content || "";
-        if (delta) {
-          full += delta;
-          p.textContent = full;
-          scrollBottom();
+    let buffer = "";
+    let fullResponse = "";
+
+    // Update placeholder with streaming text
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parsed = parseSSE(buffer);
+      buffer = parsed.buffer;
+
+      for (const event of parsed.events) {
+        if (event === "[DONE]") continue;
+
+        try {
+          const json = JSON.parse(event);
+          const delta =
+            json.response ||
+            json.choices?.[0]?.delta?.content ||
+            json.content ||
+            "";
+
+          if (delta) {
+            fullResponse += delta;
+            textEl.textContent = fullResponse;
+            scrollToBottom();
+          }
+        } catch (e) {
+          // Parse error, skip
         }
-      } catch (e) {
-        // ignore parse
       }
     }
-  }
 
-  conversation.push({ role: "assistant", content: full });
+    if (fullResponse) {
+      conversation.push({ role: "assistant", content: fullResponse });
+    } else {
+      textEl.textContent = "No response received";
+    }
+  } catch (error) {
+    textEl.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function parseSSE(buffer) {
   const events = [];
   buffer = buffer.replace(/\r/g, "");
-  let idx;
-  while ((idx = buffer.indexOf("\n\n")) !== -1) {
-    const raw = buffer.slice(0, idx);
-    buffer = buffer.slice(idx + 2);
-    const lines = raw.split("\n");
-    const data = lines.filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim());
-    if (data.length) events.push(data.join("\n"));
+  let index;
+
+  while ((index = buffer.indexOf("\n\n")) !== -1) {
+    const chunk = buffer.slice(0, index);
+    buffer = buffer.slice(index + 2);
+
+    const lines = chunk.split("\n");
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim());
+
+    if (data.length) {
+      events.push(data.join("\n"));
+    }
   }
+
   return { events, buffer };
+}
