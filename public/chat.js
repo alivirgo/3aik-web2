@@ -28,6 +28,18 @@ let conversation = [];
 let currentMode = "text";
 let processing = false;
 
+// Configure Markdown
+marked.setOptions({
+  highlight: function (code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return hljs.highlightAuto(code).value;
+  },
+  breaks: true,
+  gfm: true
+});
+
 // Initialize
 init();
 
@@ -193,7 +205,7 @@ function addUserMessage(text) {
 
   const msgContent = document.createElement("div");
   msgContent.className = "msg-content";
-  msgContent.innerHTML = sanitizeHTML(text);
+  msgContent.innerHTML = marked.parse(text);
 
   el.appendChild(msgContent);
   messagesEl.appendChild(el);
@@ -211,9 +223,34 @@ function addAssistantMessage(text) {
   const content = document.createElement("div");
   content.className = "msg-content";
 
+  // Check for reasoning blocks <think>...</think>
+  const reasoningMatch = text.match(/<think>([\s\S]*?)<\/think>/);
+  if (reasoningMatch) {
+    const reasoning = reasoningMatch[1].trim();
+    const cleanText = text.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+
+    const reasoningEl = document.createElement("div");
+    reasoningEl.className = "reasoning-block collapsed";
+
+    const header = document.createElement("div");
+    header.className = "reasoning-header";
+    header.textContent = "Thought Process";
+    header.onclick = () => reasoningEl.classList.toggle("collapsed");
+
+    const reasoningContent = document.createElement("div");
+    reasoningContent.className = "reasoning-content";
+    reasoningContent.innerHTML = marked.parse(reasoning);
+
+    reasoningEl.appendChild(header);
+    reasoningEl.appendChild(reasoningContent);
+    content.appendChild(reasoningEl);
+
+    text = cleanText;
+  }
+
   const textEl = document.createElement("div");
   textEl.className = "msg-text";
-  textEl.innerHTML = sanitizeHTML(text);
+  textEl.innerHTML = marked.parse(text);
 
   content.appendChild(textEl);
   el.appendChild(avatar);
@@ -459,7 +496,17 @@ async function generateText(prompt) {
 
           if (delta) {
             fullResponse += delta;
-            textEl.textContent = fullResponse;
+
+            // Check for reasoning during stream
+            let displayResponse = fullResponse;
+            const rtMatch = fullResponse.match(/<think>([\s\S]*?)<\/think>/);
+            if (rtMatch) {
+              displayResponse = fullResponse.replace(/<think>[\s\S]*?<\/think>/, "").trim() || "Thinking complete. Generating response...";
+            } else if (fullResponse.includes("<think>")) {
+              displayResponse = "Thinking...";
+            }
+
+            textEl.innerHTML = marked.parse(displayResponse);
             scrollToBottom();
           }
         } catch (e) {

@@ -160,180 +160,94 @@ async function handleImageRequest(
       );
     }
 
-    // Safety check for model ID
     const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
-
-    console.log(`[Image Gen] Starting generation with prompt: "${prompt}" using ${modelToUse}`);
+    console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
 
     let lastError: Error | null = null;
     let result: any = null;
     let usedModel = modelToUse;
 
     try {
-      const aiResult = await env.AI.run(modelToUse as any, {
-        prompt,
-        width,
-        height,
-      });
-      result = aiResult;
+      result = await env.AI.run(modelToUse as any, { prompt, width, height });
     } catch (err) {
-      console.warn(`[Image Gen] Requested model ${modelToUse} failed, falling back...`);
+      console.warn(`[Image Gen] Model ${modelToUse} failed, falling back...`);
       lastError = err as Error;
-
-      // Fallback logic
       for (const fallbackModel of ALLOWED_IMAGE_MODELS) {
         if (fallbackModel === modelToUse) continue;
         try {
-          console.log(`[Image Gen] Trying fallback model: ${fallbackModel}`);
+          console.log(`[Image Gen] Trying fallback: ${fallbackModel}`);
           result = await env.AI.run(fallbackModel as any, { prompt, width, height });
           usedModel = fallbackModel;
           break;
         } catch (fErr) {
-          console.warn(`[Image Gen] ${fallbackModel} failed:`, fErr);
-          continue;
+          console.warn(`[Image Gen] ${fallbackModel} failed`);
         }
       }
     }
 
     if (!result) {
-      throw new Error(
-        `All image models failed. Last error: ${lastError?.message || "unknown error"}`
-      );
+      throw new Error(`All models failed. Last error: ${lastError?.message || "unknown"}`);
     }
 
-    console.log(`[Image Gen] Used model: ${usedModel}`);
-    console.log(`[Image Gen] Response type:`, typeof result);
-    console.log(`[Image Gen] Response is ReadableStream:`, result instanceof ReadableStream);
-
-    // Helper: convert Uint8Array to base64 in chunks
-    function uint8ToBase64(u8: unknown): string | undefined {
-      if (!(u8 instanceof Uint8Array)) return undefined;
-      const CHUNK_SIZE = 0x8000;
-      let index = 0;
-      let resultStr = "";
-      while (index < u8.length) {
-        const slice = u8.subarray(index, Math.min(index + CHUNK_SIZE, u8.length));
-        resultStr += String.fromCharCode.apply(null, slice as any);
-        index += CHUNK_SIZE;
+    // Convert Uint8Array to Base64 efficiently
+    function u8ToBase64(u8: any): string | undefined {
+      if (!u8) return undefined;
+      const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
+      let binary = "";
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
       }
-      return btoa(resultStr);
+      return btoa(binary);
     }
 
-    // Handle ReadableStream response (some models stream the response)
-    if (result instanceof ReadableStream) {
-      console.log("[Image Gen] Converting ReadableStream to Uint8Array");
-      const chunks: Uint8Array[] = [];
+    let b64: string | undefined;
+
+    // Detection logic
+    if (result instanceof Uint8Array) {
+      b64 = u8ToBase64(result);
+    } else if (result instanceof ReadableStream) {
       const reader = result.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
       }
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      const buffer = new Uint8Array(totalLength);
+      const total = chunks.reduce((acc, c) => acc + c.length, 0);
+      const combined = new Uint8Array(total);
       let offset = 0;
-      for (const chunk of chunks) {
-        buffer.set(chunk, offset);
-        offset += chunk.length;
+      for (const c of chunks) {
+        combined.set(c, offset);
+        offset += c.length;
       }
-      const b64 = uint8ToBase64(buffer);
-      if (b64) {
-        return new Response(
-          JSON.stringify({ images: [{ b64, mime: "image/png" }] }),
-          { headers: { "content-type": "application/json" } }
-        );
-      }
-    }
-
-    // Normalize many possible return shapes from Workers AI
-    const images: Array<{ b64?: string }> = [];
-
-    // Direct Uint8Array
-    if (result?.image instanceof Uint8Array) {
-      const b64 = uint8ToBase64(result.image);
-      if (b64) images.push({ b64 });
-    }
-
-    // Array of images
-    if (Array.isArray(result?.images)) {
-      for (const img of result.images) {
-        if (img instanceof Uint8Array) {
-          const b64 = uint8ToBase64(img);
-          if (b64) images.push({ b64 });
-        }
+      b64 = u8ToBase64(combined);
+    } else if (typeof result === "object") {
+      // Check for common keys
+      const data = result.image || result.images?.[0] || result.output || result.result;
+      if (data instanceof Uint8Array) {
+        b64 = u8ToBase64(data);
+      } else if (typeof data === "string") {
+        b64 = data.includes(",") ? data.split(",")[1] : data;
+      } else if (data && typeof data === "object" && (data.b64 || data.b64_json)) {
+        b64 = data.b64 || data.b64_json;
+      } else if (typeof result.b64_json === "string") {
+        b64 = result.b64_json;
       }
     }
 
-    // Alternative output formats
-    const maybeOutputs =
-      result?.output || result?.outputs || result?.result || result?.outputs?.[0] || null;
-
-    if (Array.isArray(maybeOutputs)) {
-      for (const out of maybeOutputs) {
-        if (typeof out?.b64_json === "string") images.push({ b64: out.b64_json });
-        if (out?.image instanceof Uint8Array) {
-          const b64 = uint8ToBase64(out.image);
-          if (b64) images.push({ b64 });
-        }
-      }
-    } else if (maybeOutputs && typeof maybeOutputs === "object") {
-      if (typeof (maybeOutputs as any).b64_json === "string")
-        images.push({ b64: (maybeOutputs as any).b64_json });
-      if ((maybeOutputs as any).image instanceof Uint8Array) {
-        const b64 = uint8ToBase64((maybeOutputs as any).image);
-        if (b64) images.push({ b64 });
-      }
-    }
-
-    // Fallback: if result contains base64 string fields
-    if (
-      !images.length &&
-      typeof result?.b64_json === "string"
-    )
-      images.push({ b64: result.b64_json });
-
-    // Validate and respond
-    const valid = images.filter((i) => i?.b64);
-
-    console.log(`[Image Gen] Found ${valid.length} valid images`);
-
-    if (!valid.length) {
-      console.error("[Image Gen] No valid image data found. Result structure:", {
-        hasImage: !!result?.image,
-        hasImages: !!result?.images,
-        hasOutput: !!result?.output,
-        hasOutputs: !!result?.outputs,
-        hasResult: !!result?.result,
-        hasB64json: !!result?.b64_json,
-        resultKeys: Object.keys(result || {}),
+    if (b64) {
+      return new Response(JSON.stringify({ images: [{ b64, mime: "image/png" }] }), {
+        headers: { "content-type": "application/json" },
       });
-      return new Response(
-        JSON.stringify({
-          error: "Image generation returned no valid data",
-          hint: "Check if the model is available in your Cloudflare account",
-        }),
-        { status: 500, headers: { "content-type": "application/json" } }
-      );
     }
 
-    console.log(`[Image Gen] Success - returning ${valid.length} image(s)`);
-
-    // Return standardized JSON
-    return new Response(
-      JSON.stringify({ images: valid.map((i) => ({ b64: i.b64, mime: "image/png" })) }),
-      { headers: { "content-type": "application/json" } }
-    );
+    throw new Error(`Failed to extract image data from ${usedModel} response.`);
   } catch (err) {
-    console.error("[Image Gen] Critical error:", err);
-    return new Response(
-      JSON.stringify({
-        error: err instanceof Error ? err.message : String(err),
-      }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
+    console.error("[Image Gen] Error:", err);
+    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
   }
 }
