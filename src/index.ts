@@ -95,7 +95,7 @@ async function handleImageRequest(
     }
 
     // SD XL Base image generation parameters
-    const result = await env.AI.run(IMAGE_MODEL_ID, {
+    const aiResult = await env.AI.run(IMAGE_MODEL_ID, {
       prompt,
       width: 1024,
       height: 1024,
@@ -104,18 +104,21 @@ async function handleImageRequest(
       num_inference_steps: 30,
     });
 
+    // Cast to any to handle various response shapes from different AI models
+    const result = aiResult as any;
+
     // Helper: convert Uint8Array to base64 in chunks
     function uint8ToBase64(u8: unknown): string | null {
       if (!(u8 instanceof Uint8Array)) return null;
       const CHUNK_SIZE = 0x8000;
       let index = 0;
-      let result = "";
+      let resultStr = "";
       while (index < u8.length) {
         const slice = u8.subarray(index, Math.min(index + CHUNK_SIZE, u8.length));
-        result += String.fromCharCode.apply(null, slice as any);
+        resultStr += String.fromCharCode.apply(null, slice as any);
         index += CHUNK_SIZE;
       }
-      return btoa(result);
+      return btoa(resultStr);
     }
 
     // Normalize many possible return shapes from Workers AI
