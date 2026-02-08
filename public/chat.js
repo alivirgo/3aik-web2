@@ -572,17 +572,28 @@ async function generateText(prompt) {
   try {
     const isCoding = currentMode === "coding";
     const selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
-    const systemPrompt = isCoding
+    const systemPromptText = isCoding
       ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
       : systemPromptInput.value;
+
+    // Manage context window: only send last N messages to stay within token limits
+    // Reasoning blocks are stripped from history to save tokens
+    const MAX_HISTORY_MESSAGES = 12;
+    const messagesToSend = conversation
+      .slice(-MAX_HISTORY_MESSAGES)
+      .map(m => ({
+        role: m.role,
+        content: m.content ? m.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim() : ""
+      }))
+      .filter(m => m.content); // Remove empty messages
 
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        messages: conversation,
+        messages: messagesToSend,
         model: selectedModel,
-        systemPrompt: systemPrompt,
+        systemPrompt: systemPromptText,
         temperature: parseFloat(temperatureInput.value),
         max_tokens: parseInt(maxTokensInput.value, 10)
       }),
