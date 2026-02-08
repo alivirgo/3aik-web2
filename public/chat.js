@@ -87,10 +87,14 @@ function updateModeUI() {
     modeTitle.textContent = "Image Generation";
     modeSubtitle.textContent = "Create stunning images with AI";
     inputOptions.style.display = "flex";
+    // Hide model selector in image mode (image model is hardcoded)
+    document.querySelector(".sidebar-section").style.display = "none";
   } else {
     modeTitle.textContent = "Chat";
     modeSubtitle.textContent = "Ask anything, get instant answers";
     inputOptions.style.display = "none";
+    // Show model selector in text mode
+    document.querySelector(".sidebar-section").style.display = "block";
   }
   promptInput.focus();
 }
@@ -269,20 +273,23 @@ async function generateImage(prompt) {
   const sizeVal = parseInt(imageSize.value || "1024", 10);
 
   try {
+    console.log(`Generating image with prompt: "${prompt}" (${sizeVal}x${sizeVal})`);
+
     const response = await fetch("/api/image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt, width: sizeVal, height: sizeVal }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Image generation failed: ${response.statusText}`);
-    }
-
     const data = await response.json();
+    console.log("Image response:", data);
 
     if (data.error) {
       throw new Error(data.error);
+    }
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
     if (!data.images || !Array.isArray(data.images) || data.images.length === 0) {
@@ -290,6 +297,10 @@ async function generateImage(prompt) {
     }
 
     const img = data.images[0];
+    if (!img.b64) {
+      throw new Error("Image data missing (b64 field empty)");
+    }
+
     const imageSrc = `data:${img.mime || "image/png"};base64,${img.b64}`;
 
     addImageMessage(imageSrc, prompt);
@@ -301,6 +312,7 @@ async function generateImage(prompt) {
       imageCaption: prompt,
     });
   } catch (error) {
+    console.error("Image generation error:", error);
     throw error;
   }
 }
