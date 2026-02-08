@@ -12,6 +12,7 @@ const temperatureInput = document.getElementById("temperature");
 const maxTokensInput = document.getElementById("max-tokens");
 const sizeSelect = document.getElementById("size-select");
 const searchToggle = document.getElementById("search-toggle");
+const mobileModeSelect = document.getElementById("mobile-mode-select");
 const mobileModelSelect = document.getElementById("mobile-model-select");
 const loadingOverlay = document.getElementById("loading-overlay");
 
@@ -468,11 +469,53 @@ if (menuToggle) {
   });
 }
 
-if (mobileModelSelect) {
-  mobileModelSelect.addEventListener("change", () => {
-    modelSelect.value = mobileModelSelect.value;
+if (mobileModeSelect) {
+  mobileModeSelect.addEventListener("change", (e) => {
+    switchMode(e.target.value);
   });
 }
+
+const updateMobileModelOptions = () => {
+  if (!mobileModelSelect) return;
+
+  let options = [];
+  if (currentMode === "chat") {
+    options = Array.from(modelSelect.options).map(o => ({ value: o.value, text: o.text }));
+    if (searchToggle && searchToggle.checked) {
+      options.unshift({ value: "gemini-search", text: "Live Search AI" });
+    }
+  } else if (currentMode === "coding") {
+    options = Array.from(codingModelSelect.options).map(o => ({ value: o.value, text: o.text }));
+  } else if (currentMode === "image") {
+    options = Array.from(imageModelSelect.options).map(o => ({ value: o.value, text: o.text }));
+  } else if (currentMode === "video" || currentMode === "gif") {
+    options = [{ value: "pollinations-any", text: "Standard Gen" }];
+  }
+
+  mobileModelSelect.innerHTML = options.map(o => `<option value="${o.value}">${o.text}</option>`).join('');
+
+  // Set initial value to match sidebar
+  if (currentMode === "chat") mobileModelSelect.value = modelSelect.value;
+  else if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value;
+  else if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value;
+};
+
+if (mobileModelSelect) {
+  mobileModelSelect.addEventListener("change", () => {
+    if (currentMode === "chat") modelSelect.value = mobileModelSelect.value;
+    else if (currentMode === "coding") codingModelSelect.value = mobileModelSelect.value;
+    else if (currentMode === "image") imageModelSelect.value = mobileModelSelect.value;
+  });
+}
+
+if (searchToggle) {
+  searchToggle.addEventListener("change", updateMobileModelOptions);
+}
+
+// Sidebar selects also sync to mobile
+modelSelect.addEventListener("change", () => { if (currentMode === "chat") mobileModelSelect.value = modelSelect.value; });
+codingModelSelect.addEventListener("change", () => { if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value; });
+imageModelSelect.addEventListener("change", () => { if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value; });
 
 // Initializations
 hljs.configure({ ignoreUnescapedHTML: true });

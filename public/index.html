@@ -151,15 +151,21 @@
       <!-- Header -->
       <header class="header">
         <div class="header-title">
-          <h1 id="mode-title">3aikGPT</h1>
+          <a href="./" class="logo-link">
+            <h1 id="mode-title">3aikGPT</h1>
+          </a>
           <p id="mode-subtitle">Text & image AI — no login required.</p>
         </div>
         <div class="header-controls">
-          <select id="mobile-model-select" class="mobile-model-selector">
-            <option value="@cf/meta/llama-3.1-8b-instruct">Llama 3.1 8B</option>
-            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B</option>
-            <option value="@cf/deepseek-ai/deepseek-r1-distill-qwen-32b">DeepSeek R1</option>
-            <option value="gemini-search">Live Search AI</option>
+          <select id="mobile-mode-select" class="mobile-selector mobile-only">
+            <option value="chat">Chat</option>
+            <option value="coding">Coding</option>
+            <option value="image">Image</option>
+            <option value="video">Video</option>
+            <option value="gif">GIF</option>
+          </select>
+          <select id="mobile-model-select" class="mobile-selector mobile-only">
+            <!-- Dynamic options -->
           </select>
           <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
         </div>
