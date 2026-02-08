@@ -10,12 +10,24 @@
 import { Env, ChatMessage } from "./types";
 
 // Models
-const TEXT_MODEL_ID = "@cf/openai/gpt-oss-120b";
-// Try multiple image models (some may not be available in all accounts)
-const IMAGE_MODELS = [
-  "@cf/stabilityai/stable-diffusion-3-large-turbo",
+// Models
+const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+
+const ALLOWED_TEXT_MODELS = [
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+  "@cf/meta/llama-3.1-8b-instruct",
+  "@cf/meta/llama-3.2-3b-instruct",
+  "@cf/qwen/qwen2.5-coder-32b-instruct",
+  "@cf/openai/gpt-oss-120b"
+];
+
+const ALLOWED_IMAGE_MODELS = [
   "@cf/black-forest-labs/flux-1-schnell",
   "@cf/stabilityai/stable-diffusion-xl-base-1.0",
+  "@cf/leonardoai/phoenix-1.0",
+  "@cf/stabilityai/stable-diffusion-3-large-turbo"
 ];
 
 // System prompt for chat
@@ -57,15 +69,21 @@ async function handleChatRequest(
   env: Env
 ): Promise<Response> {
   try {
-    const { messages = [] } = (await request.json()) as { messages: ChatMessage[] };
+    const { messages = [], model = DEFAULT_TEXT_MODEL } = (await request.json()) as {
+      messages: ChatMessage[],
+      model?: string
+    };
+
+    // Safety check for model ID
+    const modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
 
     if (!messages.some((m) => m.role === "system")) {
       messages.unshift({ role: "system", content: SYSTEM_PROMPT });
     }
 
-    console.log(`[Chat] Streaming text response for ${messages.length} messages`);
+    console.log(`[Chat] Streaming text response for ${messages.length} messages using ${modelToUse}`);
 
-    const stream = await env.AI.run(TEXT_MODEL_ID, {
+    const stream = await env.AI.run(modelToUse, {
       messages,
       stream: true,
       max_tokens: 1024,
@@ -118,7 +136,12 @@ async function handleImageRequest(
   env: Env
 ): Promise<Response> {
   try {
-    const { prompt } = (await request.json()) as { prompt: string };
+    const { prompt, model = DEFAULT_IMAGE_MODEL, width = 1024, height = 1024 } = (await request.json()) as {
+      prompt: string,
+      model?: string,
+      width?: number,
+      height?: number
+    };
 
     if (!prompt) {
       return new Response(
@@ -127,33 +150,38 @@ async function handleImageRequest(
       );
     }
 
-    console.log(`[Image Gen] Starting generation with prompt: "${prompt}"`);
+    // Safety check for model ID
+    const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
+
+    console.log(`[Image Gen] Starting generation with prompt: "${prompt}" using ${modelToUse}`);
 
     let lastError: Error | null = null;
     let result: any = null;
-    let usedModel = "";
+    let usedModel = modelToUse;
 
-    // Try each image model until one succeeds
-    for (const modelId of IMAGE_MODELS) {
-      try {
-        console.log(`[Image Gen] Trying model: ${modelId}`);
-        const aiResult = await env.AI.run(modelId, {
-          prompt,
-          width: 1024,
-          height: 1024,
-          num_outputs: 1,
-          guidance_scale: 7.5,
-          num_inference_steps: 30,
-        });
-        console.log(`[Image Gen] ${modelId} success!`);
-        result = aiResult;
-        usedModel = modelId;
-        lastError = null;
-        break;
-      } catch (err) {
-        console.warn(`[Image Gen] ${modelId} failed:`, err);
-        lastError = err as Error;
-        continue;
+    try {
+      const aiResult = await env.AI.run(modelToUse, {
+        prompt,
+        width,
+        height,
+      });
+      result = aiResult;
+    } catch (err) {
+      console.warn(`[Image Gen] Requested model ${modelToUse} failed, falling back...`);
+      lastError = err as Error;
+
+      // Fallback logic
+      for (const fallbackModel of ALLOWED_IMAGE_MODELS) {
+        if (fallbackModel === modelToUse) continue;
+        try {
+          console.log(`[Image Gen] Trying fallback model: ${fallbackModel}`);
+          result = await env.AI.run(fallbackModel, { prompt, width, height });
+          usedModel = fallbackModel;
+          break;
+        } catch (fErr) {
+          console.warn(`[Image Gen] ${fallbackModel} failed:`, fErr);
+          continue;
+        }
       }
     }
 
@@ -166,7 +194,7 @@ async function handleImageRequest(
     console.log(`[Image Gen] Used model: ${usedModel}`);
     console.log(`[Image Gen] Response type:`, typeof result);
     console.log(`[Image Gen] Response is ReadableStream:`, result instanceof ReadableStream);
-    
+
     // Helper: convert Uint8Array to base64 in chunks
     function uint8ToBase64(u8: unknown): string | undefined {
       if (!(u8 instanceof Uint8Array)) return undefined;
@@ -219,7 +247,7 @@ async function handleImageRequest(
       const b64 = uint8ToBase64(result.image);
       if (b64) images.push({ b64 });
     }
-    
+
     // Array of images
     if (Array.isArray(result?.images)) {
       for (const img of result.images) {
