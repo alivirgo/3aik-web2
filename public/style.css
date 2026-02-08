@@ -242,13 +242,14 @@ input:checked+.slider-round:before {
   transform: translateX(20px);
 }
 
-.section-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 10px;
-  font-weight: 700;
+.mobile-only {
+  display: none !important;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .modern-select {
