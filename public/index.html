@@ -1,200 +1,61 @@
 <!doctype html>
 <html lang="en">
-<head>
-	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>3aikGPT</title>
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>3aik — AI Studio</title>
+		<link rel="stylesheet" href="style.css" />
+	</head>
 
-	<style>
-		:root {
-			--primary: #f6821f;
-			--primary-hover: #e06f0c;
-			--bg-main: #f8fafc;
-			--bg-chat: #ffffff;
-			--bg-user: #fff3e8;
-			--bg-assistant: #f1f5f9;
-			--border: #e5e7eb;
-			--text-main: #0f172a;
-			--text-muted: #64748b;
-			--radius: 14px;
-			--shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
-		}
-
-		* { box-sizing: border-box; margin: 0; padding: 0; }
-
-		body {
-			font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-				Roboto, Ubuntu, sans-serif;
-			background: var(--bg-main);
-			color: var(--text-main);
-			height: 100vh;
-			display: flex;
-			justify-content: center;
-		}
-
-		.app {
-			width: 100%;
-			max-width: 900px;
-			display: flex;
-			flex-direction: column;
-			padding: 1rem;
-		}
-
-		header {
-			display: flex;
-			align-items: center;
-			justify-content: space-between;
-			padding: 0.75rem 1rem;
-			border-bottom: 1px solid var(--border);
-		}
-
-		header h1 {
-			font-size: 1.4rem;
-			color: var(--primary);
-			font-weight: 700;
-		}
-
-		header span {
-			font-size: 0.85rem;
-			color: var(--text-muted);
-		}
-
-		.chat-container {
-			flex: 1;
-			display: flex;
-			flex-direction: column;
-			background: var(--bg-chat);
-			border-radius: var(--radius);
-			box-shadow: var(--shadow);
-			margin-top: 1rem;
-			overflow: hidden;
-		}
-
-		.chat-messages {
-			flex: 1;
-			padding: 1.25rem;
-			overflow-y: auto;
-		}
-
-		.message {
-			max-width: 78%;
-			padding: 0.85rem 1rem;
-			border-radius: 16px;
-			margin-bottom: 1rem;
-			line-height: 1.55;
-			white-space: pre-wrap;
-		}
-
-		.user-message {
-			background: var(--bg-user);
-			margin-left: auto;
-			border-bottom-right-radius: 4px;
-		}
-
-		.assistant-message {
-			background: var(--bg-assistant);
-			margin-right: auto;
-			border-bottom-left-radius: 4px;
-		}
-
-		.assistant-message img {
-			max-width: 100%;
-			border-radius: 12px;
-			margin-top: 0.5rem;
-			box-shadow: var(--shadow);
-		}
-
-		.image-caption {
-			font-size: 0.8rem;
-			color: var(--text-muted);
-			margin-top: 0.35rem;
-			text-align: center;
-		}
-
-		.typing-indicator {
-			padding: 0.75rem 1.25rem;
-			font-size: 0.85rem;
-			color: var(--text-muted);
-			display: none;
-		}
-
-		.typing-indicator.visible { display: block; }
-
-		.message-input {
-			display: flex;
-			gap: 0.5rem;
-			padding: 0.75rem;
-			border-top: 1px solid var(--border);
-			background: #ffffff;
-		}
-
-		#user-input {
-			flex: 1;
-			resize: none;
-			border: 1px solid var(--border);
-			border-radius: 10px;
-			padding: 0.65rem 0.75rem;
-			font-family: inherit;
-			min-height: 44px;
-			max-height: 160px;
-		}
-
-		#send-button {
-			background: var(--primary);
-			color: #ffffff;
-			border: none;
-			border-radius: 10px;
-			padding: 0 1.2rem;
-			font-weight: 600;
-			cursor: pointer;
-		}
-
-		#send-button:disabled {
-			opacity: 0.6;
-			cursor: not-allowed;
-		}
-
-		footer {
-			text-align: center;
-			margin-top: 0.75rem;
-			font-size: 0.8rem;
-			color: var(--text-muted);
-		}
-	</style>
-</head>
-
-<body>
-	<div class="app">
-		<header>
-			<h1>3aikGPT</h1>
-			<span>Text & image AI — no login required</span>
-		</header>
-
-		<div class="chat-container">
-			<div id="chat-messages" class="chat-messages">
-				<div class="message assistant-message">
-					Hello. I can generate text and images.  
-					Start image prompts with <strong>image:</strong>
+	<body>
+		<div class="shell">
+			<aside class="sidebar">
+				<div class="brand">3aik<span class="beta">BETA</span></div>
+				<nav>
+					<button id="new-convo">+ New chat</button>
+				</nav>
+				<div class="models">
+					<label>Model</label>
+					<select id="model-select">
+						<option value="@cf/openai/gpt-oss-120b">gpt-oss-120b</option>
+					</select>
 				</div>
-			</div>
+				<div class="footer-note">Local demo • No login</div>
+			</aside>
 
-			<div id="typing-indicator" class="typing-indicator">
-				AI is generating a response…
-			</div>
+			<main class="main">
+				<header class="topbar">
+					<div class="title">AI Studio</div>
+					<div class="actions">
+						<button id="image-mode">Image</button>
+						<button id="text-mode" class="active">Text</button>
+					</div>
+				</header>
 
-			<div class="message-input">
-				<textarea
-					id="user-input"
-					placeholder="Try: image: car"
-					rows="1"
-				></textarea>
-				<button id="send-button">Send</button>
-			</div>
+				<section class="chat-panel">
+					<div id="messages" class="messages">
+						<div class="msg assistant">
+							Welcome — try a prompt. Toggle <strong>Image</strong> to generate images.
+						</div>
+					</div>
+
+					<div class="composer">
+						<div class="composer-controls">
+							<input id="prompt-input" placeholder="Ask anything or write an image prompt" />
+							<select id="image-size">
+								<option value="512">512x512</option>
+								<option value="768">768x768</option>
+								<option value="1024" selected>1024x1024</option>
+							</select>
+						</div>
+						<div class="composer-actions">
+							<button id="send">Send</button>
+						</div>
+					</div>
+				</section>
+			</main>
 		</div>
 
-		<footer>Provided by Ali © 2026</footer>
-	</div>
-
-	<script src="chat.js"></script>
-</body>
+		<script type="module" src="chat.js"></script>
+	</body>
 </html>
