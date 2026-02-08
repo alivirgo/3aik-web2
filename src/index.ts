@@ -20,7 +20,8 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.1-8b-instruct",
   "@cf/meta/llama-3.2-3b-instruct",
   "@cf/qwen/qwen2.5-coder-32b-instruct",
-  "@cf/openai/gpt-oss-120b"
+  "@cf/openai/gpt-oss-120b",
+  "@cf/deepseek-ai/deepseek-coder-33b-instruct"
 ];
 
 const ALLOWED_IMAGE_MODELS = [
@@ -31,7 +32,10 @@ const ALLOWED_IMAGE_MODELS = [
   "@cf/bytedance/sdxl-lightning",
   "pollinations-flux",
   "pollinations-any",
-  "pollinations-dream"
+  "pollinations-dream",
+  "video-seedance",
+  "video-veo",
+  "gif-animate"
 ];
 
 // System prompt for chat
@@ -177,20 +181,35 @@ async function handleImageRequest(
     const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
     console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
 
-    // Pollinations Logic
-    if (modelToUse.startsWith("pollinations-")) {
-      const pModel = modelToUse.split("-")[1]; // flux, any, dream
-      const pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true`;
+    // Pollinations / Video / GIF Logic
+    if (modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
+      const seed = Math.floor(Math.random() * 10000000);
+      let pUrl = "";
 
-      console.log(`[Image Gen] Fetching from Pollinations: ${pUrl}`);
+      if (modelToUse.startsWith("pollinations-")) {
+        const pModel = modelToUse.split("-")[1];
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
+      } else if (modelToUse.startsWith("video-")) {
+        const pModel = modelToUse.split("-")[1];
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
+      } else if (modelToUse.startsWith("gif-")) {
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
+      }
+
+      console.log(`[Media Gen] Fetching from endpoint: ${pUrl}`);
       const pRes = await fetch(pUrl);
 
-      if (!pRes.ok) throw new Error(`Pollinations API failed: ${pRes.statusText}`);
+      if (!pRes.ok) throw new Error(`${modelToUse} API failed: ${pRes.statusText}`);
 
       const buffer = await pRes.arrayBuffer();
       const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
 
-      return new Response(JSON.stringify({ images: [{ b64, mime: "image/png" }] }), {
+      // Determine mime type
+      let mime = "image/png";
+      if (modelToUse.startsWith("video-")) mime = "video/mp4";
+      if (modelToUse.startsWith("gif-")) mime = "image/gif";
+
+      return new Response(JSON.stringify({ images: [{ b64, mime }] }), {
         headers: { "content-type": "application/json" },
       });
     }

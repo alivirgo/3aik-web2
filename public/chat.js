@@ -11,9 +11,14 @@ const inputOptions = document.getElementById("input-options");
 const loadingIndicator = document.getElementById("loading");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
-const imageModelSelect = document.getElementById("image-model-select");
 const imageModelSection = document.getElementById("image-model-section");
-const textModelSection = document.querySelector(".sidebar-section:not(#image-model-section)");
+const videoModelSection = document.getElementById("video-model-section");
+const gifModelSection = document.getElementById("gif-model-section");
+const codingModelSection = document.getElementById("coding-model-section");
+const videoModelSelect = document.getElementById("video-model-select");
+const gifModelSelect = document.getElementById("gif-model-select");
+const codingModelSelect = document.getElementById("coding-model-select");
+const textModelSection = document.querySelector(".sidebar-section:not(#image-model-section):not(#video-model-section):not(#gif-model-section):not(#coding-model-section)");
 const closeModalBtn = document.getElementById("close-modal");
 const saveSettingsBtn = document.getElementById("save-settings-btn");
 const systemPromptInput = document.getElementById("system-prompt");
@@ -85,6 +90,9 @@ function setupEventListeners() {
   // Model selectors
   modelSelect.addEventListener("change", saveSettings);
   imageModelSelect.addEventListener("change", saveSettings);
+  videoModelSelect.addEventListener("change", saveSettings);
+  gifModelSelect.addEventListener("change", saveSettings);
+  codingModelSelect.addEventListener("change", saveSettings);
 
   // Settings modal controls
   saveSettingsBtn.addEventListener("click", () => {
@@ -116,17 +124,32 @@ function setMode(mode) {
 }
 
 function updateModeUI() {
+  const allSections = [textModelSection, imageModelSection, videoModelSection, gifModelSection, codingModelSection];
+  allSections.forEach(s => s.style.display = "none");
+  inputOptions.style.display = "none";
+
   if (currentMode === "image") {
     modeTitle.textContent = "Image Generation";
     modeSubtitle.textContent = "Create stunning images with AI";
     inputOptions.style.display = "flex";
     imageModelSection.style.display = "block";
-    textModelSection.style.display = "none";
+  } else if (currentMode === "video") {
+    modeTitle.textContent = "Video Generation";
+    modeSubtitle.textContent = "Generate short AI video clips";
+    inputOptions.style.display = "flex";
+    videoModelSection.style.display = "block";
+  } else if (currentMode === "gif") {
+    modeTitle.textContent = "GIF Generation";
+    modeSubtitle.textContent = "Create animated AI GIFs";
+    inputOptions.style.display = "flex";
+    gifModelSection.style.display = "block";
+  } else if (currentMode === "coding") {
+    modeTitle.textContent = "AI Coding";
+    modeSubtitle.textContent = "Expert code generation and debugging";
+    codingModelSection.style.display = "block";
   } else {
     modeTitle.textContent = "Chat";
     modeSubtitle.textContent = "Ask anything, get instant answers";
-    inputOptions.style.display = "none";
-    imageModelSection.style.display = "none";
     textModelSection.style.display = "block";
   }
   promptInput.focus();
@@ -137,6 +160,9 @@ function saveSettings() {
     imageSize: imageSize.value,
     textModel: modelSelect.value,
     imageModel: imageModelSelect.value,
+    videoModel: videoModelSelect.value,
+    gifModel: gifModelSelect.value,
+    codingModel: codingModelSelect.value,
     systemPrompt: systemPromptInput.value,
     temperature: temperatureInput.value,
     maxTokens: maxTokensInput.value,
@@ -152,6 +178,9 @@ function loadSettings() {
     if (settings.imageSize) imageSize.value = settings.imageSize;
     if (settings.textModel) modelSelect.value = settings.textModel;
     if (settings.imageModel) imageModelSelect.value = settings.imageModel;
+    if (settings.videoModel) videoModelSelect.value = settings.videoModel;
+    if (settings.gifModel) gifModelSelect.value = settings.gifModel;
+    if (settings.codingModel) codingModelSelect.value = settings.codingModel;
     if (settings.systemPrompt) systemPromptInput.value = settings.systemPrompt;
     if (settings.temperature) {
       temperatureInput.value = settings.temperature;
@@ -259,22 +288,33 @@ function addAssistantMessage(text) {
   scrollToBottom();
 }
 
-function addImageMessage(imageSrc, caption) {
+function addMediaMessage(mediaSrc, caption, type = "image") {
   const el = document.createElement("div");
   el.className = "message assistant-msg";
 
   const avatar = document.createElement("div");
   avatar.className = "msg-avatar";
-  avatar.textContent = "🎨";
+  avatar.textContent = type === "video" ? "🎬" : (type === "gif" ? "🎞️" : "🎨");
 
   const content = document.createElement("div");
   content.className = "msg-content";
 
-  const img = document.createElement("img");
-  img.className = "msg-image";
-  img.src = imageSrc;
-  img.alt = caption;
-  img.loading = "lazy";
+  let mediaEl;
+  if (type === "video") {
+    mediaEl = document.createElement("video");
+    mediaEl.className = "msg-video";
+    mediaEl.src = mediaSrc;
+    mediaEl.controls = true;
+    mediaEl.autoplay = true;
+    mediaEl.loop = true;
+    mediaEl.muted = true;
+  } else {
+    mediaEl = document.createElement("img");
+    mediaEl.className = "msg-image";
+    mediaEl.src = mediaSrc;
+    mediaEl.alt = caption;
+    mediaEl.loading = "lazy";
+  }
 
   const captionEl = document.createElement("div");
   captionEl.className = "msg-subtext";
@@ -285,14 +325,14 @@ function addImageMessage(imageSrc, caption) {
   downloadBtn.textContent = "⬇️ Download";
   downloadBtn.addEventListener("click", () => {
     const a = document.createElement("a");
-    a.href = imageSrc;
-    a.download = `3aik-${Date.now()}.png`;
+    a.href = mediaSrc;
+    a.download = `3aik-${Date.now()}.${type === "video" ? "mp4" : (type === "gif" ? "gif" : "png")}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   });
 
-  content.appendChild(img);
+  content.appendChild(mediaEl);
   content.appendChild(captionEl);
   content.appendChild(downloadBtn);
   el.appendChild(avatar);
@@ -336,15 +376,15 @@ async function handleSend() {
   promptInput.focus();
 
   try {
-    if (currentMode === "image" || prompt.toLowerCase().startsWith("image:")) {
-      const cleanPrompt = prompt.toLowerCase().startsWith("image:")
-        ? prompt.slice(6).trim()
-        : prompt;
+    if (["image", "video", "gif"].includes(currentMode) || prompt.toLowerCase().startsWith("image:")) {
+      let cleanPrompt = prompt;
+      if (prompt.toLowerCase().startsWith("image:")) {
+        cleanPrompt = prompt.slice(6).trim();
+        if (currentMode !== "image") setMode("image");
+      }
 
-      if (!cleanPrompt) throw new Error("Please provide a prompt after 'image:'");
-
-      modeTitle.textContent = "Image Generation";
-      await generateImage(cleanPrompt);
+      if (!cleanPrompt) throw new Error("Please provide a prompt");
+      await generateMedia(cleanPrompt);
     } else {
       await generateText(prompt);
     }
@@ -359,11 +399,14 @@ async function handleSend() {
   }
 }
 
-async function generateImage(prompt) {
+async function generateMedia(prompt) {
   const sizeVal = parseInt(imageSize.value || "1024", 10);
+  let modelToUse = imageModelSelect.value;
+  if (currentMode === "video") modelToUse = videoModelSelect.value;
+  if (currentMode === "gif") modelToUse = gifModelSelect.value;
 
   try {
-    console.log(`[Image Gen] Generating image with prompt: "${prompt}" (${sizeVal}x${sizeVal})`);
+    console.log(`[Media Gen] Generating ${currentMode} with prompt: "${prompt}"`);
 
     const response = await fetch("/api/image", {
       method: "POST",
@@ -372,55 +415,34 @@ async function generateImage(prompt) {
         prompt,
         width: sizeVal,
         height: sizeVal,
-        model: imageModelSelect.value
+        model: modelToUse
       }),
     });
 
-    console.log("[Image Gen] Response status:", response.status);
-
     const data = await response.json();
-    console.log("[Image Gen] Response data keys:", Object.keys(data).join(", "));
-    console.log("[Image Gen] Full response:", JSON.stringify(data).slice(0, 500));
+    if (data.error) throw new Error(data.error);
+    if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText}`);
 
-    if (data.error) {
-      throw new Error(data.error);
-    }
+    const mediaList = data.images || [];
+    if (mediaList.length === 0) throw new Error("No media returned by the backend.");
 
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
+    const media = mediaList[0];
+    if (!media || !media.b64) throw new Error("Media data missing (b64 field empty).");
 
-    // Try multiple response shapes
-    const images = data.images || (data.image ? [data.image] : []);
-    console.log("[Image Gen] Images array length:", images.length);
+    const mediaSrc = `data:${media.mime || "image/png"};base64,${media.b64}`;
+    const type = currentMode === "video" ? "video" : (currentMode === "gif" ? "gif" : "image");
 
-    if (!images || !Array.isArray(images) || images.length === 0) {
-      console.error("[Image Gen] No images found. Response was:", data);
-      throw new Error("No images returned by the backend. Check console for response structure.");
-    }
-
-    const img = data.images[0];
-    console.log("[Image Gen] Image keys:", img ? Object.keys(img).join(", ") : "null");
-
-    if (!img || !img.b64) {
-      console.error("[Image Gen] Image data invalid:", img);
-      throw new Error(`Image data missing (b64 field empty). Image keys: ${img ? Object.keys(img).join(", ") : "none"}`);
-    }
-
-    const imageSrc = `data:${img.mime || "image/png"};base64,${img.b64}`;
-    console.log("[Image Gen] Image data URI created, length:", imageSrc.length);
-
-    addImageMessage(imageSrc, prompt);
+    addMediaMessage(mediaSrc, prompt, type);
     conversation.push({
       role: "assistant",
       content: prompt,
       isImage: true,
-      imageSrc,
+      imageSrc: mediaSrc,
       imageCaption: prompt,
+      mediaType: type
     });
-    console.log("[Image Gen] Image successfully added to conversation");
   } catch (error) {
-    console.error("[Image Gen] Error:", error);
+    console.error("[Media Gen] Error:", error);
     throw error;
   }
 }
@@ -450,13 +472,19 @@ async function generateText(prompt) {
   scrollToBottom();
 
   try {
+    const isCoding = currentMode === "coding";
+    const selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
+    const systemPrompt = isCoding
+      ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
+      : systemPromptInput.value;
+
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: conversation,
-        model: modelSelect.value,
-        systemPrompt: systemPromptInput.value,
+        model: selectedModel,
+        systemPrompt: systemPrompt,
         temperature: parseFloat(temperatureInput.value),
         max_tokens: parseInt(maxTokensInput.value, 10)
       }),
