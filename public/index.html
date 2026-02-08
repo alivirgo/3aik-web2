@@ -11,16 +11,12 @@
     content="3aikGPT, AI Studio, AI Video Generator, AI GIF Generator, AI Code Assistant, OpenAI, DeepSeek, Llama 3.3, Meta AI, Qwen, Flux, Free AI, No Login AI" />
   <meta name="author" content="Ali" />
 
-  <!-- Open Graph / Facebook -->
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content="3aikGPT — Text & image AI — no login required" />
-  <meta property="og:description"
-    content="Experience the power of multiple AI models in one place. No signup, no fees, just AI." />
-
-  <!-- Twitter -->
-  <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:title" content="3aikGPT — Text & image AI — no login required" />
-  <meta property="twitter:description" content="The ultimate AI Studio. Llama, DeepSeek, Flux, and more." />
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet">
 
   <link rel="stylesheet" href="style.css" />
   <!-- Markdown & Highlighting -->
@@ -85,10 +81,20 @@
         </select>
       </div>
 
+      <div class="sidebar-section" id="coding-model-section" style="display: none;">
+        <div class="section-label">Coding Model</div>
+        <select id="coding-model-select" class="modern-select">
+          <option value="@cf/qwen/qwen2.5-coder-32b-instruct" selected>Qwen 2.5 Coder (32B)</option>
+          <option value="pollinations-code">Pollinations Coder</option>
+          <option value="@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq">DeepSeek Coder (6.7B)</option>
+        </select>
+      </div>
+
       <div class="sidebar-section" id="image-model-section" style="display: none;">
         <div class="section-label">Image Model</div>
         <select id="image-model-select" class="modern-select">
-          <option value="pollinations-flux" selected>Flux Pro (Ultra-HD)</option>
+          <option value="pollinations-turbo" selected>GPT Image 1 Mini</option>
+          <option value="pollinations-flux">Flux Pro (Ultra-HD)</option>
           <option value="pollinations-any">Anime & Art</option>
           <option value="pollinations-dream">Dream Artist</option>
           <option value="pollinations-pixart">PixArt 1024</option>
@@ -102,25 +108,18 @@
       <div class="sidebar-section" id="video-model-section" style="display: none;">
         <div class="section-label">Video Model</div>
         <select id="video-model-select" class="modern-select">
-          <option value="video-seedance" selected>Seedance (Dynamic)</option>
-          <option value="video-veo">Google Veo (Alpha)</option>
-          <option value="video-grok-video">Grok Video (Experimental)</option>
+          <option value="pollinations-flux" selected>Flux Video</option>
+          <option value="video-seedance">Seedance (Dynamic)</option>
         </select>
       </div>
 
-      <div class="sidebar-section" id="gif-model-section" style="display: none;">
-        <div class="section-label">GIF Model</div>
-        <select id="gif-model-select" class="modern-select">
-          <option value="gif-animate" selected>Animate (Text to GIF)</option>
-        </select>
-      </div>
-
-      <div class="sidebar-section" id="coding-model-section" style="display: none;">
-        <div class="section-label">Coding Model</div>
-        <select id="coding-model-select" class="modern-select">
-          <option value="@cf/qwen/qwen2.5-coder-32b-instruct" selected>Qwen 2.5 Coder (32B)</option>
-          <option value="pollinations-code">Pollinations Coder</option>
-          <option value="@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq">DeepSeek Coder (6.7B)</option>
+      <div id="media-size-section" class="sidebar-section" style="display: none;">
+        <div class="section-label">Media Size</div>
+        <select id="size-select" class="modern-select">
+          <option value="512x512">512×512</option>
+          <option value="768x768">768×768</option>
+          <option value="1024x1024" selected>1024×1024</option>
+          <option value="1280x720">1280×720 (16:9)</option>
         </select>
       </div>
 
@@ -137,17 +136,11 @@
 
     <!-- Main Content -->
     <main class="main-area">
-      <!-- Hidden SEO Keywords -->
-      <div style="display:none">
-        OpenAI, ChatGPT, GPT-4, Gemini, Claude, Grok, DeepSeek, Llama, Qwen, Flux, Stable Diffusion, AI Studio, Free AI,
-        No Login, Ali.
-      </div>
       <!-- Header -->
       <header class="header">
         <div class="header-title">
           <h1 id="mode-title">3aikGPT</h1>
           <p id="mode-subtitle">Text & image AI — no login required.</p>
-          <div id="model-seo-info" class="model-seo-hint"></div>
         </div>
         <div class="header-controls">
           <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
@@ -157,11 +150,13 @@
       <!-- Chat Messages -->
       <div class="messages-container">
         <div id="messages" class="messages">
+          <!-- Initial welcome message -->
           <div class="message assistant-msg">
             <div class="msg-avatar">🤖</div>
             <div class="msg-content">
-              <div class="msg-text">Hello. I can generate text and images. Start image prompts with image:</div>
-              <div class="msg-subtext">3aikGPT. Text & image AI — no login required.</div>
+              <div class="msg-text">Welcome to 3aikGPT! I can help you with text, code, images, and videos. How can I
+                assist you today?</div>
+              <div class="msg-subtext">3aikGPT. No login required.</div>
             </div>
           </div>
         </div>
@@ -174,21 +169,12 @@
       <!-- Input Area -->
       <div class="input-area">
         <div class="input-wrapper">
-          <input id="prompt-input" type="text" class="prompt-input" placeholder="Type your message or image prompt..."
-            autocomplete="off" />
+          <textarea id="prompt-input" rows="1" placeholder="Type your message or image prompt..."
+            autocomplete="off"></textarea>
           <button id="send-btn" class="btn-send" title="Send">
             <span class="send-icon">➤</span>
           </button>
         </div>
-
-        <div class="input-options" id="input-options">
-          <select id="image-size" class="size-select">
-            <option value="512">512×512</option>
-            <option value="768">768×768</option>
-            <option value="1024" selected>1024×1024</option>
-          </select>
-        </div>
-
         <div class="input-hint">
           💡 Press <kbd>Enter</kbd> to send • <kbd>Shift+Enter</kbd> for new line
         </div>
@@ -196,12 +182,18 @@
     </main>
   </div>
 
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" style="display: none;">
+    <div class="spinner"></div>
+    <span style="color: white; margin-top: 10px;">Creating magic...</span>
+  </div>
+
   <!-- Modal for Settings -->
   <div id="settings-modal" class="modal" style="display: none;">
     <div class="modal-content">
       <div class="modal-header">
         <h2>Advanced Settings</h2>
-        <button id="close-modal" class="close-btn">✕</button>
+        <button id="close-settings" class="close-btn">✕</button>
       </div>
       <div class="modal-body">
         <div class="setting-item">
@@ -216,16 +208,9 @@
           <label>Max Tokens</label>
           <input type="number" id="max-tokens" value="1024" min="100" max="4000" class="modern-input" />
         </div>
-        <div class="setting-item">
-          <label class="checkbox-container">
-            <input type="checkbox" id="auto-scroll-check" checked>
-            <span class="checkmark"></span>
-            Auto-scroll to bottom
-          </label>
-        </div>
       </div>
       <div class="modal-footer">
-        <button id="save-settings-btn" class="btn-primary">Save & Close</button>
+        <button id="save-settings-btn" class="btn-primary">Save Settings</button>
       </div>
     </div>
   </div>

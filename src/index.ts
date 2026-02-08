@@ -42,6 +42,7 @@ const ALLOWED_IMAGE_MODELS = [
   "pollinations-dream",
   "pollinations-pixart",
   "pollinations-portrait",
+  "pollinations-turbo",
   "video-seedance",
   "video-veo",
   "video-grok-video",
