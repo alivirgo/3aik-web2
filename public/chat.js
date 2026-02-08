@@ -384,7 +384,7 @@ function parseSSE(buffer) {
  * Event Listeners
  */
 btnSend.addEventListener("click", () => {
-  if (currentMode === "text" || currentMode === "coding") generateText();
+  if (currentMode === "chat" || currentMode === "coding") generateText();
   else generateMedia();
 });
 
@@ -441,23 +441,42 @@ if (btnClear) {
   });
 }
 
-// Mode Switches
-document.querySelectorAll(".nav-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentMode = btn.dataset.mode;
+// Mode Switching Logic (Centralized)
+function switchMode(mode) {
+  currentMode = mode;
 
-    document.getElementById("text-model-section").style.display = (currentMode === "text") ? "block" : "none";
-    document.getElementById("coding-model-section").style.display = (currentMode === "coding") ? "block" : "none";
-    document.getElementById("image-model-section").style.display = (currentMode === "image") ? "block" : "none";
-    document.getElementById("video-model-section").style.display = (currentMode === "video") ? "block" : "none";
-    document.getElementById("media-size-section").style.display = (currentMode === "image" || currentMode === "video" || currentMode === "gif") ? "block" : "none";
-
-    if (window.innerWidth <= 768) {
-      document.querySelector(".sidebar").classList.remove("open");
-    }
+  // Update active state in sidebar
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    if (btn.dataset.mode === mode) btn.classList.add("active");
+    else btn.classList.remove("active");
   });
+
+  // Toggle Visibility
+  const textModelSection = document.getElementById("text-model-section");
+  const codingModelSection = document.getElementById("coding-model-section");
+  const imageModelSection = document.getElementById("image-model-section");
+  const videoModelSection = document.getElementById("video-model-section");
+  const mediaSizeSection = document.getElementById("media-size-section");
+
+  if (textModelSection) textModelSection.style.display = (mode === "chat") ? "block" : "none";
+  if (codingModelSection) codingModelSection.style.display = (mode === "coding") ? "block" : "none";
+  if (imageModelSection) imageModelSection.style.display = (mode === "image") ? "block" : "none";
+  if (videoModelSection) videoModelSection.style.display = (mode === "video") ? "block" : "none";
+  if (mediaSizeSection) mediaSizeSection.style.display = (mode === "image" || mode === "video" || mode === "gif") ? "block" : "none";
+
+  // Sync mobile selectors
+  if (mobileModeSelect) mobileModeSelect.value = mode;
+  updateMobileModelOptions();
+
+  // Close sidebar on mobile
+  if (window.innerWidth <= 768) {
+    document.querySelector(".sidebar").classList.remove("open");
+  }
+}
+
+// Sidebar Buttons
+document.querySelectorAll(".nav-btn").forEach((btn) => {
+  btn.addEventListener("click", () => switchMode(btn.dataset.mode));
 });
 
 // Mobile Menu Toggle
