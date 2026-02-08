@@ -1,21 +1,23 @@
 :root {
-  /* Cute & Vibrant Palette */
-  --primary: hsl(245, 90%, 65%);
-  --primary-dark: hsl(245, 80%, 55%);
-  --secondary: hsl(330, 90%, 65%);
-  --accent: hsl(40, 95%, 60%);
-  --bg-dark: hsl(230, 25%, 8%);
-  --bg-darker: hsl(230, 25%, 5%);
-  --bg-card: hsla(230, 25%, 12%, 0.9);
-  --bg-hover: hsla(230, 25%, 18%, 0.9);
-  --text-primary: hsl(210, 40%, 98%);
-  --text-secondary: hsl(210, 20%, 85%);
-  --text-muted: hsl(210, 15%, 65%);
-  --border-color: hsla(210, 15%, 25%, 0.5);
+  /* Professional Piano Black Palette */
+  --primary: hsl(210, 100%, 65%);
+  /* Silver-Blue Highlight */
+  --primary-dark: hsl(210, 80%, 55%);
+  --secondary: hsl(210, 20%, 80%);
+  --accent: hsl(0, 0%, 100%);
+  --bg-dark: hsl(230, 25%, 3%);
+  --bg-darker: hsl(230, 25%, 2%);
+  --bg-card: hsla(230, 25%, 8%, 0.95);
+  --bg-hover: hsla(230, 25%, 15%, 0.95);
+  --text-primary: hsl(0, 0%, 100%);
+  --text-secondary: hsl(210, 15%, 85%);
+  --text-muted: hsl(210, 10%, 65%);
+  --border-color: hsla(210, 10%, 20%, 0.6);
   --success: hsl(160, 80%, 45%);
-  --glass-bg: hsla(0, 0%, 100%, 0.04);
-  --glass-border: hsla(0, 0%, 100%, 0.08);
-  --primary-gradient: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  --glass-bg: hsla(0, 0%, 100%, 0.03);
+  --glass-border: hsla(0, 0%, 100%, 0.06);
+  --primary-gradient: linear-gradient(135deg, hsl(0, 0%, 15%) 0%, hsl(0, 0%, 5%) 100%);
+  --accent-gradient: linear-gradient(135deg, var(--primary) 0%, hsl(210, 100%, 80%) 100%);
   --btn-radius: 12px;
   --card-radius: 18px;
   --sidebar-width: 300px;
@@ -37,8 +39,8 @@ body {
 
 body {
   font-family: 'Outfit', 'Inter', -apple-system, sans-serif;
-  background: radial-gradient(circle at top right, hsla(245, 50%, 20%, 0.3), transparent),
-    radial-gradient(circle at bottom left, hsla(330, 50%, 20%, 0.3), transparent),
+  background: radial-gradient(circle at top right, hsla(210, 20%, 15%, 0.4), transparent),
+    radial-gradient(circle at bottom left, hsla(210, 20%, 5%, 0.4), transparent),
     var(--bg-darker);
   color: var(--text-primary);
   overflow: hidden;
@@ -169,9 +171,9 @@ body {
 
 .nav-btn.active {
   background: var(--primary-gradient);
-  border: none;
+  border: 1px solid var(--primary);
   color: white;
-  box-shadow: 0 8px 20px hsla(245, 90%, 65%, 0.3);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
 }
 
 /* Sidebar Sections */
@@ -488,8 +490,8 @@ input:checked+.slider-round:before {
 }
 
 .user-msg .msg-content {
-  background: hsla(245, 90%, 65%, 0.12);
-  border-color: hsla(245, 90%, 65%, 0.25);
+  background: hsla(210, 100%, 65%, 0.08);
+  border-color: hsla(210, 100%, 65%, 0.2);
   border-bottom-right-radius: 4px;
 }
 
@@ -537,7 +539,7 @@ input:checked+.slider-round:before {
   text-decoration: none;
   font-weight: 700;
   font-size: 0.85em;
-  background: hsla(245, 90%, 65%, 0.1);
+  background: hsla(210, 100%, 65%, 0.1);
   padding: 1px 4px;
   border-radius: 4px;
   margin: 0 2px;
@@ -576,7 +578,7 @@ input:checked+.slider-round:before {
   margin: 14px 0;
   color: var(--text-secondary);
   font-style: italic;
-  background: hsla(245, 90%, 65%, 0.05);
+  background: hsla(210, 100%, 65%, 0.05);
   padding: 12px 18px;
   border-radius: 0 12px 12px 0;
 }
@@ -605,7 +607,7 @@ input:checked+.slider-round:before {
 
 .input-wrapper:focus-within {
   border-color: var(--primary);
-  box-shadow: 0 0 0 4px hsla(245, 90%, 65%, 0.1);
+  box-shadow: 0 0 0 4px hsla(210, 100%, 65%, 0.1);
 }
 
 textarea {
@@ -745,13 +747,13 @@ textarea {
 .btn-primary {
   width: 100%;
   background: var(--primary-gradient);
-  border: none;
+  border: 1px solid var(--glass-border);
   color: white;
   padding: 14px;
   border-radius: 12px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 8px 16px hsla(245, 90%, 65%, 0.2);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
 }
 
 /* Mobile Responsiveness Fixes */
@@ -777,8 +779,20 @@ textarea {
     justify-content: center;
   }
 
+  .mobile-model-selector {
+    display: block;
+    max-width: 151px;
+    font-size: 12px;
+    padding: 6px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+  }
+
   .header {
     padding: 12px 18px;
+    gap: 10px;
   }
 
   .messages-container {

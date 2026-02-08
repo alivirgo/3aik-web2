@@ -12,6 +12,7 @@ const temperatureInput = document.getElementById("temperature");
 const maxTokensInput = document.getElementById("max-tokens");
 const sizeSelect = document.getElementById("size-select");
 const searchToggle = document.getElementById("search-toggle");
+const mobileModelSelect = document.getElementById("mobile-model-select");
 const loadingOverlay = document.getElementById("loading-overlay");
 
 // Modals
@@ -220,7 +221,12 @@ async function generateText() {
   try {
     const isCoding = currentMode === "coding";
     const isSearch = searchToggle && searchToggle.checked;
-    const selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
+
+    // Sync mobile and desktop model selectors if both exist
+    let selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
+    if (window.innerWidth <= 768 && mobileModelSelect && !isCoding) {
+      selectedModel = mobileModelSelect.value;
+    }
     const systemPromptText = isCoding
       ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
       : systemPromptInput.value;
@@ -459,6 +465,12 @@ const sidebar = document.querySelector(".sidebar");
 if (menuToggle) {
   menuToggle.addEventListener("click", () => {
     sidebar.classList.toggle("open");
+  });
+}
+
+if (mobileModelSelect) {
+  mobileModelSelect.addEventListener("change", () => {
+    modelSelect.value = mobileModelSelect.value;
   });
 }
 
