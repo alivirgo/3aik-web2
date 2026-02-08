@@ -14,7 +14,8 @@ const loadingOverlay = document.getElementById("loading-overlay");
 // Modals
 const settingsModal = document.getElementById("settings-modal");
 const settingsBtn = document.getElementById("settings-btn");
-const closeSettings = document.getElementById("close-settings");
+const closeSettingsBtn = document.getElementById("close-settings");
+const saveSettingsBtn = document.getElementById("save-settings-btn");
 
 // State
 let conversation = [];
@@ -39,6 +40,7 @@ const MODEL_INFO = {
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
 
   // Image Models
+  "pollinations-turbo": "GPT Image 1 Mini: High-speed, high-quality image generation via Pollinations Turbo.",
   "pollinations-flux": "Flux Pro (Pollinations): State-of-the-art HD image generation with superior detail.",
   "pollinations-any": "Anime & Art (Pollinations): Optimized for artistic styles and anime aesthetics.",
   "pollinations-dream": "Dream Artist (Pollinations): Surreal and imaginative creative image generation.",
@@ -178,6 +180,7 @@ async function generateText() {
   if (!prompt) return;
 
   promptInput.value = "";
+  promptInput.style.height = "auto";
   addTextMessage("user", prompt);
   conversation.push({ role: "user", content: prompt });
 
@@ -191,7 +194,6 @@ async function generateText() {
       ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
       : systemPromptInput.value;
 
-    // Manage context window: only send last 12 messages
     const MAX_HISTORY = 12;
     const messagesToSend = conversation
       .slice(-MAX_HISTORY)
@@ -221,7 +223,6 @@ async function generateText() {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let eventCount = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -232,19 +233,12 @@ async function generateText() {
       buffer = remaining;
 
       for (const event of events) {
-        eventCount++;
         try {
           const json = JSON.parse(event);
-          const delta =
-            json.response ||
-            json.delta?.content ||
-            (json.choices?.[0]?.delta?.content) ||
-            json.content ||
-            "";
+          const delta = json.response || json.delta?.content || (json.choices?.[0]?.delta?.content) || json.content || "";
 
           if (delta) {
             fullResponse += delta;
-
             let displayResponse = fullResponse;
             const rtMatch = fullResponse.match(/<think>([\s\S]*?)<\/think>/);
             if (rtMatch) {
@@ -252,7 +246,6 @@ async function generateText() {
             } else if (fullResponse.includes("<think>")) {
               displayResponse = "Thinking...";
             }
-
             textEl.innerHTML = marked.parse(displayResponse);
             scrollToBottom();
           }
@@ -281,6 +274,7 @@ async function generateMedia() {
   if (!prompt) return;
 
   promptInput.value = "";
+  promptInput.style.height = "auto";
   addTextMessage("user", prompt);
   loadingOverlay.style.display = "flex";
 
@@ -353,6 +347,48 @@ promptInput.addEventListener("keydown", (e) => {
   }
 });
 
+promptInput.addEventListener("input", () => {
+  promptInput.style.height = "auto";
+  promptInput.style.height = promptInput.scrollHeight + "px";
+});
+
+// Settings Logic
+if (settingsBtn) {
+  settingsBtn.addEventListener("click", () => settingsModal.style.display = "flex");
+}
+
+if (closeSettingsBtn) {
+  closeSettingsBtn.addEventListener("click", () => settingsModal.style.display = "none");
+}
+
+if (saveSettingsBtn) {
+  saveSettingsBtn.addEventListener("click", () => {
+    settingsModal.style.display = "none";
+  });
+}
+
+temperatureInput.addEventListener("input", () => {
+  document.getElementById("temp-value").textContent = temperatureInput.value;
+});
+
+// Clear History
+const btnClear = document.getElementById("clear-btn");
+if (btnClear) {
+  btnClear.addEventListener("click", () => {
+    if (confirm("Clear all history?")) {
+      conversation = [];
+      messagesEl.innerHTML = `
+        <div class="message assistant-msg">
+          <div class="msg-avatar">🤖</div>
+          <div class="msg-content">
+            <div class="msg-text">History cleared.</div>
+          </div>
+        </div>
+      `;
+    }
+  });
+}
+
 // Mode Switches
 document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -360,10 +396,10 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.classList.add("active");
     currentMode = btn.dataset.mode;
 
-    // Toggle specific setting sections
     document.getElementById("text-model-section").style.display = (currentMode === "text") ? "block" : "none";
     document.getElementById("coding-model-section").style.display = (currentMode === "coding") ? "block" : "none";
     document.getElementById("image-model-section").style.display = (currentMode === "image" || currentMode === "video" || currentMode === "gif") ? "block" : "none";
+    document.getElementById("video-model-section").style.display = (currentMode === "video") ? "block" : "none";
     document.getElementById("media-size-section").style.display = (currentMode === "image" || currentMode === "video" || currentMode === "gif") ? "block" : "none";
 
     if (window.innerWidth <= 768) {
@@ -371,11 +407,6 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     }
   });
 });
-
-// Settings Modal
-settingsBtn.addEventListener("click", () => settingsModal.style.display = "flex");
-closeSettings.addEventListener("click", () => settingsModal.style.display = "none");
-window.onclick = (e) => { if (e.target === settingsModal) settingsModal.style.display = "none"; };
 
 // Mobile Menu Toggle
 const menuToggle = document.getElementById("menu-toggle");
