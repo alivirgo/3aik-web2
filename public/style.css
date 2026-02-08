@@ -16,7 +16,8 @@
   --success: hsl(160, 80%, 45%);
   --glass-bg: hsla(0, 0%, 100%, 0.03);
   --glass-border: hsla(0, 0%, 100%, 0.06);
-  --primary-gradient: linear-gradient(135deg, hsl(0, 0%, 98%) 0%, hsl(210, 100%, 85%) 100%);
+  --primary-gradient: linear-gradient(135deg, hsl(0, 0%, 12%) 0%, hsl(0, 0%, 5%) 100%);
+  --title-gradient: linear-gradient(135deg, hsl(0, 0%, 100%) 0%, hsl(210, 100%, 95%) 100%);
   --accent-gradient: linear-gradient(135deg, var(--primary) 0%, hsl(210, 100%, 80%) 100%);
   --btn-radius: 12px;
   --card-radius: 18px;
@@ -121,7 +122,7 @@ body {
 .logo-text {
   font-size: 20px;
   font-weight: 800;
-  background: var(--primary-gradient);
+  background: var(--title-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -176,7 +177,7 @@ body {
 
 .nav-btn.active {
   background: var(--primary-gradient);
-  border: 1px solid var(--primary);
+  border: 1px solid hsla(210, 100%, 65%, 0.4);
   color: white;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
 }
@@ -417,7 +418,7 @@ input:checked+.slider-round:before {
 }
 
 .logo-link h1 {
-  background: var(--primary-gradient);
+  background: var(--title-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
