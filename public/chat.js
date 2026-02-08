@@ -4,10 +4,23 @@ const promptInput = document.getElementById("prompt-input");
 const sendBtn = document.getElementById("send-btn");
 const modeTitle = document.getElementById("mode-title");
 const modeSubtitle = document.getElementById("mode-subtitle");
+const modelSelect = document.getElementById("model-select");
+const clearBtn = document.getElementById("clear-btn");
+const imageSize = document.getElementById("image-size");
+const inputOptions = document.getElementById("input-options");
+const loadingIndicator = document.getElementById("loading");
+const settingsBtn = document.getElementById("settings-btn");
+const settingsModal = document.getElementById("settings-modal");
 const imageModelSelect = document.getElementById("image-model-select");
 const imageModelSection = document.getElementById("image-model-section");
 const textModelSection = document.querySelector(".sidebar-section:not(#image-model-section)");
 const closeModalBtn = document.getElementById("close-modal");
+const saveSettingsBtn = document.getElementById("save-settings-btn");
+const systemPromptInput = document.getElementById("system-prompt");
+const temperatureInput = document.getElementById("temperature");
+const tempValueDisplay = document.getElementById("temp-value");
+const maxTokensInput = document.getElementById("max-tokens");
+const autoScrollCheck = document.getElementById("auto-scroll-check");
 const navButtons = document.querySelectorAll(".nav-btn");
 
 // State
@@ -19,6 +32,7 @@ let processing = false;
 init();
 
 function init() {
+  loadSettings();
   setupEventListeners();
   updateModeUI();
   loadConversationHistory();
@@ -60,6 +74,16 @@ function setupEventListeners() {
   modelSelect.addEventListener("change", saveSettings);
   imageModelSelect.addEventListener("change", saveSettings);
 
+  // Settings modal controls
+  saveSettingsBtn.addEventListener("click", () => {
+    saveSettings();
+    settingsModal.style.display = "none";
+  });
+
+  temperatureInput.addEventListener("input", (e) => {
+    tempValueDisplay.textContent = e.target.value;
+  });
+
   // Close modal on background click
   settingsModal.addEventListener("click", (e) => {
     if (e.target === settingsModal) {
@@ -79,28 +103,51 @@ function setMode(mode) {
   updateModeUI();
 }
 
-if (currentMode === "image") {
-  modeTitle.textContent = "Image Generation";
-  modeSubtitle.textContent = "Create stunning images with AI";
-  inputOptions.style.display = "flex";
-  imageModelSection.style.display = "block";
-  textModelSection.style.display = "none";
-} else {
-  modeTitle.textContent = "Chat";
-  modeSubtitle.textContent = "Ask anything, get instant answers";
-  inputOptions.style.display = "none";
-  imageModelSection.style.display = "none";
-  textModelSection.style.display = "block";
-}
-promptInput.focus();
+function updateModeUI() {
+  if (currentMode === "image") {
+    modeTitle.textContent = "Image Generation";
+    modeSubtitle.textContent = "Create stunning images with AI";
+    inputOptions.style.display = "flex";
+    imageModelSection.style.display = "block";
+    textModelSection.style.display = "none";
+  } else {
+    modeTitle.textContent = "Chat";
+    modeSubtitle.textContent = "Ask anything, get instant answers";
+    inputOptions.style.display = "none";
+    imageModelSection.style.display = "none";
+    textModelSection.style.display = "block";
+  }
+  promptInput.focus();
 }
 
 function saveSettings() {
-  localStorage.setItem("3aik-settings", JSON.stringify({
+  const settings = {
     imageSize: imageSize.value,
     textModel: modelSelect.value,
-    imageModel: imageModelSelect.value
-  }));
+    imageModel: imageModelSelect.value,
+    systemPrompt: systemPromptInput.value,
+    temperature: temperatureInput.value,
+    maxTokens: maxTokensInput.value,
+    autoScroll: autoScrollCheck.checked
+  };
+  localStorage.setItem("3aik-settings", JSON.stringify(settings));
+}
+
+function loadSettings() {
+  const saved = localStorage.getItem("3aik-settings");
+  if (saved) {
+    const settings = JSON.parse(saved);
+    if (settings.imageSize) imageSize.value = settings.imageSize;
+    if (settings.textModel) modelSelect.value = settings.textModel;
+    if (settings.imageModel) imageModelSelect.value = settings.imageModel;
+    if (settings.systemPrompt) systemPromptInput.value = settings.systemPrompt;
+    if (settings.temperature) {
+      temperatureInput.value = settings.temperature;
+      tempValueDisplay.textContent = settings.temperature;
+    }
+    if (settings.maxTokens) maxTokensInput.value = settings.maxTokens;
+    if (settings.autoScroll !== undefined) autoScrollCheck.checked = settings.autoScroll;
+  }
 }
 
 function loadConversationHistory() {
@@ -218,9 +265,11 @@ function addImageMessage(imageSrc, caption) {
 }
 
 function scrollToBottom() {
-  setTimeout(() => {
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }, 50);
+  if (autoScrollCheck && autoScrollCheck.checked) {
+    setTimeout(() => {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }, 50);
+  }
 }
 
 function sanitizeHTML(text) {
@@ -362,7 +411,10 @@ async function generateText(prompt) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: conversation,
-        model: modelSelect.value
+        model: modelSelect.value,
+        systemPrompt: systemPromptInput.value,
+        temperature: parseFloat(temperatureInput.value),
+        max_tokens: parseInt(maxTokensInput.value, 10)
       }),
     });
 
