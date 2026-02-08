@@ -302,7 +302,7 @@ function renderMessages() {
       addUserMessage(msg.content);
     } else if (msg.role === "assistant") {
       if (msg.isImage) {
-        addImageMessage(msg.imageSrc, msg.imageCaption);
+        addMediaMessage(msg.imageSrc, msg.imageCaption, msg.mediaType || "image");
       } else {
         addAssistantMessage(msg.content);
       }
