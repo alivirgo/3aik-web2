@@ -1,150 +1,160 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>3aik — AI Studio</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
 
-  <body>
-    <div class="layout">
-      <!-- Sidebar -->
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <div class="logo">
-            <div class="logo-icon">✨</div>
-            <div>
-              <div class="logo-text">3aik</div>
-              <div class="logo-sub">AI Studio</div>
-            </div>
-          </div>
-        </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>3aik — AI Studio</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
 
-        <nav class="nav-menu">
-          <button class="nav-btn active" data-mode="text">
-            <span class="icon">💬</span>
-            <span>Chat</span>
-          </button>
-          <button class="nav-btn" data-mode="image">
-            <span class="icon">🖼️</span>
-            <span>Image Gen</span>
-          </button>
-        </nav>
-
-        <div class="sidebar-section">
-          <div class="section-label">Text Model</div>
-          <select id="model-select" class="modern-select">
-            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B (Fast)</option>
-            <option value="@cf/deepseek-ai/deepseek-r1-distill-qwen-32b">DeepSeek R1 32B</option>
-            <option value="@cf/meta/llama-3.1-8b-instruct" selected>Llama 3.1 8B</option>
-            <option value="@cf/meta/llama-3.2-3b-instruct">Llama 3.2 3B</option>
-            <option value="@cf/qwen/qwen2.5-coder-32b-instruct">Qwen 2.5 Coder</option>
-            <option value="@cf/openai/gpt-oss-120b">GPT OSS 120B</option>
-          </select>
-        </div>
-
-        <div class="sidebar-section" id="image-model-section" style="display: none;">
-          <div class="section-label">Image Model</div>
-          <select id="image-model-select" class="modern-select">
-            <option value="@cf/black-forest-labs/flux-1-schnell" selected>Flux-1 Schnell</option>
-            <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">SDXL Base 1.0</option>
-            <option value="@cf/leonardoai/phoenix-1.0">Phoenix 1.0</option>
-            <option value="@cf/stabilityai/stable-diffusion-3-large-turbo">SD3 Large Turbo</option>
-          </select>
-        </div>
-
-        <button id="clear-btn" class="btn-clear">
-          <span class="icon">🗑️</span> Clear History
-        </button>
-
-        <div class="sidebar-footer">
-          <div class="footer-text">Built with Cloudflare Workers AI</div>
-          <div class="status-badge">✓ Live</div>
-        </div>
-      </aside>
-
-      <!-- Main Content -->
-      <main class="main-area">
-        <!-- Header -->
-        <header class="header">
-          <div class="header-title">
-            <h1 id="mode-title">Chat</h1>
-            <p id="mode-subtitle">Ask anything, get instant answers</p>
-          </div>
-          <div class="header-controls">
-            <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
-          </div>
-        </header>
-
-        <!-- Chat Messages -->
-        <div class="messages-container">
-          <div id="messages" class="messages">
-            <div class="message assistant-msg">
-              <div class="msg-avatar">🤖</div>
-              <div class="msg-content">
-                <div class="msg-text">Welcome to 3aik AI Studio! 👋</div>
-                <div class="msg-subtext">Try asking me anything or switch to Image Gen to create images.</div>
-              </div>
-            </div>
-          </div>
-          <div id="loading" class="loading-indicator" style="display: none;">
-            <div class="spinner"></div>
-            <span>Generating...</span>
-          </div>
-        </div>
-
-        <!-- Input Area -->
-        <div class="input-area">
-          <div class="input-wrapper">
-            <input
-              id="prompt-input"
-              type="text"
-              class="prompt-input"
-              placeholder="Type your message or image prompt..."
-              autocomplete="off"
-            />
-            <button id="send-btn" class="btn-send" title="Send">
-              <span class="send-icon">➤</span>
-            </button>
-          </div>
-
-          <div class="input-options" id="input-options">
-            <select id="image-size" class="size-select">
-              <option value="512">512×512</option>
-              <option value="768">768×768</option>
-              <option value="1024" selected>1024×1024</option>
-            </select>
-          </div>
-
-          <div class="input-hint">
-            💡 Press <kbd>Enter</kbd> to send • <kbd>Shift+Enter</kbd> for new line
-          </div>
-        </div>
-      </main>
-    </div>
-
-    <!-- Modal for Settings -->
-    <div id="settings-modal" class="modal" style="display: none;">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Settings</h2>
-          <button id="close-modal" class="close-btn">✕</button>
-        </div>
-        <div class="modal-body">
-          <div class="setting-item">
-            <label>Temperature</label>
-            <input type="range" min="0" max="2" step="0.1" value="0.7" class="slider" />
-            <span class="value-display">0.7</span>
-          </div>
-          <div class="setting-item">
-            <label>Max Tokens</label>
-            <input type="number" value="1024" min="100" max="4000" class="input-field" />
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-icon">✨</div>
+          <div>
+            <div class="logo-text">3aik</div>
+            <div class="logo-sub">AI Studio</div>
           </div>
         </div>
       </div>
-    </div>
 
-    <script src="chat.js"></script>
-  </body>
+      <nav class="nav-menu">
+        <button class="nav-btn active" data-mode="text">
+          <span class="icon">💬</span>
+          <span>Chat</span>
+        </button>
+        <button class="nav-btn" data-mode="image">
+          <span class="icon">🖼️</span>
+          <span>Image Gen</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-section">
+        <div class="section-label">Text Model</div>
+        <select id="model-select" class="modern-select">
+          <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B (Fast)</option>
+          <option value="@cf/deepseek-ai/deepseek-r1-distill-qwen-32b">DeepSeek R1 32B</option>
+          <option value="@cf/meta/llama-3.1-8b-instruct" selected>Llama 3.1 8B</option>
+          <option value="@cf/meta/llama-3.2-3b-instruct">Llama 3.2 3B</option>
+          <option value="@cf/qwen/qwen2.5-coder-32b-instruct">Qwen 2.5 Coder</option>
+          <option value="@cf/openai/gpt-oss-120b">GPT OSS 120B</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section" id="image-model-section" style="display: none;">
+        <div class="section-label">Image Model</div>
+        <select id="image-model-select" class="modern-select">
+          <option value="@cf/black-forest-labs/flux-1-schnell" selected>Flux-1 Schnell</option>
+          <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">SDXL Base 1.0</option>
+          <option value="@cf/leonardoai/phoenix-1.0">Phoenix 1.0</option>
+          <option value="@cf/stabilityai/stable-diffusion-3-large-turbo">SD3 Large Turbo</option>
+        </select>
+      </div>
+
+      <button id="clear-btn" class="btn-clear">
+        <span class="icon">🗑️</span> Clear History
+      </button>
+
+      <div class="sidebar-footer">
+        <div class="footer-text">Built with Cloudflare Workers AI</div>
+        <div class="status-badge">✓ Live</div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-area">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-title">
+          <h1 id="mode-title">Chat</h1>
+          <p id="mode-subtitle">Ask anything, get instant answers</p>
+        </div>
+        <div class="header-controls">
+          <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+        </div>
+      </header>
+
+      <!-- Chat Messages -->
+      <div class="messages-container">
+        <div id="messages" class="messages">
+          <div class="message assistant-msg">
+            <div class="msg-avatar">🤖</div>
+            <div class="msg-content">
+              <div class="msg-text">Welcome to 3aik AI Studio! 👋</div>
+              <div class="msg-subtext">Try asking me anything or switch to Image Gen to create images.</div>
+            </div>
+          </div>
+        </div>
+        <div id="loading" class="loading-indicator" style="display: none;">
+          <div class="spinner"></div>
+          <span>Generating...</span>
+        </div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="input-area">
+        <div class="input-wrapper">
+          <input id="prompt-input" type="text" class="prompt-input" placeholder="Type your message or image prompt..."
+            autocomplete="off" />
+          <button id="send-btn" class="btn-send" title="Send">
+            <span class="send-icon">➤</span>
+          </button>
+        </div>
+
+        <div class="input-options" id="input-options">
+          <select id="image-size" class="size-select">
+            <option value="512">512×512</option>
+            <option value="768">768×768</option>
+            <option value="1024" selected>1024×1024</option>
+          </select>
+        </div>
+
+        <div class="input-hint">
+          💡 Press <kbd>Enter</kbd> to send • <kbd>Shift+Enter</kbd> for new line
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal for Settings -->
+  <div id="settings-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Advanced Settings</h2>
+        <button id="close-modal" class="close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-item">
+          <label>Custom System Prompt</label>
+          <textarea id="system-prompt" class="modern-textarea" placeholder="Enter system instructions..."></textarea>
+        </div>
+        <div class="setting-item">
+          <label>Temperature (<span id="temp-value">0.7</span>)</label>
+          <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.7" class="slider" />
+        </div>
+        <div class="setting-item">
+          <label>Max Tokens</label>
+          <input type="number" id="max-tokens" value="1024" min="100" max="4000" class="modern-input" />
+        </div>
+        <div class="setting-item">
+          <label class="checkbox-container">
+            <input type="checkbox" id="auto-scroll-check" checked>
+            <span class="checkmark"></span>
+            Auto-scroll to bottom
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="save-settings-btn" class="btn-primary">Save & Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="chat.js"></script>
+</body>
+
 </html>

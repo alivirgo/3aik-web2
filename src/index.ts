@@ -69,16 +69,25 @@ async function handleChatRequest(
   env: Env
 ): Promise<Response> {
   try {
-    const { messages = [], model = DEFAULT_TEXT_MODEL } = (await request.json()) as {
+    const {
+      messages = [],
+      model = DEFAULT_TEXT_MODEL,
+      temperature = 0.7,
+      max_tokens = 1024,
+      systemPrompt = ""
+    } = (await request.json()) as {
       messages: ChatMessage[],
-      model?: string
+      model?: string,
+      temperature?: number,
+      max_tokens?: number,
+      systemPrompt?: string
     };
 
     // Safety check for model ID
     const modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
 
     if (!messages.some((m) => m.role === "system")) {
-      messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+      messages.unshift({ role: "system", content: systemPrompt || SYSTEM_PROMPT });
     }
 
     console.log(`[Chat] Streaming text response for ${messages.length} messages using ${modelToUse}`);
@@ -86,7 +95,8 @@ async function handleChatRequest(
     const stream = await env.AI.run(modelToUse as any, {
       messages,
       stream: true,
-      max_tokens: 1024,
+      max_tokens: max_tokens,
+      temperature: temperature,
     });
 
     // Handle both ReadableStream and direct return
