@@ -13,7 +13,7 @@ import { Env, ChatMessage } from "./types";
 // Models
 const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
-const POLLINATIONS_API_KEY = ""; // Now empty, use env.POLLINATIONS_API_KEY if desired
+const POLLINATIONS_API_KEY = "pk_smed4cvxkQtCxNFz";
 
 const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
@@ -26,7 +26,9 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.1-70b-instruct",
   "@cf/qwen/qwq-32b-preview",
   "@cf/google/gemma-3-12b-it",
-  "@cf/meta/llama-4-scout-17b-16e-instruct"
+  "@cf/meta/llama-4-scout-17b-16e-instruct",
+  "pollinations-chat",
+  "pollinations-code"
 ];
 
 const ALLOWED_IMAGE_MODELS = [
@@ -113,6 +115,33 @@ async function handleChatRequest(
     }
 
     console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
+
+    // Pollinations Chat Logic
+    if (modelToUse.startsWith("pollinations-")) {
+      const pModel = modelToUse === "pollinations-code" ? "qwen-coder" : "openai";
+      const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${POLLINATIONS_API_KEY}`
+        },
+        body: JSON.stringify({
+          messages: sanitizedMessages,
+          stream: true,
+          model: pModel
+        })
+      });
+
+      if (!pRes.ok) throw new Error(`Pollinations API failed: ${pRes.status} ${pRes.statusText}`);
+
+      return new Response(pRes.body, {
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        },
+      });
+    }
 
     let stream: any;
     try {
@@ -202,15 +231,15 @@ async function handleImageRequest(
 
       if (modelToUse.startsWith("pollinations-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("gif-")) {
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
       }
 
-      console.log(`[Media Gen] Returning direct URL: ${pUrl}`);
+      console.log(`[Media Gen] Returning direct URL with key: ${pUrl}`);
 
       let mime = "image/png";
       if (modelToUse.startsWith("video-")) mime = "video/mp4";
