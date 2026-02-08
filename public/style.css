@@ -604,11 +604,12 @@ input:checked+.slider-round:before {
 }
 
 .input-hint {
+  max-width: 900px;
+  margin: 8px auto 0;
+  padding-left: 18px;
+  /* Perfectly aligned with .input-wrapper padding */
   font-size: 11px;
   color: var(--text-muted);
-  margin-top: 8px;
-  padding-left: 20px;
-  /* Aligned with textarea padding + icon space */
   display: flex;
   align-items: center;
   gap: 6px;
