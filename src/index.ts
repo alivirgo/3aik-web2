@@ -208,16 +208,22 @@ async function handleImageRequest(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
 
+      const t0 = performance.now();
       try {
         const pRes = await fetch(pUrl, { signal: controller.signal });
         clearTimeout(timeout);
+        const t1 = performance.now();
+        console.log(`[Perf] Fetch ${modelToUse} took ${Math.round(t1 - t0)}ms`);
 
         if (!pRes.ok) throw new Error(`${modelToUse} API failed: ${pRes.status} ${pRes.statusText}`);
 
         const buffer = await pRes.arrayBuffer();
         if (buffer.byteLength < 100) throw new Error(`${modelToUse} returned invalid or empty data.`);
 
-        const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const t2 = performance.now();
+        const b64 = u8ToBase64(new Uint8Array(buffer));
+        const t3 = performance.now();
+        console.log(`[Perf] Base64 encoding took ${Math.round(t3 - t2)}ms`);
 
         // Determine mime type
         let mime = "image/png";
@@ -268,12 +274,9 @@ async function handleImageRequest(
     function u8ToBase64(u8: any): string | undefined {
       if (!u8) return undefined;
       const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
-      // Use chunking to avoid stack limit errors on very large buffers (videos)
-      let binary = "";
-      const CHUNK_SIZE = 8192;
-      for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK_SIZE)));
-      }
+      // Use TextDecoder with latin1 for near-native performance binary conversion
+      const decoder = new TextDecoder('latin1');
+      const binary = decoder.decode(bytes);
       return btoa(binary);
     }
 
