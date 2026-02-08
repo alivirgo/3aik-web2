@@ -83,7 +83,7 @@ async function handleChatRequest(
 
     console.log(`[Chat] Streaming text response for ${messages.length} messages using ${modelToUse}`);
 
-    const stream = await env.AI.run(modelToUse, {
+    const stream = await env.AI.run(modelToUse as any, {
       messages,
       stream: true,
       max_tokens: 1024,
@@ -160,7 +160,7 @@ async function handleImageRequest(
     let usedModel = modelToUse;
 
     try {
-      const aiResult = await env.AI.run(modelToUse, {
+      const aiResult = await env.AI.run(modelToUse as any, {
         prompt,
         width,
         height,
@@ -175,7 +175,7 @@ async function handleImageRequest(
         if (fallbackModel === modelToUse) continue;
         try {
           console.log(`[Image Gen] Trying fallback model: ${fallbackModel}`);
-          result = await env.AI.run(fallbackModel, { prompt, width, height });
+          result = await env.AI.run(fallbackModel as any, { prompt, width, height });
           usedModel = fallbackModel;
           break;
         } catch (fErr) {
