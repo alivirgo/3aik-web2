@@ -105,21 +105,21 @@ async function handleImageRequest(
     });
 
     // Helper: convert Uint8Array to base64 in chunks
-    function uint8ToBase64(u8) {
+    function uint8ToBase64(u8: unknown): string | null {
       if (!(u8 instanceof Uint8Array)) return null;
       const CHUNK_SIZE = 0x8000;
       let index = 0;
       let result = "";
       while (index < u8.length) {
         const slice = u8.subarray(index, Math.min(index + CHUNK_SIZE, u8.length));
-        result += String.fromCharCode.apply(null, slice);
+        result += String.fromCharCode.apply(null, slice as any);
         index += CHUNK_SIZE;
       }
       return btoa(result);
     }
 
     // Normalize many possible return shapes from Workers AI
-    const images = [];
+    const images: Array<{ b64?: string }> = [];
 
     // Direct Uint8Array
     if (result?.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(result.image) });
@@ -138,8 +138,8 @@ async function handleImageRequest(
         if (out?.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(out.image) });
       }
     } else if (maybeOutputs && typeof maybeOutputs === "object") {
-      if (typeof maybeOutputs.b64_json === "string") images.push({ b64: maybeOutputs.b64_json });
-      if (maybeOutputs.image instanceof Uint8Array) images.push({ b64: uint8ToBase64(maybeOutputs.image));
+      if (typeof (maybeOutputs as any).b64_json === "string") images.push({ b64: (maybeOutputs as any).b64_json });
+      if ((maybeOutputs as any).image instanceof Uint8Array) images.push({ b64: uint8ToBase64((maybeOutputs as any).image) });
     }
 
     // Fallback: if result contains base64 string fields
