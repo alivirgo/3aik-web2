@@ -273,7 +273,7 @@ async function generateImage(prompt) {
   const sizeVal = parseInt(imageSize.value || "1024", 10);
 
   try {
-    console.log(`Generating image with prompt: "${prompt}" (${sizeVal}x${sizeVal})`);
+    console.log(`[Image Gen] Generating image with prompt: "${prompt}" (${sizeVal}x${sizeVal})`);
 
     const response = await fetch("/api/image", {
       method: "POST",
@@ -281,8 +281,11 @@ async function generateImage(prompt) {
       body: JSON.stringify({ prompt, width: sizeVal, height: sizeVal }),
     });
 
+    console.log("[Image Gen] Response status:", response.status);
+
     const data = await response.json();
-    console.log("Image response:", data);
+    console.log("[Image Gen] Response data keys:", Object.keys(data).join(", "));
+    console.log("[Image Gen] Full response:", JSON.stringify(data).slice(0, 500));
 
     if (data.error) {
       throw new Error(data.error);
@@ -292,16 +295,25 @@ async function generateImage(prompt) {
       throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
-    if (!data.images || !Array.isArray(data.images) || data.images.length === 0) {
-      throw new Error("No images returned by the backend");
+    // Try multiple response shapes
+    const images = data.images || (data.image ? [data.image] : []);
+    console.log("[Image Gen] Images array length:", images.length);
+
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      console.error("[Image Gen] No images found. Response was:", data);
+      throw new Error("No images returned by the backend. Check console for response structure.");
     }
 
     const img = data.images[0];
-    if (!img.b64) {
-      throw new Error("Image data missing (b64 field empty)");
+    console.log("[Image Gen] Image keys:", img ? Object.keys(img).join(", ") : "null");
+
+    if (!img || !img.b64) {
+      console.error("[Image Gen] Image data invalid:", img);
+      throw new Error(`Image data missing (b64 field empty). Image keys: ${img ? Object.keys(img).join(", ") : "none"}`);
     }
 
     const imageSrc = `data:${img.mime || "image/png"};base64,${img.b64}`;
+    console.log("[Image Gen] Image data URI created, length:", imageSrc.length);
 
     addImageMessage(imageSrc, prompt);
     conversation.push({
@@ -311,8 +323,9 @@ async function generateImage(prompt) {
       imageSrc,
       imageCaption: prompt,
     });
+    console.log("[Image Gen] Image successfully added to conversation");
   } catch (error) {
-    console.error("Image generation error:", error);
+    console.error("[Image Gen] Error:", error);
     throw error;
   }
 }
@@ -348,8 +361,10 @@ async function generateText(prompt) {
       body: JSON.stringify({ messages: conversation }),
     });
 
+    console.log("[Chat] Response status:", response.status);
+
     if (!response.ok) {
-      throw new Error(`Chat failed: ${response.statusText}`);
+      throw new Error(`Chat failed: ${response.status} ${response.statusText}`);
     }
 
     if (!response.body) {
@@ -362,6 +377,7 @@ async function generateText(prompt) {
 
     let buffer = "";
     let fullResponse = "";
+    let eventCount = 0;
 
     // Update placeholder with streaming text
     while (true) {
@@ -373,6 +389,7 @@ async function generateText(prompt) {
       buffer = parsed.buffer;
 
       for (const event of parsed.events) {
+        eventCount++;
         if (event === "[DONE]") continue;
 
         try {
@@ -389,17 +406,21 @@ async function generateText(prompt) {
             scrollToBottom();
           }
         } catch (e) {
-          // Parse error, skip
+          console.warn("[Chat] Failed to parse event:", e, "Event:", event.slice(0, 100));
         }
       }
     }
 
-    if (fullResponse) {
-      conversation.push({ role: "assistant", content: fullResponse });
+    console.log(`[Chat] Received ${eventCount} events, final response length: ${fullResponse.length}`);
+
+    // If no response received at all, show error
+    if (!fullResponse || fullResponse.length === 0) {
+      textEl.textContent = "⚠️ No response received from the model. This may mean the model is not properly configured in your Cloudflare account.";
     } else {
-      textEl.textContent = "No response received";
+      conversation.push({ role: "assistant", content: fullResponse });
     }
   } catch (error) {
+    console.error("[Chat] Error:", error);
     textEl.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
