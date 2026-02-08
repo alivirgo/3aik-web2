@@ -107,6 +107,9 @@ function init() {
   }
 }
 
+// Initialize Application
+init();
+
 function setupEventListeners() {
   // Mode buttons
   if (navButtons) {
