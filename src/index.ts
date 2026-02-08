@@ -128,7 +128,7 @@ async function handleChatRequest(
     if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
       let pModel = "openai";
       if (modelToUse === "pollinations-code") pModel = "qwen-coder";
-      if (modelToUse === "gemini-search") pModel = "searchgpt"; // Optimized for search
+      if (modelToUse === "gemini-search") pModel = "gemini-search"; // Corrected for Pollinations
       const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: {
