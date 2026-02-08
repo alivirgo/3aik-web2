@@ -33,7 +33,6 @@ const MODEL_INFO = {
   "@cf/qwen/qwen2.5-coder-32b-instruct": "Qwen 2.5 Coder 32B: Advanced programming assistant for debugging and logic.",
   "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text generation.",
   "@cf/meta/llama-3.1-70b-instruct": "Llama 3.1 70B: High-capacity Meta AI for deep comprehension and creative writing.",
-  "@cf/qwen/qwq-32b-preview": "QwQ 32B: Experimental reasoning model specialized in solving complex math and logic puzzles.",
   "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's latest multimodal open model with high-performance reasoning.",
   "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient model for fast and accurate chat.",
   "pollinations-chat": "Pollinations AI: Advanced multimodal chat powered by various state-of-the-art models.",
@@ -436,7 +435,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 
     document.getElementById("text-model-section").style.display = (currentMode === "text") ? "block" : "none";
     document.getElementById("coding-model-section").style.display = (currentMode === "coding") ? "block" : "none";
-    document.getElementById("image-model-section").style.display = (currentMode === "image" || currentMode === "video" || currentMode === "gif") ? "block" : "none";
+    document.getElementById("image-model-section").style.display = (currentMode === "image") ? "block" : "none";
     document.getElementById("video-model-section").style.display = (currentMode === "video") ? "block" : "none";
     document.getElementById("media-size-section").style.display = (currentMode === "image" || currentMode === "video" || currentMode === "gif") ? "block" : "none";
 
