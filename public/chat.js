@@ -324,7 +324,9 @@ async function generateMedia() {
   promptInput.value = "";
   promptInput.style.height = "auto";
   addTextMessage("user", prompt);
-  loadingOverlay.style.display = "flex";
+
+  // Create an inline text message that acts as the loading indicator
+  const loadingMsg = addTextMessage("assistant", "🎨 Generating your media...");
 
   try {
     const dimensions = sizeSelect.value.split("x");
@@ -352,12 +354,21 @@ async function generateMedia() {
     if (!mediaSrc) throw new Error("Invalid media response format.");
 
     const type = currentMode === "video" ? "video" : (currentMode === "gif" ? "gif" : "image");
+
+    // Remove the temporary loading message before adding the image/video
+    if (loadingMsg && loadingMsg.parentElement && loadingMsg.parentElement.parentElement) {
+      loadingMsg.parentElement.parentElement.remove();
+    }
+
     addMediaMessage(mediaSrc, prompt, type);
   } catch (error) {
     console.error("[Media] Error:", error);
+
+    if (loadingMsg && loadingMsg.parentElement && loadingMsg.parentElement.parentElement) {
+      loadingMsg.parentElement.parentElement.remove();
+    }
+
     addTextMessage("assistant", `⚠️ Failed to generate: ${error.message}`);
-  } finally {
-    loadingOverlay.style.display = "none";
   }
 }
 
