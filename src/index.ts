@@ -9,10 +9,10 @@
  */
 import { Env, ChatMessage } from "./types";
 
-// Models
 const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
-const POLLINATIONS_API_KEY = "pk_smed4cvxkQtCxNFz";
+// API key is now fetched from env.POLLINATIONS_API_KEY
+
 
 
 const ALLOWED_TEXT_MODELS = [
@@ -164,7 +164,7 @@ async function handleChatRequest(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${POLLINATIONS_API_KEY}`
+          "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}`
         },
         body: JSON.stringify({
           messages: sanitizedMessages,
@@ -272,12 +272,12 @@ async function handleImageRequest(
 
       if (modelToUse.startsWith("pollinations-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("gif-")) {
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       }
 
       console.log(`[Media Gen] Returning direct URL with key: ${pUrl}`);
