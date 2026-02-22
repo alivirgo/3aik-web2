@@ -488,6 +488,19 @@ function switchMode(mode) {
   if (videoModelSection) videoModelSection.style.display = (mode === "video") ? "block" : "none";
   if (mediaSizeSection) mediaSizeSection.style.display = (mode === "image" || mode === "video" || mode === "gif") ? "block" : "none";
 
+  // Toggle Containers
+  const gamesContainer = document.getElementById("games-container");
+  if (messagesContainer) messagesContainer.style.display = (mode === "games") ? "none" : "flex";
+  if (gamesContainer) gamesContainer.style.display = (mode === "games") ? "block" : "none";
+
+  // Hide input area for games mode
+  const inputArea = document.querySelector(".input-area");
+  if (inputArea) inputArea.style.display = (mode === "games") ? "none" : "block";
+
+  if (mode === "games") {
+    initGamesLogic();
+  }
+
   // Sync mobile selectors
   if (mobileModeSelect) mobileModeSelect.value = mode;
   updateMobileModelOptions();
@@ -559,6 +572,116 @@ if (searchToggle) {
 modelSelect.addEventListener("change", () => { if (currentMode === "chat") mobileModelSelect.value = modelSelect.value; });
 codingModelSelect.addEventListener("change", () => { if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value; });
 imageModelSelect.addEventListener("change", () => { if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value; });
+
+/**
+ * Games Tab Logic: AI or Not Detector
+ */
+let gamesInitialized = false;
+function initGamesLogic() {
+  if (gamesInitialized) return;
+  gamesInitialized = true;
+
+  const detTabBtns = document.querySelectorAll(".det-tab-btn");
+  const detAreas = document.querySelectorAll(".det-area");
+  const detCheckBtn = document.getElementById("det-check-btn");
+  const detResult = document.getElementById("det-result");
+  const dropZone = document.getElementById("drop-zone");
+  const detImageInput = document.getElementById("det-image-input");
+  const detTextInput = document.getElementById("det-text-input");
+
+  let currentDetType = "image";
+  let selectedFile = null;
+
+  // Tab switching
+  detTabBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentDetType = btn.dataset.detType;
+      detTabBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      detAreas.forEach(area => area.style.display = "none");
+      document.getElementById(`det-${currentDetType}-area`).style.display = "block";
+      detResult.style.display = "none";
+    });
+  });
+
+  // Drop zone events
+  if (dropZone) {
+    dropZone.addEventListener("click", () => detImageInput.click());
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("dragover");
+      if (e.dataTransfer.files.length > 0) {
+        selectedFile = e.dataTransfer.files[0];
+        dropZone.querySelector("span").textContent = `Selected: ${selectedFile.name}`;
+      }
+    });
+  }
+
+  if (detImageInput) {
+    detImageInput.addEventListener("change", (e) => {
+      if (e.target.files.length > 0) {
+        selectedFile = e.target.files[0];
+        dropZone.querySelector("span").textContent = `Selected: ${selectedFile.name}`;
+      }
+    });
+  }
+
+  // Check button logic
+  if (detCheckBtn) {
+    detCheckBtn.addEventListener("click", async () => {
+      detResult.style.display = "block";
+      detResult.className = "det-result";
+      detResult.textContent = "Analyzing... 🕵️";
+
+      try {
+        let response;
+        if (currentDetType === "image") {
+          if (!selectedFile) throw new Error("Please select an image first.");
+
+          const formData = new FormData();
+          formData.append("image", selectedFile);
+
+          response = await fetch("/api/aiornot", {
+            method: "POST",
+            body: formData
+          });
+        } else {
+          const text = detTextInput.value.trim();
+          if (text.length < 250) throw new Error("Text must be at least 250 characters.");
+
+          response = await fetch("/api/aiornot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text })
+          });
+        }
+
+        if (!response.ok) throw new Error("Analysis failed. Please try again.");
+
+        const data = await response.json();
+        const isAI = data.report?.is_ai || data.is_ai;
+        const confidence = data.report?.confidence || data.confidence || 0;
+
+        if (isAI) {
+          detResult.classList.add("ai");
+          detResult.textContent = `❌ AI Detected (${Math.round(confidence * 100)}% confidence)`;
+        } else {
+          detResult.classList.add("human");
+          detResult.textContent = `✅ Likely Human (${Math.round((1 - confidence) * 100)}% confidence)`;
+        }
+      } catch (err) {
+        detResult.style.display = "block";
+        detResult.textContent = `Error: ${err.message}`;
+      }
+    });
+  }
+}
 
 /**
  * UI: Fetch and update visitor count
