@@ -22,6 +22,11 @@ export interface Env {
 	 * Pollinations API Key from secrets.
 	 */
 	POLLINATIONS_API_KEY: string;
+
+	/**
+	 * OpenAI API Key from secrets for DALL-E 3.
+	 */
+	OPENAI_API_KEY: string;
 }
 
 /**
