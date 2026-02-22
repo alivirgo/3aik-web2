@@ -416,6 +416,8 @@ async function handleAIOrNotRequest(request: Request, env: Env): Promise<Respons
     const contentType = request.headers.get("content-type") || "";
     let endpoint = "https://api.aiornot.com/v1/reports/image";
     let body: any;
+    const headers = new Headers();
+    headers.set("Authorization", `Bearer ${env.AIORNOT_API_KEY}`);
 
     if (contentType.includes("application/json")) {
       const json = await request.json() as any;
@@ -423,16 +425,23 @@ async function handleAIOrNotRequest(request: Request, env: Env): Promise<Respons
         endpoint = "https://api.aiornot.com/v1/reports/text";
       }
       body = JSON.stringify(json);
+      headers.set("Content-Type", "application/json");
+    } else if (contentType.includes("multipart/form-data")) {
+      // Reconstruct FormData to ensure correct boundary handling in Workers
+      const incomingFormData = await request.formData();
+      const outgoingFormData = new FormData();
+      for (const [key, value] of incomingFormData.entries()) {
+        outgoingFormData.append(key, value as any);
+      }
+      body = outgoingFormData;
+      // Note: We MUST NOT set Content-Type header here; fetch will generate a new boundary
     } else {
-      // For multipart/form-data, we pipe the body stream directly to preserve boundaries
+      // Fallback for direct binary or other types
       body = request.body;
+      if (contentType) headers.set("Content-Type", contentType);
     }
 
-    const headers = new Headers();
-    headers.set("Authorization", `Bearer ${env.AIORNOT_API_KEY}`);
-    if (contentType) {
-      headers.set("Content-Type", contentType);
-    }
+    console.log(`[AIorNot] Proxying to ${endpoint} | Content-Type: ${contentType}`);
 
     const response = await fetch(endpoint, {
       method: "POST",
@@ -440,16 +449,37 @@ async function handleAIOrNotRequest(request: Request, env: Env): Promise<Respons
       body: body
     });
 
-    const data = await response.json();
-    return new Response(JSON.stringify(data), {
-      status: response.status,
+    const responseText = await response.text();
+    let responseData: any;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      responseData = { raw: responseText };
+    }
+
+    if (!response.ok) {
+      console.error(`[AIorNot] Upstream error ${response.status}:`, responseText);
+      return new Response(JSON.stringify({
+        error: `Upstream error (${response.status})`,
+        details: responseData
+      }), {
+        status: response.status,
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*"
+        }
+      });
+    }
+
+    return new Response(JSON.stringify(responseData), {
+      status: 200,
       headers: {
         "content-type": "application/json",
         "access-control-allow-origin": "*"
       }
     });
   } catch (err) {
-    console.error("[AIorNot] Error:", err);
+    console.error("[AIorNot] Failure:", err);
     return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
       status: 500,
       headers: { "content-type": "application/json" }

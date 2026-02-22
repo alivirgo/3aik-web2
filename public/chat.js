@@ -715,7 +715,11 @@ function initGamesLogic() {
           });
         }
 
-        if (!response.ok) throw new Error("Analysis failed. Please try again.");
+        if (!response.ok) {
+          const errData = await response.json();
+          const detailStr = errData.details ? (errData.details.error?.message || JSON.stringify(errData.details)) : "";
+          throw new Error(errData.error + (detailStr ? `: ${detailStr}` : ""));
+        }
 
         const data = await response.json();
         const isAI = data.report?.is_ai || data.is_ai;
