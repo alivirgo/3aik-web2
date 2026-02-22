@@ -140,9 +140,10 @@ function addTextMessage(role, content) {
 /**
  * UI: Render a media message (image/video/gif)
  */
-function addMediaMessage(mediaSrc, caption, type = "image") {
-  const el = document.createElement("div");
+function addMediaMessage(mediaSrc, caption, type = "image", replaceTarget = null) {
+  const el = replaceTarget || document.createElement("div");
   el.className = "message assistant-msg";
+  el.innerHTML = ""; // Clear existing content if replacing
 
   const avatar = document.createElement("div");
   avatar.className = "msg-avatar";
@@ -196,7 +197,10 @@ function addMediaMessage(mediaSrc, caption, type = "image") {
   content.appendChild(downloadBtn);
   el.appendChild(avatar);
   el.appendChild(content);
-  messagesEl.appendChild(el);
+
+  if (!replaceTarget) {
+    messagesEl.appendChild(el);
+  }
 
   scrollToBottom(true);
 }
@@ -326,7 +330,9 @@ async function generateMedia() {
   addTextMessage("user", prompt);
 
   // Create an inline text message that acts as the loading indicator
-  const loadingMsg = addTextMessage("assistant", "🎨 Generating your media...");
+  // We'll target its parent container for replacement
+  const loadingTextEl = addTextMessage("assistant", "🎨 We are generating your image...");
+  const loadingContainer = loadingTextEl.parentElement.parentElement;
 
   try {
     const dimensions = sizeSelect.value.split("x");
@@ -355,20 +361,27 @@ async function generateMedia() {
 
     const type = currentMode === "video" ? "video" : (currentMode === "gif" ? "gif" : "image");
 
-    // Remove the temporary loading message before adding the image/video
-    if (loadingMsg && loadingMsg.parentElement && loadingMsg.parentElement.parentElement) {
-      loadingMsg.parentElement.parentElement.remove();
-    }
-
-    addMediaMessage(mediaSrc, prompt, type);
+    // Replace the loading message with the final media
+    addMediaMessage(mediaSrc, prompt, type, loadingContainer);
   } catch (error) {
     console.error("[Media] Error:", error);
 
-    if (loadingMsg && loadingMsg.parentElement && loadingMsg.parentElement.parentElement) {
-      loadingMsg.parentElement.parentElement.remove();
-    }
+    // Replace the loading message with an error message
+    loadingContainer.innerHTML = "";
+    const avatar = document.createElement("div");
+    avatar.className = "msg-avatar";
+    avatar.textContent = "✨";
 
-    addTextMessage("assistant", `⚠️ Failed to generate: ${error.message}`);
+    const contentEl = document.createElement("div");
+    contentEl.className = "msg-content";
+
+    const textEl = document.createElement("div");
+    textEl.className = "msg-text";
+    textEl.textContent = `⚠️ Failed to generate: ${error.message}`;
+
+    contentEl.appendChild(textEl);
+    loadingContainer.appendChild(avatar);
+    loadingContainer.appendChild(contentEl);
   }
 }
 
