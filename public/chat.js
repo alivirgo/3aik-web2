@@ -24,7 +24,7 @@ const saveSettingsBtn = document.getElementById("save-settings-btn");
 
 // State
 let conversation = [];
-let currentMode = "text"; // text, image, video, gif, coding
+let currentMode = "chat"; // text, image, video, gif, coding
 let isAutoScrollEnabled = true;
 
 const MODEL_INFO = {
@@ -539,3 +539,4 @@ imageModelSelect.addEventListener("change", () => { if (currentMode === "image")
 // Initializations
 hljs.configure({ ignoreUnescapedHTML: true });
 scrollToBottom(true);
+switchMode("chat");
