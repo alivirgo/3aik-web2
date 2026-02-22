@@ -210,7 +210,7 @@
             <p>Play chess against a powerful AI.</p>
             <a href="https://boredhumans.com/chess.php" target="_blank" class="btn-game">Play Now</a>
           </div>
-          
+
           <!-- AI or Not -->
           <div class="game-card wide-card">
             <div class="game-icon">🕵️</div>
@@ -240,7 +240,8 @@
             <div class="game-icon">👤</div>
             <h3>AI Faces</h3>
             <p>Generated portraits of people who don't exist.</p>
-            <button class="btn-game" onclick="window.open('https://thispersondoesnotexist.com', '_blank')">View Face</button>
+            <button class="btn-game" onclick="window.open('https://thispersondoesnotexist.com', '_blank')">View
+              Face</button>
           </div>
 
           <!-- Face Comparison -->
@@ -311,6 +312,20 @@
       <div class="modal-footer">
         <button id="save-settings-btn" class="btn-primary">Save Settings</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Game Overlay -->
+  <div id="game-overlay" class="game-overlay" style="display: none;">
+    <div class="overlay-header">
+      <h2 id="overlay-title">Game Title</h2>
+      <div class="overlay-controls">
+        <button id="refresh-overlay" class="btn-refresh-overlay">🔄 Refresh</button>
+        <button id="close-overlay" class="btn-close-overlay">✕ Close</button>
+      </div>
+    </div>
+    <div class="overlay-body">
+      <iframe id="game-iframe" src="" frameborder="0"></iframe>
     </div>
   </div>
 

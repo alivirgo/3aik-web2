@@ -1074,7 +1074,8 @@ textarea {
   transition: all 0.2s ease;
 }
 
-.drop-zone:hover, .drop-zone.dragover {
+.drop-zone:hover,
+.drop-zone.dragover {
   border-color: var(--primary);
   background: hsla(210, 100%, 65%, 0.05);
   color: var(--primary);
@@ -1122,4 +1123,93 @@ textarea {
   .games-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Game Overlay Styles */
+.game-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-darker);
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  animation: slideInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+.overlay-header {
+  padding: 16px 24px;
+  background: hsla(230, 25%, 5%, 0.95);
+  border-bottom: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.overlay-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  background: var(--title-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.overlay-controls {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-refresh-overlay,
+.btn-close-overlay {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 13px;
+}
+
+.btn-refresh-overlay {
+  background: hsla(210, 100%, 65%, 0.1);
+  border: 1px solid hsla(210, 100%, 65%, 0.2);
+  color: var(--primary);
+}
+
+.btn-refresh-overlay:hover {
+  background: hsla(210, 100%, 65%, 0.2);
+  transform: translateY(-2px);
+}
+
+.btn-close-overlay {
+  background: hsla(0, 80%, 60%, 0.1);
+  border: 1px solid hsla(0, 80%, 60%, 0.2);
+  color: hsl(0, 80%, 70%);
+}
+
+.btn-close-overlay:hover {
+  background: hsla(0, 80%, 60%, 0.2);
+  transform: translateY(-2px);
+}
+
+.overlay-body {
+  flex: 1;
+  background: #fff;
+  /* Some sites don't like dark bg under them */
+  position: relative;
+}
+
+#game-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
 }
