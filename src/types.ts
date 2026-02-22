@@ -17,6 +17,11 @@ export interface Env {
 	 * Binding for visitor statistics KV.
 	 */
 	NUC7_STATS: KVNamespace;
+
+	/**
+	 * Pollinations API Key from secrets.
+	 */
+	POLLINATIONS_API_KEY: string;
 }
 
 /**
