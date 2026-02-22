@@ -82,6 +82,11 @@ export default {
       return handleStatsRequest(request, env);
     }
 
+    // AI or Not Detection
+    if (url.pathname === "/api/aiornot" && request.method === "POST") {
+      return handleAIOrNotRequest(request, env);
+    }
+
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
@@ -399,6 +404,49 @@ async function handleImageRequest(
     return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
       status: 500,
       headers: { "content-type": "application/json" },
+    });
+  }
+}
+
+/**
+ * AI or Not detection handler (API proxy)
+ */
+async function handleAIOrNotRequest(request: Request, env: Env): Promise<Response> {
+  try {
+    const contentType = request.headers.get("content-type") || "";
+    let body: any;
+    let endpoint = "https://api.aiornot.com/v1/reports/image";
+
+    if (contentType.includes("application/json")) {
+      const json = await request.json() as any;
+      if (json.text) {
+        endpoint = "https://api.aiornot.com/v1/reports/text";
+      }
+      body = JSON.stringify(json);
+    } else {
+      // Handle multipart/form-data for image uploads
+      body = await request.blob();
+    }
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.AIORNOT_API_KEY}`,
+        "Content-Type": contentType
+      },
+      body: body
+    });
+
+    const data = await response.json();
+    return new Response(JSON.stringify(data), {
+      status: response.status,
+      headers: { "content-type": "application/json" }
+    });
+  } catch (err) {
+    console.error("[AIorNot] Error:", err);
+    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+      status: 500,
+      headers: { "content-type": "application/json" }
     });
   }
 }

@@ -9,6 +9,7 @@ export interface Env {
 	AI: Ai;
 
 	/**
+	/**
 	 * Binding for static assets.
 	 */
 	ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -27,6 +28,11 @@ export interface Env {
 	 * OpenAI API Key from secrets for DALL-E 3.
 	 */
 	OPENAI_API_KEY: string;
+
+	/**
+	 * AI or Not API Key from secrets.
+	 */
+	AIORNOT_API_KEY: string;
 }
 
 /**
