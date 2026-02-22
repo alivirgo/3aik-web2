@@ -589,6 +589,59 @@ function initGamesLogic() {
   const detImageInput = document.getElementById("det-image-input");
   const detTextInput = document.getElementById("det-text-input");
 
+  // Overlay Elements
+  const gameOverlay = document.getElementById("game-overlay");
+  const gameIframe = document.getElementById("game-iframe");
+  const overlayTitle = document.getElementById("overlay-title");
+  const closeOverlayBtn = document.getElementById("close-overlay");
+  const refreshOverlayBtn = document.getElementById("refresh-overlay");
+
+  if (closeOverlayBtn) {
+    closeOverlayBtn.addEventListener("click", () => {
+      gameOverlay.style.display = "none";
+      gameIframe.src = ""; // Stop the site when closing
+    });
+  }
+
+  if (refreshOverlayBtn) {
+    refreshOverlayBtn.addEventListener("click", () => {
+      const currentSrc = gameIframe.src;
+      gameIframe.src = ""; // Clear
+      setTimeout(() => { gameIframe.src = currentSrc; }, 50); // Restore to trigger reload
+    });
+  }
+
+  // Intercept all game links/buttons
+  document.querySelectorAll(".game-card").forEach(card => {
+    const title = card.querySelector("h3")?.textContent || "Game";
+    const actionBtn = card.querySelector(".btn-game, a");
+
+    if (actionBtn && !card.classList.contains("wide-card")) { // Don't intercept the AI or Not detector
+      actionBtn.addEventListener("click", (e) => {
+        // If it's a link, prevent default
+        const url = actionBtn.getAttribute("href") || (actionBtn.onclick ? null : "");
+        if (url || actionBtn.dataset.url) {
+          e.preventDefault();
+          const targetUrl = url || actionBtn.dataset.url;
+          if (targetUrl) {
+            overlayTitle.textContent = title;
+            gameIframe.src = targetUrl;
+            gameOverlay.style.display = "flex";
+          }
+        } else if (actionBtn.getAttribute("onclick")) {
+          // Special case for ThisPersonDoesNotExist which might use onclick
+          const match = actionBtn.getAttribute("onclick").match(/'([^']+)'/);
+          if (match) {
+            e.preventDefault();
+            overlayTitle.textContent = title;
+            gameIframe.src = match[1];
+            gameOverlay.style.display = "flex";
+          }
+        }
+      });
+    }
+  });
+
   let currentDetType = "image";
   let selectedFile = null;
 

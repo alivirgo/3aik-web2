@@ -414,8 +414,8 @@ async function handleImageRequest(
 async function handleAIOrNotRequest(request: Request, env: Env): Promise<Response> {
   try {
     const contentType = request.headers.get("content-type") || "";
-    let body: any;
     let endpoint = "https://api.aiornot.com/v1/reports/image";
+    let body: any;
 
     if (contentType.includes("application/json")) {
       const json = await request.json() as any;
@@ -424,23 +424,29 @@ async function handleAIOrNotRequest(request: Request, env: Env): Promise<Respons
       }
       body = JSON.stringify(json);
     } else {
-      // Handle multipart/form-data for image uploads
-      body = await request.blob();
+      // For multipart/form-data, we pipe the body stream directly to preserve boundaries
+      body = request.body;
+    }
+
+    const headers = new Headers();
+    headers.set("Authorization", `Bearer ${env.AIORNOT_API_KEY}`);
+    if (contentType) {
+      headers.set("Content-Type", contentType);
     }
 
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${env.AIORNOT_API_KEY}`,
-        "Content-Type": contentType
-      },
+      headers: headers,
       body: body
     });
 
     const data = await response.json();
     return new Response(JSON.stringify(data), {
       status: response.status,
-      headers: { "content-type": "application/json" }
+      headers: {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*"
+      }
     });
   } catch (err) {
     console.error("[AIorNot] Error:", err);
