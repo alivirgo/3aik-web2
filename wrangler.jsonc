@@ -7,7 +7,10 @@
 	"name": "3aik-web2",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-10-08",
-	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "./public"
@@ -24,5 +27,9 @@
 			"id": "0dd27f8bcc504a51b5c8bfde19db00d9"
 		}
 	],
-	"upload_source_maps": true
+	"upload_source_maps": true,
+	"vars": {
+		"VAULT_URL": "https://3aik-vault.alivirgo123.workers.dev",
+		"INTERNAL_BRIDGE_TOKEN": "SET_YOUR_TOKEN_HERE"
+	}
 }
