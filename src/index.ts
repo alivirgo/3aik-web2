@@ -46,7 +46,8 @@ const ALLOWED_IMAGE_MODELS = [
   "video-seedance",
   "video-veo",
   "video-grok-video",
-  "gif-animate"
+  "gif-animate",
+  "dall-e-3"
 ];
 
 // System prompt for chat
@@ -264,6 +265,38 @@ async function handleImageRequest(
 
     const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
     console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
+
+    // DALL-E 3 Logic
+    if (modelToUse === "dall-e-3") {
+      console.log(`[Image Gen] Calling OpenAI DALL-E 3...`);
+      const response = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${env.OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "dall-e-3",
+          prompt: prompt,
+          n: 1,
+          size: `${width}x${height}`
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json() as any;
+        throw new Error(`OpenAI API failed: ${error.error?.message || response.statusText}`);
+      }
+
+      const data = await response.json() as any;
+      if (!data.data?.[0]?.url) throw new Error("No image URL returned from DALL-E 3.");
+
+      return new Response(JSON.stringify({
+        images: [{ url: data.data[0].url, mime: "image/png" }]
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
 
     // Pollinations / Video / GIF Logic - Optimized to return URL directly via Vault Bridge
     if (modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
