@@ -67,6 +67,14 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
+    // Security Check: Ensure Vault is configured
+    if (!env.VAULT_URL || !env.INTERNAL_BRIDGE_TOKEN) {
+      console.error("[Fatal] VAULT_URL or INTERNAL_BRIDGE_TOKEN is not defined in the environment.");
+      return new Response(JSON.stringify({
+        error: "Configuration Error: Bridge Vault not configured. Please set VAULT_URL and INTERNAL_BRIDGE_TOKEN."
+      }), { status: 500, headers: { "content-type": "application/json" } });
+    }
+
     // Text chat
     if (url.pathname === "/api/chat" && request.method === "POST") {
       return handleChatRequest(request, env);
