@@ -547,7 +547,24 @@ modelSelect.addEventListener("change", () => { if (currentMode === "chat") mobil
 codingModelSelect.addEventListener("change", () => { if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value; });
 imageModelSelect.addEventListener("change", () => { if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value; });
 
+/**
+ * UI: Fetch and update visitor count
+ */
+async function updateVisitorCount() {
+  try {
+    const res = await fetch("/api/stats");
+    const data = await res.json();
+    const countEl = document.getElementById("visitor-count");
+    if (countEl && data.count) {
+      countEl.textContent = data.count.toLocaleString();
+    }
+  } catch (e) {
+    console.warn("[Stats] Failed to fetch visitor count:", e);
+  }
+}
+
 // Initializations
 hljs.configure({ ignoreUnescapedHTML: true });
 scrollToBottom(true);
 switchMode("chat");
+updateVisitorCount();
