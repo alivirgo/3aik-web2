@@ -315,6 +315,27 @@ input:checked+.slider-round:before {
   opacity: 0.5;
 }
 
+.visitor-counter {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.9;
+  background: hsla(210, 100%, 65%, 0.05);
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid hsla(210, 100%, 65%, 0.1);
+  width: fit-content;
+}
+
+.visitor-counter #visitor-count {
+  font-weight: 800;
+  color: var(--primary);
+}
+
 .status-indicator {
   display: flex;
   align-items: center;

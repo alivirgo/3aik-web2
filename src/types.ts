@@ -12,6 +12,11 @@ export interface Env {
 	 * Binding for static assets.
 	 */
 	ASSETS: { fetch: (request: Request) => Promise<Response> };
+
+	/**
+	 * Binding for visitor statistics KV.
+	 */
+	NUC7_STATS: KVNamespace;
 }
 
 /**
