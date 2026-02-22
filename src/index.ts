@@ -160,7 +160,7 @@ async function handleChatRequest(
       if (modelToUse === "pollinations-code") pModel = "qwen-coder";
       if (modelToUse === "gemini-search") pModel = "gemini-search"; // Corrected for Pollinations
 
-      const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+      const pRes = await fetch("https://text.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
