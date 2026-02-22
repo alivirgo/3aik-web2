@@ -76,9 +76,39 @@ export default {
       return handleImageRequest(request, env);
     }
 
+    // Visitor Stats
+    if (url.pathname === "/api/stats") {
+      return handleStatsRequest(request, env);
+    }
+
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * Visitor Stats handler (KV based)
+ */
+async function handleStatsRequest(request: Request, env: Env): Promise<Response> {
+  try {
+    const key = "visitor_count";
+    let count = parseInt(await env.NUC7_STATS.get(key) || "0");
+
+    // Increment only for the first request if possible, or just always for simple "hits"
+    // Since this is called by the frontend on load, incrementing here is correct.
+    count++;
+    await env.NUC7_STATS.put(key, count.toString());
+
+    return new Response(JSON.stringify({ count }), {
+      headers: { "content-type": "application/json" }
+    });
+  } catch (err) {
+    console.error("[Stats] Error:", err);
+    return new Response(JSON.stringify({ count: 0, error: "Stats unavailable" }), {
+      status: 200, // Return 200 so frontend doesn't break, just shows 0
+      headers: { "content-type": "application/json" }
+    });
+  }
+}
 
 /**
  * Text chat handler (LLaMA with streaming)

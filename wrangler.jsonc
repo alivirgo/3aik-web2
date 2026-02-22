@@ -18,5 +18,11 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"kv_namespaces": [
+		{
+			"binding": "NUC7_STATS",
+			"id": "0dd27f8bcc504a51b5c8bfde19db00d9"
+		}
+	],
 	"upload_source_maps": true
 }
