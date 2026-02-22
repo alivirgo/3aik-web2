@@ -13,7 +13,8 @@ import { Env, ChatMessage } from "./types";
 // Models
 const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
-const POLLINATIONS_API_KEY = "pk_smed4cvxkQtCxNFz";
+// API KEY REMOVED - NOW IN VAULT
+
 
 const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
@@ -159,11 +160,13 @@ async function handleChatRequest(
       let pModel = "openai";
       if (modelToUse === "pollinations-code") pModel = "qwen-coder";
       if (modelToUse === "gemini-search") pModel = "gemini-search"; // Corrected for Pollinations
-      const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+
+      // Call vault bridge instead of direct Gen Pollinations
+      const pRes = await fetch(`${env.VAULT_URL}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${POLLINATIONS_API_KEY}`
+          "Authorization": `Bearer ${env.INTERNAL_BRIDGE_TOKEN}`
         },
         body: JSON.stringify({
           messages: sanitizedMessages,
@@ -264,28 +267,32 @@ async function handleImageRequest(
     const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
     console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
 
-    // Pollinations / Video / GIF Logic - Optimized to return URL directly
+    // Pollinations / Video / GIF Logic - Optimized to return URL directly via Vault Bridge
     if (modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
       const seed = Math.floor(Math.random() * 10000000);
       let pUrl = "";
 
       if (modelToUse.startsWith("pollinations-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
       } else if (modelToUse.startsWith("gif-")) {
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${POLLINATIONS_API_KEY}`;
+        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
       }
 
-      console.log(`[Media Gen] Returning direct URL with key: ${pUrl}`);
+      console.log(`[Media Gen] Requesting via bridge: ${pUrl}`);
+
+      // Wrap with Vault Bridge to append API key securely
+      const encodedUrl = encodeURIComponent(pUrl);
+      const vaultWrappedUrl = `${env.VAULT_URL}/prompt?url=${encodedUrl}`;
 
       let mime = "image/png";
       if (modelToUse.startsWith("video-")) mime = "video/mp4";
       if (modelToUse.startsWith("gif-")) mime = "image/gif";
 
-      return new Response(JSON.stringify({ images: [{ url: pUrl, mime }] }), {
+      return new Response(JSON.stringify({ images: [{ url: vaultWrappedUrl, mime }] }), {
         headers: { "content-type": "application/json" },
       });
     }
