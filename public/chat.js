@@ -750,6 +750,11 @@ function initGamesLogic() {
         if (currentDetType === "image") {
           if (!selectedFile) throw new Error("Please select an image first.");
 
+          // AI or Not v2 limit is 10MB
+          if (selectedFile.size > 10 * 1024 * 1024) {
+            throw new Error("File too large. Maximum size is 10MB.");
+          }
+
           const formData = new FormData();
           formData.append("image", selectedFile);
 
@@ -775,8 +780,20 @@ function initGamesLogic() {
         }
 
         const data = await response.json();
-        const isAI = data.report?.is_ai || data.is_ai;
-        const confidence = data.report?.confidence || data.confidence || 0;
+
+        // AI or Not v2 structure
+        let isAI = false;
+        let confidence = 0;
+
+        if (currentDetType === "image") {
+          // v2 image report: data.report.ai_generated.is_detected / confidence
+          isAI = data.report?.ai_generated?.is_detected || data.is_ai;
+          confidence = data.report?.ai_generated?.confidence || data.confidence || 0;
+        } else {
+          // v2 text report: data.report.ai_text.is_detected / confidence
+          isAI = data.report?.ai_text?.is_detected || data.is_ai;
+          confidence = data.report?.ai_text?.confidence || data.confidence || 0;
+        }
 
         if (isAI) {
           detResult.classList.add("ai");

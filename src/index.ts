@@ -414,7 +414,7 @@ async function handleImageRequest(
 async function handleAIOrNotRequest(request: Request, env: Env): Promise<Response> {
   try {
     const contentType = request.headers.get("content-type") || "";
-    let endpoint = "https://api.aiornot.com/v1/reports/image";
+    let endpoint = "https://api.aiornot.com/v2/image/sync";
     let body: any;
     const headers = new Headers();
     headers.set("Authorization", `Bearer ${env.AIORNOT_API_KEY}`);
@@ -422,7 +422,7 @@ async function handleAIOrNotRequest(request: Request, env: Env): Promise<Respons
     if (contentType.includes("application/json")) {
       const json = await request.json() as any;
       if (json.text) {
-        endpoint = "https://api.aiornot.com/v1/reports/text";
+        endpoint = "https://api.aiornot.com/v2/text/sync";
       }
       body = JSON.stringify(json);
       headers.set("Content-Type", "application/json");
