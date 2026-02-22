@@ -17,16 +17,6 @@ export interface Env {
 	 * Binding for visitor statistics KV.
 	 */
 	NUC7_STATS: KVNamespace;
-
-	/**
-	 * URL of the private vault bridge worker.
-	 */
-	VAULT_URL: string;
-
-	/**
-	 * Token to authorize requests to the vault bridge.
-	 */
-	INTERNAL_BRIDGE_TOKEN: string;
 }
 
 /**
