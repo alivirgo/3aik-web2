@@ -595,6 +595,56 @@ function initGamesLogic() {
   const overlayTitle = document.getElementById("overlay-title");
   const closeOverlayBtn = document.getElementById("close-overlay");
   const refreshOverlayBtn = document.getElementById("refresh-overlay");
+  const overlayBody = document.querySelector(".overlay-body");
+
+  const clippingConfig = {
+    "AI Chess": { x: 250, y: 150, width: 1050, height: 850 },
+    "Face Battle": { x: 100, y: 80, width: 900, height: 750 },
+    "AI Waifu": { x: 120, y: 120, width: 1300, height: 750 },
+    "AI Faces": { x: 0, y: 0, width: 1024, height: 1024 },
+    "AI Rentals": { x: 0, y: 0, width: 1200, height: 900 }
+  };
+
+  function applyClipping(title) {
+    const config = clippingConfig[title];
+    if (!config) {
+      // Default / Full Screen
+      gameIframe.style.width = "100%";
+      gameIframe.style.height = "100%";
+      gameIframe.style.left = "0";
+      gameIframe.style.top = "0";
+      gameIframe.style.transform = "none";
+      return;
+    }
+
+    const viewportWidth = overlayBody.clientWidth;
+    const viewportHeight = overlayBody.clientHeight;
+
+    // Calculate scale to fit
+    const scaleX = viewportWidth / config.width;
+    const scaleY = viewportHeight / config.height;
+    const scale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
+
+    gameIframe.style.width = `${config.width}px`;
+    gameIframe.style.height = `${config.height}px`;
+
+    // Position within the viewport center
+    const scaledWidth = config.width * scale;
+    const scaledHeight = config.height * scale;
+
+    const centeringOffsetX = (viewportWidth - scaledWidth) / 2;
+    const centeringOffsetY = (viewportHeight - scaledHeight) / 2;
+
+    gameIframe.style.left = `${centeringOffsetX - (config.x * scale)}px`;
+    gameIframe.style.top = `${centeringOffsetY - (config.y * scale)}px`;
+    gameIframe.style.transform = `scale(${scale})`;
+  }
+
+  window.addEventListener("resize", () => {
+    if (gameOverlay.style.display === "flex") {
+      applyClipping(overlayTitle.textContent);
+    }
+  });
 
   if (closeOverlayBtn) {
     closeOverlayBtn.addEventListener("click", () => {
@@ -627,6 +677,8 @@ function initGamesLogic() {
             overlayTitle.textContent = title;
             gameIframe.src = targetUrl;
             gameOverlay.style.display = "flex";
+            // Wait for display:flex to calculate dimensions
+            setTimeout(() => applyClipping(title), 50);
           }
         } else if (actionBtn.getAttribute("onclick")) {
           // Special case for ThisPersonDoesNotExist which might use onclick
@@ -636,6 +688,7 @@ function initGamesLogic() {
             overlayTitle.textContent = title;
             gameIframe.src = match[1];
             gameOverlay.style.display = "flex";
+            setTimeout(() => applyClipping(title), 50);
           }
         }
       });
