@@ -314,8 +314,10 @@ async function handleImageRequest(
         else if (searchRes && typeof searchRes === "object") searchContext = (searchRes as any).response || (searchRes as any).result || "";
         
         if (searchContext) {
-          console.log("[Image Gen] Injected Search Context:", searchContext);
-          prompt = `Reference Context: ${searchContext}\n\nUser Prompt: ${prompt}`;
+          // Clean search context for URL safety (no newlines, capped length)
+          const cleanContext = searchContext.replace(/\n/g, " ").slice(0, 150);
+          console.log("[Image Gen] Injected Search Context:", cleanContext);
+          prompt = `${cleanContext} ${prompt}`;
         }
       } catch (sErr) {
         console.warn("[Image Gen] Search failed:", sErr);
@@ -382,12 +384,13 @@ async function handleImageRequest(
         if (pModel === "portrait") pModel = "flux-realism";
         if (pModel === "any") pModel = "flux-anime";
         
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
+        // Remove key from URL as it's not needed for GET and might cause issues
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
       } else if (modelToUse.startsWith("gif-")) {
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
       }
 
       console.log(`[Media Gen] Returning direct URL with key: ${pUrl}`);
@@ -565,8 +568,9 @@ async function handleAIOrNotRequest(request: Request, env: Env): Promise<Respons
 function u8ToBase64(u8: any): string | undefined {
   if (!u8) return undefined;
   const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
-  // Use TextDecoder with latin1 for near-native performance binary conversion
-  const decoder = new TextDecoder('latin1');
-  const binary = decoder.decode(bytes);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
   return btoa(binary);
 }
