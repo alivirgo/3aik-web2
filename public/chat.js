@@ -929,5 +929,5 @@ async function updateVisitorCount() {
 // Initializations
 hljs.configure({ ignoreUnescapedHTML: true });
 scrollToBottom(true);
-switchMode("chat");
+switchMode("super-chat");
 updateVisitorCount();
