@@ -255,7 +255,7 @@ async function generateText() {
       }))
       .filter(m => m.content);
 
-    const response = await fetch("/api/chat", {
+    const response = await fetch(currentMode === "super-chat" ? "/api/super-chat" : "/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -429,7 +429,7 @@ function parseSSE(buffer) {
  * Event Listeners
  */
 btnSend.addEventListener("click", () => {
-  if (currentMode === "chat" || currentMode === "coding") generateText();
+  if (currentMode === "chat" || currentMode === "coding" || currentMode === "super-chat") generateText();
   else generateMedia();
 });
 
@@ -562,7 +562,20 @@ function switchMode(mode) {
 
   // Hide input area for games mode
   const inputArea = document.querySelector(".input-area");
-  if (inputArea) inputArea.style.display = (mode === "games") ? "none" : "block";
+  if (inputArea) {
+    if (mode === "games") {
+      inputArea.style.display = "none";
+    } else {
+      inputArea.style.display = "block";
+      // Update placeholder for super-chat
+      const textarea = document.getElementById("prompt-input");
+      if (textarea) {
+        textarea.placeholder = mode === "super-chat" 
+          ? "Ask Super Chat (Gemini + ChatGPT + Llama)..." 
+          : "Type your message or image prompt...";
+      }
+    }
+  }
 
   if (mode === "games") {
     initGamesLogic();

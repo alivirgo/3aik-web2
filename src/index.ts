@@ -72,6 +72,11 @@ export default {
       return handleChatRequest(request, env);
     }
 
+    // Super Chat
+    if (url.pathname === "/api/super-chat" && request.method === "POST") {
+      return handleSuperChatRequest(request, env);
+    }
+
     // Image generation
     if (url.pathname === "/api/image" && request.method === "POST") {
       return handleImageRequest(request, env);
@@ -573,4 +578,104 @@ function u8ToBase64(u8: any): string | undefined {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+/**
+ * Super Chat handler (Multi-model aggregation + summarization)
+ */
+async function handleSuperChatRequest(request: Request, env: Env): Promise<Response> {
+  try {
+    const { messages = [] } = (await request.json()) as { messages: ChatMessage[] };
+    const lastUserMessage = messages[messages.length - 1]?.content || "";
+
+    // Hard-coded response for model identification
+    const modelQueries = ["who are you", "what model are you", "which model are you", "what are you"];
+    if (modelQueries.some(q => lastUserMessage.toLowerCase().includes(q))) {
+      return new Response(`data: ${JSON.stringify({ response: "I am 3aik- Gemini, Llama and Chatgpt in one." })}\n\n`, {
+        headers: { "content-type": "text/event-stream" }
+      });
+    }
+
+    console.log(`[Super Chat] Starting multi-model fetch for prompt: "${lastUserMessage.slice(0, 50)}..."`);
+
+    // 1. Fetch from 3 models in parallel
+    const [pGemini, pChatGPT, pLlama] = [
+      // Gemini (via Pollinations)
+      fetch("https://gen.pollinations.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
+        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "gemini", stream: false })
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+
+      // ChatGPT (via Pollinations)
+      fetch("https://gen.pollinations.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
+        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "openai", stream: false })
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+
+      // Llama (via Workers AI)
+      env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast" as any, {
+        messages: [{ role: "user", content: lastUserMessage }],
+        stream: false
+      }).catch(() => null)
+    ];
+
+    const [resGemini, resChatGPT, resLlama] = await Promise.all([pGemini, pChatGPT, pLlama]);
+
+    const getText = (res: any) => {
+      if (!res) return "";
+      if (typeof res === "string") return res;
+      if (res.choices?.[0]?.message?.content) return res.choices[0].message.content;
+      if (res.response) return res.response;
+      return "";
+    };
+
+    const textGemini = getText(resGemini);
+    const textChatGPT = getText(resChatGPT);
+    const textLlama = getText(resLlama);
+
+    console.log(`[Super Chat] Fetched responses. Gemini: ${textGemini.length}, ChatGPT: ${textChatGPT.length}, Llama: ${textLlama.length}`);
+
+    // 2. Summarize using Gemini
+    const summarizationPrompt = `
+You are 3aik AI. I will provide you with 3 different responses to the same user query: "${lastUserMessage}".
+Your task is to synthesize these into one final, highly authentic, solid, and comprehensive response.
+Acknowledge that this is a "Super Chat" response combining insights from three major models.
+
+RESPONSE 1 (Gemini):
+${textGemini || "(No response)"}
+
+RESPONSE 2 (ChatGPT):
+${textChatGPT || "(No response)"}
+
+RESPONSE 3 (Llama):
+${textLlama || "(No response)"}
+
+Final Cumulative Response:`;
+
+    const summaryRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
+      body: JSON.stringify({
+        messages: [{ role: "system", content: "You are a master synthesizer. Create a unified, authoritative response." }, { role: "user", content: summarizationPrompt }],
+        model: "gemini",
+        stream: true
+      })
+    });
+
+    if (!summaryRes.ok) throw new Error("Failed to generate summary from Gemini");
+
+    return new Response(summaryRes.body, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      },
+    });
+
+  } catch (err) {
+    console.error("[Super Chat] Error:", err);
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+  }
 }
