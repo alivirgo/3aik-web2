@@ -161,12 +161,12 @@ async function handleChatRequest(
     console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
 
     // Pollinations Chat Logic
-    if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
+    if (modelToUse.startsWith("pollinations-") || modelToUse === "searchgpt") {
       let pModel = "openai";
       if (modelToUse === "pollinations-code") pModel = "qwen-coder";
       if (modelToUse === "gemini-search") pModel = "gemini-search"; // Corrected for Pollinations
 
-      const pRes = await fetch("https://text.pollinations.ai/v1/chat/completions", {
+      const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -313,9 +313,9 @@ async function handleImageRequest(
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("gif-")) {
-        pUrl = `https://gen.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       }
 
       console.log(`[Media Gen] Returning direct URL with key: ${pUrl}`);
