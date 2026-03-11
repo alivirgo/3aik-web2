@@ -200,7 +200,7 @@ async function handleChatRequest(
     // Pollinations Chat Logic
     if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
       let pModel = "openai";
-      if (modelToUse === "pollinations-code") pModel = "claude"; // Renamed to Claude
+      if (modelToUse === "pollinations-code") pModel = "qwen-coder"; // Reverted to original model per user request
       if (modelToUse === "gemini-search") pModel = "gemini-search"; 
 
       const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
