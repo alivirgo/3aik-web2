@@ -40,6 +40,7 @@ const MODEL_INFO = {
   "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient model for fast and accurate chat.",
   "pollinations-chat": "Pollinations AI: Advanced multimodal chat powered by various state-of-the-art models.",
   "pollinations-code": "Pollinations Coder: Specialized AI for high-quality code generation and technical problem solving.",
+  "gemini-search": "Live Search AI: Specialized model with real-time web search capabilities.",
 
   // Coding Models
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
