@@ -51,7 +51,7 @@ const MODEL_INFO = {
   "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
 
   // Image Models
-  "pollinations-turbo": "GPT Image 1 Mini: High-speed, high-quality image generation via Pollinations Turbo.",
+  "pollinations-turbo": "Gemini Image 1 Mini: High-speed, high-quality image generation via Pollinations Turbo.",
   "pollinations-flux": "Flux Pro (Pollinations): State-of-the-art HD image generation with superior detail.",
   "pollinations-any": "Anime & Art (Pollinations): Optimized for artistic styles and anime aesthetics.",
   "pollinations-dream": "Dream Artist (Pollinations): Surreal and imaginative creative image generation.",
@@ -364,6 +364,7 @@ async function generateMedia() {
         model: currentMode === "video" ? videoModelSelect.value : (currentMode === "gif" ? gifModelSelect.value : imageModelSelect.value),
         width: parseInt(dimensions[0]),
         height: parseInt(dimensions[1]),
+        search: searchToggle.checked, // Pass search toggle state
       }),
     });
 

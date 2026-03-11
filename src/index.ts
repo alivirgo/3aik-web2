@@ -291,12 +291,36 @@ async function handleImageRequest(
   env: Env
 ): Promise<Response> {
   try {
-    const { prompt, model = DEFAULT_IMAGE_MODEL, width = 1024, height = 1024 } = (await request.json()) as {
+    const body = (await request.json()) as {
       prompt: string,
       model?: string,
       width?: number,
-      height?: number
+      height?: number,
+      search?: boolean
     };
+    
+    let { prompt, model: modelToUse = DEFAULT_IMAGE_MODEL, width = 1024, height = 1024, search = false } = body;
+
+    // Search Augmentation for Images
+    if (search) {
+      console.log("[Image Gen] Search enabled, fetching context...");
+      try {
+        const searchRes = await env.AI.run("@cf/google/gemini-search" as any, {
+          prompt: `Give me a very short, highly descriptive visual summary (max 30 words) for an image prompt based on this: ${prompt}. Focus only on visual details.`,
+        });
+        
+        let searchContext = "";
+        if (typeof searchRes === "string") searchContext = searchRes;
+        else if (searchRes && typeof searchRes === "object") searchContext = (searchRes as any).response || (searchRes as any).result || "";
+        
+        if (searchContext) {
+          console.log("[Image Gen] Injected Search Context:", searchContext);
+          prompt = `Reference Context: ${searchContext}\n\nUser Prompt: ${prompt}`;
+        }
+      } catch (sErr) {
+        console.warn("[Image Gen] Search failed:", sErr);
+      }
+    }
 
     if (!prompt) {
       return new Response(
