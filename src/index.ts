@@ -645,9 +645,12 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
 
     // 2. Summarize using a more reliable model (e.g., openai/gpt-4o-mini)
     const summarizationPrompt = `
-You are 3aik AI. I will provide you with 3 different responses to the same user query: "${lastUserMessage}".
+User Query: "${lastUserMessage}"
+
+I have 3 responses from Gemini, ChatGPT, and Claude. 
 Your task is to synthesize these into one final, highly authentic, solid, and comprehensive response.
-Acknowledge that this is a "Super Chat" response combining insights from three major models: Gemini, ChatGPT, and Claude.
+DO NOT explain that you are synthesizing. Just provide the final answer.
+Your response MUST start with: "Super Chat response from 3aik - Gemini, Chatgpt & Claude: "
 
 RESPONSE 1 (Gemini):
 ${textGemini || "(No response)"}
@@ -665,7 +668,7 @@ Final Cumulative Response:`;
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
       body: JSON.stringify({
         messages: [
-            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple AI models into a single, cohesive, and authoritative response for the user. Always maintain a professional and helpful tone." }, 
+            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple AI models into a single, cohesive, and authoritative response. Start your response with exactly: 'Super Chat response from 3aik - Gemini, Chatgpt & Claude: '. Do not include any other meta-commentary about the models or the synthesis process." }, 
             { role: "user", content: summarizationPrompt }
         ],
         model: "openai", // Switching to openai for better reliability in summarization
@@ -676,7 +679,7 @@ Final Cumulative Response:`;
     // Fallback to unsummarized if summarization completely fails
     if (!summaryRes.ok) {
         console.warn("[Super Chat] Summarization failed, falling back to direct responses.");
-        const fallbackText = `**[Super Chat Results]**\n\n**Gemini:**\n${textGemini || "_No response_"}\n\n**ChatGPT:**\n${textChatGPT || "_No response_"}\n\n**Claude:**\n${textClaude || "_No response_"}`;
+        const fallbackText = `Super Chat response from 3aik - Gemini, Chatgpt & Claude: \n\n**Gemini:**\n${textGemini || "_No response_"}\n\n**ChatGPT:**\n${textChatGPT || "_No response_"}\n\n**Claude:**\n${textClaude || "_No response_"}`;
         return new Response(`data: ${JSON.stringify({ response: fallbackText })}\n\n`, {
             headers: { "content-type": "text/event-stream" }
         });
