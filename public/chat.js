@@ -571,7 +571,7 @@ function switchMode(mode) {
       const textarea = document.getElementById("prompt-input");
       if (textarea) {
         textarea.placeholder = mode === "super-chat" 
-          ? "Ask Super Chat (Gemini + ChatGPT + Llama)..." 
+          ? "Ask Super Chat (Gemini + ChatGPT + Claude)..." 
           : "Type your message or image prompt...";
       }
     }
