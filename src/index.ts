@@ -161,7 +161,7 @@ async function handleChatRequest(
     console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
 
     // Pollinations Chat Logic
-    if (modelToUse.startsWith("pollinations-") || modelToUse === "searchgpt") {
+    if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
       let pModel = "openai";
       if (modelToUse === "pollinations-code") pModel = "qwen-coder";
       if (modelToUse === "gemini-search") pModel = "gemini-search"; // Corrected for Pollinations
