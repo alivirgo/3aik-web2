@@ -67,6 +67,10 @@
           <span class="icon">🎮</span>
           <span>Games</span>
         </button>
+        <button class="nav-btn super-btn" data-mode="super-chat" id="super-chat-btn">
+          <span class="icon">⚡</span>
+          <span>Super Chat</span>
+        </button>
       </nav>
 
       <div class="sidebar-section" id="text-model-section">
@@ -107,17 +111,17 @@
       <div class="sidebar-section" id="image-model-section" style="display: none;">
         <div class="section-label">Image Model</div>
         <select id="image-model-select" class="modern-select">
+          <option value="@cf/leonardoai/phoenix-1.0" selected>Phoenix 1.0</option>
           <option value="pollinations-turbo">Gemini Image 1 Mini</option>
-          <option value="pollinations-flux">Flux Pro (Ultra-HD)</option>
           <option value="pollinations-any">Anime & Art</option>
           <option value="pollinations-dream">Dream Artist</option>
+          <option value="pollinations-flux">Flux Pro (Ultra-HD)</option>
           <option value="pollinations-pixart">PixArt 1024</option>
           <option value="pollinations-portrait">Realistic Portrait</option>
           <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning</option>
           <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell</option>
           <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">Stable Diffusion XL</option>
           <option value="@cf/stabilityai/stable-diffusion-3-large-turbo">SDXL 3.0 Turbo</option>
-          <option value="@cf/leonardoai/phoenix-1.0" selected>Phoenix 1.0</option>
           <option value="dall-e-3">DALL-E 3 (OpenAI)</option>
         </select>
       </div>
@@ -185,6 +189,7 @@
             <option value="video">Video</option>
             <option value="gif">GIF</option>
             <option value="games">Games</option>
+            <option value="super-chat">Super Chat</option>
           </select>
           <select id="mobile-model-select" class="mobile-selector mobile-only">
             <!-- Dynamic options -->
