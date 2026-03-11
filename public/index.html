@@ -43,7 +43,11 @@
       </div>
 
       <nav class="nav-menu">
-        <button class="nav-btn active" data-mode="chat">
+        <button class="nav-btn super-btn" data-mode="super-chat" id="super-chat-btn">
+          <span class="icon">⚡</span>
+          <span>Super Chat</span>
+        </button>
+        <button class="nav-btn" data-mode="chat">
           <span class="icon">💬</span>
           <span>Chat</span>
         </button>
@@ -66,10 +70,6 @@
         <button class="nav-btn" data-mode="games">
           <span class="icon">🎮</span>
           <span>Games</span>
-        </button>
-        <button class="nav-btn super-btn" data-mode="super-chat" id="super-chat-btn">
-          <span class="icon">⚡</span>
-          <span>Super Chat</span>
         </button>
       </nav>
 
@@ -204,11 +204,13 @@
           <!-- Initial welcome message -->
           <div class="message assistant-msg">
             <div class="msg-avatar">🤖</div>
+          <div class="message assistant-msg">
+            <div class="msg-avatar">🤖</div>
             <div class="msg-content">
-              <div class="msg-text">Welcome to 3aikGPT! I can help you with text, code, images, and videos. How can I
-                assist you today?</div>
-              <div class="msg-subtext">3aikGPT. No login required.</div>
+              <div class="msg-text">Welcome to 3aik — your unified AI Studio. I harness the combined power of Gemini, ChatGPT, and Llama to provide the most authentic and solid answers. No login. No limits. Just pure intelligence. How can I help you today?</div>
+              <div class="msg-subtext">3aik AI Studio • Multi-model Intelligence • No Login Required</div>
             </div>
+          </div>
           </div>
         </div>
         <div id="loading" class="loading-indicator" style="display: none;">
