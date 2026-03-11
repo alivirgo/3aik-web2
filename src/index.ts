@@ -598,27 +598,27 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
 
     console.log(`[Super Chat] Starting multi-model fetch for prompt: "${lastUserMessage.slice(0, 50)}..."`);
 
-    // 1. Fetch from 3 models in parallel
+    // 1. Fetch from 3 models in parallel using standard text endpoint
     const [pGemini, pChatGPT, pClaude] = [
-      // Gemini (via Pollinations)
-      fetch("https://gen.pollinations.ai/v1/chat/completions", {
+      // Gemini (via gemini-search)
+      fetch("https://text.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
-        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "gemini", stream: false })
+        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "gemini-search", stream: false })
       }).then(r => r.ok ? r.json() : null).catch(() => null),
 
-      // ChatGPT (via Pollinations)
-      fetch("https://gen.pollinations.ai/v1/chat/completions", {
+      // ChatGPT (via openai)
+      fetch("https://text.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
         body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "openai", stream: false })
       }).then(r => r.ok ? r.json() : null).catch(() => null),
 
-      // Claude (via Pollinations)
-      fetch("https://gen.pollinations.ai/v1/chat/completions", {
+      // Claude (via qwen-coder for better stability / free tier)
+      fetch("https://text.pollinations.ai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
-        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "claude", stream: false })
+        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "qwen-coder", stream: false })
       }).then(r => r.ok ? r.json() : null).catch(() => null)
     ];
 
@@ -636,7 +636,7 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
     const textChatGPT = getText(resChatGPT);
     const textClaude = getText(resClaude);
 
-    console.log(`[Super Chat] Fetched responses. Gemini: ${textGemini.length}, ChatGPT: ${textChatGPT.length}, Claude: ${textClaude.length}`);
+    console.log(`[Super Chat] Fetched. Gemini: ${textGemini.length}, ChatGPT: ${textChatGPT.length}, Claude: ${textClaude.length}`);
 
     // If all models failed, return an error
     if (!textGemini && !textChatGPT && !textClaude) {
@@ -663,15 +663,15 @@ ${textClaude || "(No response)"}
 
 Final Cumulative Response:`;
 
-    let summaryRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+    let summaryRes = await fetch("https://text.pollinations.ai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
       body: JSON.stringify({
         messages: [
-            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple AI models into a single, cohesive, and authoritative response. Start your response with exactly: 'Super Chat response from 3aik - Gemini, Chatgpt & Claude: '. Do not include any other meta-commentary about the models or the synthesis process." }, 
+            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple AI models into a single, cohesive, and authoritative response. Start your response with exactly: 'Super Chat response from 3aik - Gemini, Chatgpt & Claude: '. DO NOT include any other meta-commentary, notes about model failures, or synthesis processing remarks. Just the direct final answer." }, 
             { role: "user", content: summarizationPrompt }
         ],
-        model: "openai", // Switching to openai for better reliability in summarization
+        model: "openai", // Use stable openai model for summarization
         stream: true
       })
     });
