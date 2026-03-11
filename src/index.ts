@@ -8,6 +8,7 @@
  * @license MIT
  */
 import { Env, ChatMessage } from "./types";
+import { findPredefinedAnswer } from "./faq";
 
 const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
@@ -129,14 +130,7 @@ async function handleChatRequest(
   env: Env
 ): Promise<Response> {
   try {
-    const {
-      messages = [],
-      model = DEFAULT_TEXT_MODEL,
-      temperature = 0.7,
-      max_tokens = 1024,
-      systemPrompt = "",
-      search = false
-    } = (await request.json()) as {
+    const { messages = [], model, temperature = 0.7, max_tokens = 2048, systemPrompt, search = false } = (await request.json()) as {
       messages: ChatMessage[],
       model?: string,
       temperature?: number,
@@ -144,6 +138,15 @@ async function handleChatRequest(
       systemPrompt?: string,
       search?: boolean
     };
+
+    const lastUserMessage = messages[messages.length - 1]?.content || "";
+    const predefined = findPredefinedAnswer(lastUserMessage);
+    if (predefined) {
+      console.log(`[Chat] Found predefined answer for: "${lastUserMessage.slice(0, 30)}..."`);
+      return new Response(`data: ${JSON.stringify({ response: predefined })}\n\n`, {
+        headers: { "content-type": "text/event-stream" }
+      });
+    }
 
     // Safety check for model ID
     let modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
@@ -588,10 +591,19 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
     const { messages = [] } = (await request.json()) as { messages: ChatMessage[] };
     const lastUserMessage = messages[messages.length - 1]?.content || "";
 
+    // Fast Response: Check for predefined answers
+    const predefined = findPredefinedAnswer(lastUserMessage);
+    if (predefined) {
+      console.log(`[Super Chat] Found predefined answer for: "${lastUserMessage.slice(0, 30)}..."`);
+      return new Response(`data: ${JSON.stringify({ response: predefined })}\n\n`, {
+        headers: { "content-type": "text/event-stream" }
+      });
+    }
+
     // Hard-coded response for model identification
     const modelQueries = ["who are you", "what model are you", "which model are you", "what are you"];
     if (modelQueries.some(q => lastUserMessage.toLowerCase().includes(q))) {
-      return new Response(`data: ${JSON.stringify({ response: "I am 3aik- Gemini, Claude and Chatgpt in one." })}\n\n`, {
+      return new Response(`data: ${JSON.stringify({ response: "I am 3aik - an advanced AI assistant." })}\n\n`, {
         headers: { "content-type": "text/event-stream" }
       });
     }
@@ -647,18 +659,18 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
     const summarizationPrompt = `
 User Query: "${lastUserMessage}"
 
-I have 3 responses from Gemini, ChatGPT, and Claude. 
+I have multiple sources with different perspectives.
 Your task is to synthesize these into one final, highly authentic, solid, and comprehensive response.
 DO NOT explain that you are synthesizing. Just provide the final answer.
-Your response MUST start with: "Super Chat response from 3aik - Gemini, Chatgpt & Claude: "
+Your response MUST start with: "Super Chat response from 3aik: "
 
-RESPONSE 1 (Gemini):
+RESPONSE 1:
 ${textGemini || "(No response)"}
 
-RESPONSE 2 (ChatGPT):
+RESPONSE 2:
 ${textChatGPT || "(No response)"}
 
-RESPONSE 3 (Claude):
+RESPONSE 3:
 ${textClaude || "(No response)"}
 
 Final Cumulative Response:`;
@@ -668,7 +680,7 @@ Final Cumulative Response:`;
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
       body: JSON.stringify({
         messages: [
-            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple AI models into a single, cohesive, and authoritative response. Start your response with exactly: 'Super Chat response from 3aik - Gemini, Chatgpt & Claude: '. DO NOT include any other meta-commentary, notes about model failures, or synthesis processing remarks. Just the direct final answer." }, 
+            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple sources into a single, cohesive, and authoritative response. Start your response with exactly: 'Super Chat response from 3aik: '. Do not include any other meta-commentary about the sources or the synthesis process." }, 
             { role: "user", content: summarizationPrompt }
         ],
         model: "openai", // Use stable openai model for summarization
@@ -679,8 +691,8 @@ Final Cumulative Response:`;
     // Fallback to unsummarized if summarization completely fails
     if (!summaryRes.ok) {
         console.warn("[Super Chat] Summarization failed, falling back to direct responses.");
-        const fallbackText = `Super Chat response from 3aik - Gemini, Chatgpt & Claude: \n\n**Gemini:**\n${textGemini || "_No response_"}\n\n**ChatGPT:**\n${textChatGPT || "_No response_"}\n\n**Claude:**\n${textClaude || "_No response_"}`;
-        return new Response(`data: ${JSON.stringify({ response: fallbackText })}\n\n`, {
+        const fallbackText = `Super Chat response from 3aik: \n\n${textGemini ? `**Source A:**\n${textGemini}\n\n` : ""}${textChatGPT ? `**Source B:**\n${textChatGPT}\n\n` : ""}${textClaude ? `**Source C:**\n${textClaude}` : ""}`;
+        return new Response(`data: ${JSON.stringify({ response: fallbackText.trim() })}\n\n`, {
             headers: { "content-type": "text/event-stream" }
         });
     }
