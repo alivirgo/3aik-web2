@@ -605,6 +605,9 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
     if (modelQueries.some(q => lastUserMessage.toLowerCase().includes(q))) {
       return new Response(`data: ${JSON.stringify({ response: "I am 3aik - an advanced AI assistant." })}\n\n`, {
         headers: { "content-type": "text/event-stream" }
+      });
+    }
+
     console.log(`[Super Chat] Starting multi-model fetch for prompt: "${lastUserMessage.slice(0, 50)}..."`);
 
     // 1. Fetch from 3 models in parallel with individual timeouts
