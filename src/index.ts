@@ -329,8 +329,12 @@ async function handleImageRequest(
       );
     }
 
-    const modelToUse = ALLOWED_IMAGE_MODELS.includes(model) ? model : DEFAULT_IMAGE_MODEL;
-    console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse}`);
+    // Validate model
+    if (!ALLOWED_IMAGE_MODELS.includes(modelToUse)) {
+      modelToUse = DEFAULT_IMAGE_MODEL;
+    }
+    
+    console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse} | Search: ${search}`);
 
     // DALL-E 3 Logic
     if (modelToUse === "dall-e-3") {
