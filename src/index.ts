@@ -143,8 +143,35 @@ async function handleChatRequest(
     // Safety check for model ID
     let modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
 
-    // Handle Search Feature (Out of the box: Override to specialized search model)
-    if (search) {
+    // Handle Search Feature
+    let searchContext = "";
+    if (search && modelToUse !== "gemini-search") {
+      console.log(`[Chat] Global Search requested for ${modelToUse}. Fetching context...`);
+      try {
+        const searchRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}`
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: messages[messages.length - 1]?.content || "" }],
+            model: "gemini-search",
+            stream: false
+          })
+        });
+
+        if (searchRes.ok) {
+          const searchData = await searchRes.json() as any;
+          searchContext = searchData.choices?.[0]?.message?.content || "";
+          console.log(`[Chat] Search context retrieved (${searchContext.length} chars)`);
+        }
+      } catch (sErr) {
+        console.error("[Chat] Background search failed:", sErr);
+      }
+    }
+
+    if (search && modelToUse === "gemini-search") {
       modelToUse = "gemini-search";
     }
 
@@ -155,7 +182,17 @@ async function handleChatRequest(
     }));
 
     if (!sanitizedMessages.some((m) => m.role === "system")) {
-      sanitizedMessages.unshift({ role: "system", content: systemPrompt || SYSTEM_PROMPT });
+      let finalSystemPrompt = systemPrompt || SYSTEM_PROMPT;
+      if (searchContext) {
+        finalSystemPrompt += `\n\nWEB SEARCH CONTEXT:\n${searchContext}\n\nPlease use the above real-time information to answer the user's request accurately.`;
+      }
+      sanitizedMessages.unshift({ role: "system", content: finalSystemPrompt });
+    } else if (searchContext) {
+        // If system prompt already exists, append context to the last user message to ensure model sees it
+        const lastMsg = sanitizedMessages[sanitizedMessages.length - 1];
+        if (lastMsg && lastMsg.role === "user") {
+            lastMsg.content += `\n\n(Context from Web Search: ${searchContext})`;
+        }
     }
 
     console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
@@ -163,8 +200,8 @@ async function handleChatRequest(
     // Pollinations Chat Logic
     if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
       let pModel = "openai";
-      if (modelToUse === "pollinations-code") pModel = "qwen-coder";
-      if (modelToUse === "gemini-search") pModel = "gemini-search"; // Corrected for Pollinations
+      if (modelToUse === "pollinations-code") pModel = "claude"; // Renamed to Claude
+      if (modelToUse === "gemini-search") pModel = "gemini-search"; 
 
       const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
         method: "POST",

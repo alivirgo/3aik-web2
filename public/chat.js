@@ -39,7 +39,7 @@ const MODEL_INFO = {
   "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's latest multimodal open model with high-performance reasoning.",
   "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient model for fast and accurate chat.",
   "pollinations-chat": "Pollinations AI: Advanced multimodal chat powered by various state-of-the-art models.",
-  "pollinations-code": "Pollinations Coder: Specialized AI for high-quality code generation and technical problem solving.",
+  "pollinations-code": "Anthropic Claude 3.5 Sonnet: Advanced programming and reasoning model for high-quality code and logic.",
   "gemini-search": "Live Search AI: Specialized model with real-time web search capabilities.",
 
   // Coding Models
@@ -575,27 +575,11 @@ if (searchToggle) {
 modelSelect.addEventListener("change", () => { 
   if (currentMode === "chat") {
     mobileModelSelect.value = modelSelect.value;
-    // Auto-disable search toggle if a non-search model is selected
-    if (searchToggle && modelSelect.value !== "gemini-search") {
-      searchToggle.checked = false;
-    } else if (searchToggle && modelSelect.value === "gemini-search") {
-      searchToggle.checked = true;
-    }
   } 
 });
 
 if (searchToggle) {
   searchToggle.addEventListener("change", () => {
-    if (searchToggle.checked) {
-      modelSelect.value = "gemini-search";
-      if (mobileModelSelect) mobileModelSelect.value = "gemini-search";
-    } else {
-      // Revert to a default if unchecking? 
-      // For now just leave it, or switch back to pollinations-chat
-      if (modelSelect.value === "gemini-search") {
-        modelSelect.value = "pollinations-chat";
-      }
-    }
     updateMobileModelOptions();
   });
 }
