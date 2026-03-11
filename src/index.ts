@@ -149,7 +149,7 @@ async function handleChatRequest(
     }
 
     // Safety check for model ID
-    let modelToUse = ALLOWED_TEXT_MODELS.includes(model) ? model : DEFAULT_TEXT_MODEL;
+    let modelToUse: string = (model && ALLOWED_TEXT_MODELS.includes(model)) ? model : DEFAULT_TEXT_MODEL;
 
     // Handle Search Feature
     let searchContext = "";
@@ -605,36 +605,43 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
     if (modelQueries.some(q => lastUserMessage.toLowerCase().includes(q))) {
       return new Response(`data: ${JSON.stringify({ response: "I am 3aik - an advanced AI assistant." })}\n\n`, {
         headers: { "content-type": "text/event-stream" }
-      });
-    }
-
     console.log(`[Super Chat] Starting multi-model fetch for prompt: "${lastUserMessage.slice(0, 50)}..."`);
 
-    // 1. Fetch from 3 models in parallel using standard text endpoint
-    const [pGemini, pChatGPT, pClaude] = [
-      // Gemini (via gemini-search)
-      fetch("https://text.pollinations.ai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
-        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "gemini-search", stream: false })
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
+    // 1. Fetch from 3 models in parallel with individual timeouts
+    const fetchWithTimeout = async (model: string, timeoutMs: number = 8000) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      
+      try {
+        const response = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json", 
+            "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` 
+          },
+          body: JSON.stringify({ 
+            messages: [{ role: "user", content: lastUserMessage }], 
+            model: model, 
+            stream: false 
+          }),
+          signal: controller.signal
+        });
+        
+        if (!response.ok) return null;
+        return await response.json();
+      } catch (e) {
+        console.warn(`[Super Chat] Fetch failed for ${model}:`, e);
+        return null;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
 
-      // ChatGPT (via openai)
-      fetch("https://text.pollinations.ai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
-        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "openai", stream: false })
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-
-      // Claude (via qwen-coder for better stability / free tier)
-      fetch("https://text.pollinations.ai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
-        body: JSON.stringify({ messages: [{ role: "user", content: lastUserMessage }], model: "qwen-coder", stream: false })
-      }).then(r => r.ok ? r.json() : null).catch(() => null)
-    ];
-
-    const [resGemini, resChatGPT, resClaude] = await Promise.all([pGemini, pChatGPT, pClaude]);
+    const [resGemini, resChatGPT, resClaude] = await Promise.all([
+      fetchWithTimeout("gemini"),
+      fetchWithTimeout("openai"),
+      fetchWithTimeout("claude")
+    ]);
 
     const getText = (res: any) => {
       if (!res) return "";
@@ -644,21 +651,38 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
       return "";
     };
 
-    const textGemini = getText(resGemini);
-    const textChatGPT = getText(resChatGPT);
-    const textClaude = getText(resClaude);
+    let textGemini = getText(resGemini);
+    let textChatGPT = getText(resChatGPT);
+    let textClaude = getText(resClaude);
 
-    console.log(`[Super Chat] Fetched. Gemini: ${textGemini.length}, ChatGPT: ${textChatGPT.length}, Claude: ${textClaude.length}`);
+    console.log(`[Super Chat] Fetched responses. Gemini: ${textGemini.length}, ChatGPT: ${textChatGPT.length}, Claude: ${textClaude.length}`);
 
-    // If all models failed, return an error
+    // If all models failed, try Cloudflare AI as a final fallback
     if (!textGemini && !textChatGPT && !textClaude) {
-        throw new Error("All base models failed to respond. Please try again.");
+        console.warn("[Super Chat] All external models failed. Falling back to Cloudflare AI...");
+        try {
+            const cfRes = await env.AI.run("@cf/meta/llama-3.1-70b-instruct" as any, {
+                messages: [{ role: "user", content: lastUserMessage }],
+                max_tokens: 1024
+            }) as any;
+            
+            const cfText = cfRes.response || cfRes.result || "";
+            if (cfText) {
+                textGemini = cfText; // Use as Source A
+                console.log("[Super Chat] Cloudflare fallback successful.");
+            }
+        } catch (cfErr) {
+            console.error("[Super Chat] Cloudflare fallback also failed:", cfErr);
+        }
+    }
+
+    // If still nothing, error out
+    if (!textGemini && !textChatGPT && !textClaude) {
+        throw new Error("All AI models and fallbacks failed to respond. Please try again.");
     }
 
     // 2. Summarize using a more reliable model (e.g., openai/gpt-4o-mini)
     const summarizationPrompt = `
-User Query: "${lastUserMessage}"
-
 I have multiple sources with different perspectives.
 Your task is to synthesize these into one final, highly authentic, solid, and comprehensive response.
 DO NOT explain that you are synthesizing. Just provide the final answer.
