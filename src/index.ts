@@ -346,7 +346,14 @@ async function handleImageRequest(
       let pUrl = "";
 
       if (modelToUse.startsWith("pollinations-")) {
-        const pModel = modelToUse.split("-")[1];
+        let pModel = modelToUse.split("-")[1];
+        // Manual mappings for better quality
+        if (pModel === "turbo") pModel = "flux";
+        if (pModel === "dream") pModel = "dreamshaper";
+        if (pModel === "pixart") pModel = "flux-realism";
+        if (pModel === "portrait") pModel = "flux-realism";
+        if (pModel === "any") pModel = "flux-anime";
+        
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}&key=${env.POLLINATIONS_API_KEY}`;
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.split("-")[1];
