@@ -7,6 +7,7 @@ const modelSelect = document.getElementById("model-select");
 const imageModelSelect = document.getElementById("image-model-select");
 const codingModelSelect = document.getElementById("coding-model-select");
 const videoModelSelect = document.getElementById("video-model-select");
+const gifModelSelect = document.getElementById("gif-model-select");
 const systemPromptInput = document.getElementById("system-prompt");
 const temperatureInput = document.getElementById("temperature");
 const maxTokensInput = document.getElementById("max-tokens");
@@ -15,6 +16,10 @@ const searchToggle = document.getElementById("search-toggle");
 const mobileModeSelect = document.getElementById("mobile-mode-select");
 const mobileModelSelect = document.getElementById("mobile-model-select");
 const loadingOverlay = document.getElementById("loading-overlay");
+const lightboxModal = document.getElementById("lightbox-modal");
+const lightboxImg = document.getElementById("lightbox-img");
+const lightboxVideo = document.getElementById("lightbox-video");
+const closeLightboxBtn = document.getElementById("close-lightbox");
 
 // Modals
 const settingsModal = document.getElementById("settings-modal");
@@ -170,12 +175,15 @@ function addMediaMessage(mediaSrc, caption, type = "image", replaceTarget = null
     mediaEl.appendChild(source);
   } else {
     mediaEl = document.createElement("img");
-    mediaEl.className = "msg-image";
+    mediaEl.className = "msg-image fade-in";
     mediaEl.src = mediaSrc;
     mediaEl.alt = caption;
     mediaEl.loading = "lazy";
     mediaEl.onload = () => scrollToBottom(true);
   }
+
+  // Click to open lightbox
+  mediaEl.addEventListener("click", () => openLightbox(mediaSrc, type));
 
   const captionEl = document.createElement("div");
   captionEl.className = "msg-subtext";
@@ -331,10 +339,20 @@ async function generateMedia() {
   promptInput.style.height = "auto";
   addTextMessage("user", prompt);
 
-  // Create an inline text message that acts as the loading indicator
-  // We'll target its parent container for replacement
-  const loadingTextEl = addTextMessage("assistant", "🎨 We are generating your image...");
-  const loadingContainer = loadingTextEl.parentElement.parentElement;
+  // Create a skeleton placeholder instead of a text message
+  const skeletonEl = document.createElement("div");
+  skeletonEl.className = "message assistant-msg";
+  skeletonEl.innerHTML = `
+    <div class="msg-avatar">🎨</div>
+    <div class="msg-content">
+      <div class="media-skeleton"></div>
+      <div class="msg-subtext">Generating your masterpiece...</div>
+    </div>
+  `;
+  messagesEl.appendChild(skeletonEl);
+  scrollToBottom(true);
+  
+  const loadingContainer = skeletonEl; // We'll replace this entire element later
 
   try {
     const dimensions = sizeSelect.value.split("x");
@@ -343,7 +361,7 @@ async function generateMedia() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt,
-        model: imageModelSelect.value,
+        model: currentMode === "video" ? videoModelSelect.value : (currentMode === "gif" ? gifModelSelect.value : imageModelSelect.value),
         width: parseInt(dimensions[0]),
         height: parseInt(dimensions[1]),
       }),
@@ -448,6 +466,50 @@ temperatureInput.addEventListener("input", () => {
   document.getElementById("temp-value").textContent = temperatureInput.value;
 });
 
+/**
+ * Lightbox Logic
+ */
+function openLightbox(src, type) {
+  if (!lightboxModal) return;
+  
+  if (type === "video") {
+    lightboxImg.style.display = "none";
+    lightboxVideo.style.display = "block";
+    lightboxVideo.src = src;
+  } else {
+    lightboxVideo.style.display = "none";
+    lightboxVideo.src = "";
+    lightboxImg.style.display = "block";
+    lightboxImg.src = src;
+  }
+  
+  lightboxModal.style.display = "flex";
+  document.body.style.overflow = "hidden"; // Prevent background scroll
+}
+
+function closeLightbox() {
+  if (!lightboxModal) return;
+  lightboxModal.style.display = "none";
+  lightboxVideo.src = "";
+  document.body.style.overflow = "";
+}
+
+if (closeLightboxBtn) {
+  closeLightboxBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeLightbox();
+  });
+}
+
+if (lightboxModal) {
+  lightboxModal.addEventListener("click", closeLightbox);
+}
+
+// Close on escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
+});
+
 // Clear History
 const btnClear = document.getElementById("clear-btn");
 if (btnClear) {
@@ -482,12 +544,14 @@ function switchMode(mode) {
   const codingModelSection = document.getElementById("coding-model-section");
   const imageModelSection = document.getElementById("image-model-section");
   const videoModelSection = document.getElementById("video-model-section");
+  const gifModelSection = document.getElementById("gif-model-section");
   const mediaSizeSection = document.getElementById("media-size-section");
 
   if (textModelSection) textModelSection.style.display = (mode === "chat") ? "block" : "none";
   if (codingModelSection) codingModelSection.style.display = (mode === "coding") ? "block" : "none";
   if (imageModelSection) imageModelSection.style.display = (mode === "image") ? "block" : "none";
   if (videoModelSection) videoModelSection.style.display = (mode === "video") ? "block" : "none";
+  if (gifModelSection) gifModelSection.style.display = (mode === "gif") ? "block" : "none";
   if (mediaSizeSection) mediaSizeSection.style.display = (mode === "image" || mode === "video" || mode === "gif") ? "block" : "none";
 
   // Toggle Containers
@@ -547,8 +611,10 @@ const updateMobileModelOptions = () => {
     options = Array.from(codingModelSelect.options).map(o => ({ value: o.value, text: o.text }));
   } else if (currentMode === "image") {
     options = Array.from(imageModelSelect.options).map(o => ({ value: o.value, text: o.text }));
-  } else if (currentMode === "video" || currentMode === "gif") {
-    options = [{ value: "pollinations-any", text: "Standard Gen" }];
+  } else if (currentMode === "video") {
+    options = Array.from(videoModelSelect.options).map(o => ({ value: o.value, text: o.text }));
+  } else if (currentMode === "gif") {
+    options = Array.from(gifModelSelect.options).map(o => ({ value: o.value, text: o.text }));
   }
 
   mobileModelSelect.innerHTML = options.map(o => `<option value="${o.value}">${o.text}</option>`).join('');
@@ -557,6 +623,8 @@ const updateMobileModelOptions = () => {
   if (currentMode === "chat") mobileModelSelect.value = modelSelect.value;
   else if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value;
   else if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value;
+  else if (currentMode === "video") mobileModelSelect.value = videoModelSelect.value;
+  else if (currentMode === "gif") mobileModelSelect.value = gifModelSelect.value;
 };
 
 if (mobileModelSelect) {
@@ -564,6 +632,8 @@ if (mobileModelSelect) {
     if (currentMode === "chat") modelSelect.value = mobileModelSelect.value;
     else if (currentMode === "coding") codingModelSelect.value = mobileModelSelect.value;
     else if (currentMode === "image") imageModelSelect.value = mobileModelSelect.value;
+    else if (currentMode === "video") videoModelSelect.value = mobileModelSelect.value;
+    else if (currentMode === "gif") gifModelSelect.value = mobileModelSelect.value;
   });
 }
 
@@ -586,6 +656,8 @@ if (searchToggle) {
 
 codingModelSelect.addEventListener("change", () => { if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value; });
 imageModelSelect.addEventListener("change", () => { if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value; });
+videoModelSelect.addEventListener("change", () => { if (currentMode === "video") mobileModelSelect.value = videoModelSelect.value; });
+gifModelSelect.addEventListener("change", () => { if (currentMode === "gif") mobileModelSelect.value = gifModelSelect.value; });
 
 /**
  * Games Tab Logic: AI or Not Detector

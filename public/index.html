@@ -115,6 +115,8 @@
           <option value="pollinations-portrait">Realistic Portrait</option>
           <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning</option>
           <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell</option>
+          <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">Stable Diffusion XL</option>
+          <option value="@cf/stabilityai/stable-diffusion-3-large-turbo">SDXL 3.0 Turbo</option>
           <option value="@cf/leonardoai/phoenix-1.0" selected>Phoenix 1.0</option>
           <option value="dall-e-3">DALL-E 3 (OpenAI)</option>
         </select>
@@ -125,6 +127,15 @@
         <select id="video-model-select" class="modern-select">
           <option value="pollinations-flux" selected>Flux Video</option>
           <option value="video-seedance">Seedance (Dynamic)</option>
+          <option value="video-veo">Google Veo (Experimental)</option>
+          <option value="video-grok-video">Grok Video (Beta)</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section" id="gif-model-section" style="display: none;">
+        <div class="section-label">GIF Model</div>
+        <select id="gif-model-select" class="modern-select">
+          <option value="gif-animate" selected>Animate (Pollinations)</option>
         </select>
       </div>
 
@@ -326,6 +337,15 @@
     </div>
     <div class="overlay-body">
       <iframe id="game-iframe" src="" frameborder="0"></iframe>
+    </div>
+  </div>
+
+  <!-- Lightbox Modal -->
+  <div id="lightbox-modal" class="lightbox" style="display: none;">
+    <button class="lightbox-close" id="close-lightbox">✕</button>
+    <div class="lightbox-content">
+      <img id="lightbox-img" src="" alt="Full view" style="display: none;">
+      <video id="lightbox-video" controls autoplay loop muted style="display: none;"></video>
     </div>
   </div>
 
