@@ -643,7 +643,7 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
         throw new Error("All base models failed to respond. Please try again.");
     }
 
-    // 2. Summarize using Gemini
+    // 2. Summarize using a more reliable model (e.g., openai/gpt-4o-mini)
     const summarizationPrompt = `
 You are 3aik AI. I will provide you with 3 different responses to the same user query: "${lastUserMessage}".
 Your task is to synthesize these into one final, highly authentic, solid, and comprehensive response.
@@ -660,7 +660,7 @@ ${textClaude || "(No response)"}
 
 Final Cumulative Response:`;
 
-    const summaryRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
+    let summaryRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
       body: JSON.stringify({
@@ -668,15 +668,18 @@ Final Cumulative Response:`;
             { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple AI models into a single, cohesive, and authoritative response for the user. Always maintain a professional and helpful tone." }, 
             { role: "user", content: summarizationPrompt }
         ],
-        model: "gemini", // Using gemini for summarization
+        model: "openai", // Switching to openai for better reliability in summarization
         stream: true
       })
     });
 
+    // Fallback to unsummarized if summarization completely fails
     if (!summaryRes.ok) {
-        const errorText = await summaryRes.text();
-        console.error("[Super Chat] Summarization API error:", errorText);
-        throw new Error("Failed to generate summary from Gemini");
+        console.warn("[Super Chat] Summarization failed, falling back to direct responses.");
+        const fallbackText = `**[Super Chat Results]**\n\n**Gemini:**\n${textGemini || "_No response_"}\n\n**ChatGPT:**\n${textChatGPT || "_No response_"}\n\n**Claude:**\n${textClaude || "_No response_"}`;
+        return new Response(`data: ${JSON.stringify({ response: fallbackText })}\n\n`, {
+            headers: { "content-type": "text/event-stream" }
+        });
     }
 
     return new Response(summaryRes.body, {
