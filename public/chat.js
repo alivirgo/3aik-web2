@@ -226,13 +226,14 @@ async function generateText() {
 
   try {
     const isCoding = currentMode === "coding";
-    const isSearch = searchToggle && searchToggle.checked;
-
-    // Sync mobile and desktop model selectors if both exist
     let selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
     if (window.innerWidth <= 768 && mobileModelSelect && !isCoding) {
       selectedModel = mobileModelSelect.value;
     }
+
+    // Force search if selectedModel is gemini-search
+    const isSearch = (searchToggle && searchToggle.checked) || selectedModel === "gemini-search";
+    if (selectedModel === "gemini-search") selectedModel = "gemini-search"; // safety
     const systemPromptText = isCoding
       ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
       : systemPromptInput.value;
@@ -538,7 +539,8 @@ const updateMobileModelOptions = () => {
   let options = [];
   if (currentMode === "chat") {
     options = Array.from(modelSelect.options).map(o => ({ value: o.value, text: o.text }));
-    if (searchToggle && searchToggle.checked) {
+    // Ensure gemini-search is visible if toggle is on (if not already in options)
+    if (searchToggle && searchToggle.checked && !options.some(o => o.value === "gemini-search")) {
       options.unshift({ value: "gemini-search", text: "Live Search AI" });
     }
   } else if (currentMode === "coding") {
@@ -570,7 +572,34 @@ if (searchToggle) {
 }
 
 // Sidebar selects also sync to mobile
-modelSelect.addEventListener("change", () => { if (currentMode === "chat") mobileModelSelect.value = modelSelect.value; });
+modelSelect.addEventListener("change", () => { 
+  if (currentMode === "chat") {
+    mobileModelSelect.value = modelSelect.value;
+    // Auto-disable search toggle if a non-search model is selected
+    if (searchToggle && modelSelect.value !== "gemini-search") {
+      searchToggle.checked = false;
+    } else if (searchToggle && modelSelect.value === "gemini-search") {
+      searchToggle.checked = true;
+    }
+  } 
+});
+
+if (searchToggle) {
+  searchToggle.addEventListener("change", () => {
+    if (searchToggle.checked) {
+      modelSelect.value = "gemini-search";
+      if (mobileModelSelect) mobileModelSelect.value = "gemini-search";
+    } else {
+      // Revert to a default if unchecking? 
+      // For now just leave it, or switch back to pollinations-chat
+      if (modelSelect.value === "gemini-search") {
+        modelSelect.value = "pollinations-chat";
+      }
+    }
+    updateMobileModelOptions();
+  });
+}
+
 codingModelSelect.addEventListener("change", () => { if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value; });
 imageModelSelect.addEventListener("change", () => { if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value; });
 
