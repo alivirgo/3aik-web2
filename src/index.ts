@@ -403,6 +403,35 @@ async function handleImageRequest(
         pModel = imageModelMap[pModel] || pModel;
         
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
+      } else if (modelToUse === "video-ltx") {
+        console.log(`[Media Gen] Fetching securely from LTX Studio API directly`);
+        if (!env.LTX_API_KEY) throw new Error("LTX API key is missing");
+
+        const ltxRes = await fetch("https://api.ltx.video/v1/text-to-video", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.LTX_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            prompt: prompt,
+            model: "ltx-2-3-fast",
+            duration: 5,
+            resolution: width === 1280 ? "1280x720" : "1280x720" // default to 720p for fast generation
+          })
+        });
+
+        if (!ltxRes.ok) {
+          const errText = await ltxRes.text();
+          throw new Error(`LTX API failed: ${ltxRes.status} ${errText}`);
+        }
+
+        const buffer = await ltxRes.arrayBuffer();
+        const b64 = u8ToBase64(new Uint8Array(buffer));
+        
+        return new Response(JSON.stringify({ images: [{ b64, mime: "video/mp4" }] }), {
+          headers: { "content-type": "application/json" },
+        });
       } else if (modelToUse.startsWith("video-")) {
         const pModel = modelToUse.replace("video-", "");
         const videoModelMap: Record<string, string> = {

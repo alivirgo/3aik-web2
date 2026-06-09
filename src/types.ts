@@ -33,6 +33,11 @@ export interface Env {
 	 * AI or Not API Key from secrets.
 	 */
 	AIORNOT_API_KEY: string;
+
+	/**
+	 * LTX API Key from secrets for video generation.
+	 */
+	LTX_API_KEY: string;
 }
 
 /**
