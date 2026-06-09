@@ -23,12 +23,16 @@ const ALLOWED_TEXT_MODELS = [
   "@cf/meta/llama-3.2-3b-instruct",
   "@cf/qwen/qwen2.5-coder-32b-instruct",
   "@cf/openai/gpt-oss-120b",
-  "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq",
   "@cf/meta/llama-3.1-70b-instruct",
   "@cf/google/gemma-3-12b-it",
   "@cf/meta/llama-4-scout-17b-16e-instruct",
   "pollinations-chat",
   "pollinations-code",
+  "pollinations-gpt5",
+  "pollinations-claude",
+  "pollinations-grok",
+  "pollinations-deepseek",
+  "pollinations-mistral",
   "gemini-search"
 ];
 
@@ -39,16 +43,22 @@ const ALLOWED_IMAGE_MODELS = [
   "@cf/stabilityai/stable-diffusion-3-large-turbo",
   "@cf/bytedance/sdxl-lightning",
   "pollinations-flux",
+  "pollinations-kontext",
+  "pollinations-seedream",
+  "pollinations-gptimage",
+  "pollinations-klein",
   "pollinations-any",
   "pollinations-dream",
   "pollinations-pixart",
   "pollinations-portrait",
   "pollinations-turbo",
   "video-seedance",
+  "video-seedance-2",
   "video-veo",
   "video-grok-video",
+  "video-ltx",
   "gif-animate",
-  "dall-e-3"
+  "gpt-image-2"
 ];
 
 // System prompt for chat
@@ -208,15 +218,32 @@ async function handleChatRequest(
     // Pollinations Chat Logic
     if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
       let pModel = "openai";
-      if (modelToUse === "pollinations-code") pModel = "qwen-coder"; // Reverted to original model per user request
+      if (modelToUse === "pollinations-code") pModel = "qwen-coder";
+      if (modelToUse === "pollinations-gpt5") pModel = "gpt-5.4-mini";
+      if (modelToUse === "pollinations-claude") pModel = "claude";
+      if (modelToUse === "pollinations-grok") pModel = "grok-4.3";
+      if (modelToUse === "pollinations-deepseek") pModel = "deepseek";
+      if (modelToUse === "pollinations-mistral") pModel = "mistral-4";
       if (modelToUse === "gemini-search") pModel = "gemini-search"; 
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (env.POLLINATIONS_API_KEY) {
+        headers["Authorization"] = `Bearer ${env.POLLINATIONS_API_KEY}`;
+      }
+
+      console.log("[DEBUG] Fetching Pollinations with Model:", pModel);
+      console.log("[DEBUG] Headers:", JSON.stringify(headers));
+      console.log("[DEBUG] Body:", JSON.stringify({
+        messages: sanitizedMessages,
+        stream: true,
+        model: pModel
+      }));
 
       const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}`
-        },
+        headers,
         body: JSON.stringify({
           messages: sanitizedMessages,
           stream: true,
@@ -224,7 +251,12 @@ async function handleChatRequest(
         })
       });
 
-      if (!pRes.ok) throw new Error(`Pollinations API failed: ${pRes.status} ${pRes.statusText}`);
+      console.log("[DEBUG] Pollinations status:", pRes.status, pRes.statusText);
+      if (!pRes.ok) {
+        const errorText = await pRes.text();
+        console.log("[DEBUG] Pollinations error body:", errorText);
+        throw new Error(`Pollinations API failed: ${pRes.status} ${pRes.statusText}`);
+      }
 
       return new Response(pRes.body, {
         headers: {
@@ -346,68 +378,66 @@ async function handleImageRequest(
     
     console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse} | Search: ${search}`);
 
-    // DALL-E 3 Logic
-    if (modelToUse === "dall-e-3") {
-      console.log(`[Image Gen] Calling OpenAI DALL-E 3...`);
-      const response = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${env.OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "dall-e-3",
-          prompt: prompt,
-          n: 1,
-          size: `${width}x${height}`
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json() as any;
-        throw new Error(`OpenAI API failed: ${error.error?.message || response.statusText}`);
-      }
-
-      const data = await response.json() as any;
-      if (!data.data?.[0]?.url) throw new Error("No image URL returned from DALL-E 3.");
-
-      return new Response(JSON.stringify({
-        images: [{ url: data.data[0].url, mime: "image/png" }]
-      }), {
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    // Pollinations / Video / GIF Logic - Optimized to return URL directly via Vault Bridge
-    if (modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
+    // GPT Image 2 / Pollinations / Video / GIF Logic - Secure Proxy
+    if (modelToUse === "gpt-image-2" || modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
       const seed = Math.floor(Math.random() * 10000000);
       let pUrl = "";
 
-      if (modelToUse.startsWith("pollinations-")) {
-        let pModel = modelToUse.split("-")[1];
-        // Manual mappings for better quality
-        if (pModel === "turbo") pModel = "flux";
-        if (pModel === "dream") pModel = "dreamshaper";
-        if (pModel === "pixart") pModel = "flux-realism";
-        if (pModel === "portrait") pModel = "flux-realism";
-        if (pModel === "any") pModel = "flux-anime";
+      if (modelToUse === "gpt-image-2") {
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=gptimage-large&nologo=true&enhance=true&seed=${seed}`;
+      } else if (modelToUse.startsWith("pollinations-")) {
+        let pModel = modelToUse.replace("pollinations-", "");
+        // Manual mappings for Pollinations API model slugs
+        const imageModelMap: Record<string, string> = {
+          "flux": "flux",
+          "kontext": "kontext",
+          "seedream": "seedream",
+          "gptimage": "gptimage",
+          "klein": "klein",
+          "turbo": "flux",
+          "dream": "seedream",
+          "pixart": "flux",
+          "portrait": "flux",
+          "any": "zimage"
+        };
+        pModel = imageModelMap[pModel] || pModel;
         
-        // Remove key from URL as it's not needed for GET and might cause issues
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
       } else if (modelToUse.startsWith("video-")) {
-        const pModel = modelToUse.split("-")[1];
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&seed=${seed}`;
+        const pModel = modelToUse.replace("video-", "");
+        const videoModelMap: Record<string, string> = {
+          "seedance": "seedance-pro",
+          "seedance-2": "seedance-2.0",
+          "veo": "veo",
+          "grok-video": "grok-video-pro",
+          "ltx": "ltx-2"
+        };
+        const resolvedModel = videoModelMap[pModel] || pModel;
+        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${resolvedModel}&seed=${seed}`;
       } else if (modelToUse.startsWith("gif-")) {
         pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
       }
 
-      console.log(`[Media Gen] Returning direct URL with key: ${pUrl}`);
+      console.log(`[Media Gen] Fetching securely from Pollinations: ${pUrl}`);
 
       let mime = "image/png";
       if (modelToUse.startsWith("video-")) mime = "video/mp4";
       if (modelToUse.startsWith("gif-")) mime = "image/gif";
 
-      return new Response(JSON.stringify({ images: [{ url: pUrl, mime }] }), {
+      const headers: Record<string, string> = {};
+      if (env.POLLINATIONS_API_KEY) {
+        headers["Authorization"] = `Bearer ${env.POLLINATIONS_API_KEY}`;
+      }
+
+      const mediaRes = await fetch(pUrl, { headers });
+      if (!mediaRes.ok) {
+        throw new Error(`Pollinations Media API failed: ${mediaRes.status} ${mediaRes.statusText}`);
+      }
+
+      const buffer = await mediaRes.arrayBuffer();
+      const b64 = u8ToBase64(new Uint8Array(buffer));
+
+      return new Response(JSON.stringify({ images: [{ b64, mime }] }), {
         headers: { "content-type": "application/json" },
       });
     }
@@ -616,12 +646,16 @@ async function handleSuperChatRequest(request: Request, env: Env): Promise<Respo
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       
       try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json"
+        };
+        if (env.POLLINATIONS_API_KEY) {
+          headers["Authorization"] = `Bearer ${env.POLLINATIONS_API_KEY}`;
+        }
+
         const response = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
           method: "POST",
-          headers: { 
-            "Content-Type": "application/json", 
-            "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` 
-          },
+          headers,
           body: JSON.stringify({ 
             messages: [{ role: "user", content: lastUserMessage }], 
             model: model, 

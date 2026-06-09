@@ -76,16 +76,20 @@
       <div class="sidebar-section" id="text-model-section">
         <div class="section-label">Text Model</div>
         <select id="model-select" class="modern-select">
+          <option value="pollinations-chat" selected>GPT-5.4 Nano (Pollinations)</option>
+          <option value="pollinations-gpt5">GPT-5.4 Mini (Pollinations)</option>
+          <option value="pollinations-claude">Claude Sonnet 4.6 (Pollinations)</option>
+          <option value="pollinations-grok">Grok 4.3 (Pollinations)</option>
+          <option value="pollinations-deepseek">DeepSeek V4 Flash (Pollinations)</option>
+          <option value="pollinations-mistral">Mistral Small 4 (Pollinations)</option>
+          <option value="gemini-search">Live Search AI (Pollinations)</option>
           <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B (Fast)</option>
           <option value="@cf/deepseek-ai/deepseek-r1-distill-qwen-32b">DeepSeek R1 32B</option>
-          <option value="@cf/meta/llama-3.1-8b-instruct">Llama 3.1 8B</option>
           <option value="@cf/google/gemma-3-12b-it">Gemma 3 12B</option>
           <option value="@cf/meta/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B</option>
-          <option value="pollinations-chat" selected>Pollinations Chat</option>
-          <option value="gemini-search">Live Search AI (Pollinations)</option>
-          <option value="@cf/meta/llama-3.2-3b-instruct">Llama 3.2 3B</option>
-          <option value="@cf/meta/llama-3.1-70b-instruct">Llama 3.1 70B</option>
           <option value="@cf/openai/gpt-oss-120b">GPT OSS 120B</option>
+          <option value="@cf/meta/llama-3.1-8b-instruct">Llama 3.1 8B</option>
+          <option value="@cf/meta/llama-3.1-70b-instruct">Llama 3.1 70B</option>
         </select>
       </div>
 
@@ -102,37 +106,40 @@
       <div class="sidebar-section" id="coding-model-section" style="display: none;">
         <div class="section-label">Coding Model</div>
         <select id="coding-model-select" class="modern-select">
-          <option value="@cf/qwen/qwen2.5-coder-32b-instruct" selected>Qwen 2.5 Coder (32B)</option>
-          <option value="pollinations-code">Anthropic Claude 3.5 Sonnet</option>
-          <option value="@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq">DeepSeek Coder (6.7B)</option>
+          <option value="pollinations-code" selected>Qwen3 Coder 30B (Pollinations)</option>
+          <option value="@cf/qwen/qwen2.5-coder-32b-instruct">Qwen 2.5 Coder (32B)</option>
+          <option value="pollinations-claude">Claude Sonnet 4.6 (Pollinations)</option>
+          <option value="pollinations-deepseek">DeepSeek V4 Flash (Pollinations)</option>
         </select>
       </div>
 
       <div class="sidebar-section" id="image-model-section" style="display: none;">
         <div class="section-label">Image Model</div>
         <select id="image-model-select" class="modern-select">
-          <option value="@cf/leonardoai/phoenix-1.0" selected>Phoenix 1.0</option>
-          <option value="pollinations-turbo">Gemini Image 1 Mini</option>
-          <option value="pollinations-any">Anime & Art</option>
-          <option value="pollinations-dream">Dream Artist</option>
-          <option value="pollinations-flux">Flux Pro (Ultra-HD)</option>
-          <option value="pollinations-pixart">PixArt 1024</option>
-          <option value="pollinations-portrait">Realistic Portrait</option>
+          <option value="pollinations-flux" selected>Flux Schnell (Pollinations)</option>
+          <option value="pollinations-kontext">FLUX Kontext — Edit & Generate</option>
+          <option value="pollinations-seedream">Seedream 4.0 — Photorealistic</option>
+          <option value="pollinations-gptimage">GPT Image 1 Mini (Pollinations)</option>
+          <option value="pollinations-klein">FLUX.2 Klein — Fast 4B</option>
+          <option value="pollinations-any">Z-Image Turbo (Alibaba)</option>
+          <option value="pollinations-dream">Seedream Art</option>
+          <option value="pollinations-turbo">Flux Turbo</option>
+          <option value="@cf/leonardoai/phoenix-1.0">Phoenix 1.0</option>
           <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning</option>
-          <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell</option>
+          <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell (CF)</option>
           <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">Stable Diffusion XL</option>
-          <option value="@cf/stabilityai/stable-diffusion-3-large-turbo">SDXL 3.0 Turbo</option>
-          <option value="dall-e-3">DALL-E 3 (OpenAI)</option>
+          <option value="gpt-image-2">GPT Image 2 (OpenAI)</option>
         </select>
       </div>
 
       <div class="sidebar-section" id="video-model-section" style="display: none;">
         <div class="section-label">Video Model</div>
         <select id="video-model-select" class="modern-select">
-          <option value="pollinations-flux" selected>Flux Video</option>
-          <option value="video-seedance">Seedance (Dynamic)</option>
-          <option value="video-veo">Google Veo (Experimental)</option>
-          <option value="video-grok-video">Grok Video (Beta)</option>
+          <option value="video-seedance" selected>Seedance Pro-Fast</option>
+          <option value="video-seedance-2">Seedance 2.0 (Cinematic)</option>
+          <option value="video-veo">Google Veo 3.1 Fast</option>
+          <option value="video-grok-video">Grok Video Pro</option>
+          <option value="video-ltx">LTX-2.3 (Fast & Free)</option>
         </select>
       </div>
 

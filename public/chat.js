@@ -33,31 +33,41 @@ let currentMode = "chat"; // text, image, video, gif, coding
 let isAutoScrollEnabled = true;
 
 const MODEL_INFO = {
-  // Text Models
-  "@cf/meta/llama-3.3-70b-instruct-fp8-fast": "Llama 3.3 70B (Fast): High-speed, high-performance meta model.",
+  // Text Models — Pollinations
+  "pollinations-chat": "GPT-5.4 Nano: OpenAI's fast and balanced model via Pollinations. Vision-capable with 400K context.",
+  "pollinations-gpt5": "GPT-5.4 Mini: Balanced speed & cost from OpenAI via Pollinations. Great all-rounder.",
+  "pollinations-code": "Qwen3 Coder 30B: Specialized for code generation via Pollinations. 262K context window.",
+  "pollinations-claude": "Claude Sonnet 4.6: Anthropic's most capable & balanced model. 1M context, vision support.",
+  "pollinations-grok": "Grok 4.3: xAI's multimodal reasoning model with 1M context. Fast and intelligent.",
+  "pollinations-deepseek": "DeepSeek V4 Flash: Fast reasoning & coding with 1M context. Chain-of-thought capable.",
+  "pollinations-mistral": "Mistral Small 4: Unified reasoning & multimodal model with 262K context. Tool-calling support.",
+  "gemini-search": "Live Search AI: Google Gemini with real-time web search grounding for up-to-date answers.",
+
+  // Text Models — Cloudflare
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast": "Llama 3.3 70B (Fast): High-speed, high-performance Meta model.",
   "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": "DeepSeek R1 32B: Specialized for deep reasoning and complex logic.",
   "@cf/meta/llama-3.1-8b-instruct": "Llama 3.1 8B: Balanced Meta AI for versatile everyday tasks.",
-  "@cf/meta/llama-3.2-3b-instruct": "Llama 3.2 3B: Lightweight Meta model for quick, straightforward answers.",
   "@cf/qwen/qwen2.5-coder-32b-instruct": "Qwen 2.5 Coder 32B: Advanced programming assistant for debugging and logic.",
-  "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text generation.",
+  "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text.",
   "@cf/meta/llama-3.1-70b-instruct": "Llama 3.1 70B: High-capacity Meta AI for deep comprehension and creative writing.",
-  "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's latest multimodal open model with high-performance reasoning.",
-  "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient model for fast and accurate chat.",
-  "pollinations-chat": "Pollinations AI: Advanced multimodal chat powered by various state-of-the-art models.",
-  "pollinations-code": "Anthropic Claude 3.5 Sonnet: Advanced programming and reasoning model for high-quality code and logic.",
-  "gemini-search": "Live Search AI: Specialized model with real-time web search capabilities.",
+  "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's multimodal open model with high-performance reasoning.",
+  "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient MoE model for fast chat.",
 
-  // Coding Models
-  "@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq": "DeepSeek Coder 6.7B: Fast and efficient AI for bug fixing, code optimization, and development.",
+  // Image Models — Pollinations
+  "pollinations-flux": "Flux Schnell: Fast high-quality image generation from Black Forest Labs via Pollinations.",
+  "pollinations-kontext": "FLUX Kontext: In-context editing & generation. Perfect for iterative image refinement.",
+  "pollinations-seedream": "Seedream 4.0: ByteDance's photorealistic image generator with reference image support.",
+  "pollinations-gptimage": "GPT Image 1 Mini: OpenAI's fast & affordable image generation via Pollinations.",
+  "pollinations-klein": "FLUX.2 Klein 4B: Fast image generation and editing from Black Forest Labs.",
+  "pollinations-turbo": "Flux Turbo: High-speed Flux image generation optimized for quick results.",
+  "pollinations-any": "Z-Image Turbo: Alibaba's S3-DiT 6B with 2x SPAN upscaling for sharp images.",
+  "pollinations-dream": "Seedream Art: ByteDance's artistic image generation for creative visuals.",
+  "pollinations-pixart": "Flux HD: High-resolution image generation optimized for detailed outputs.",
+  "pollinations-portrait": "Flux Portrait: Specialized for human faces and realistic portrait generation.",
+  "gpt-image-2": "GPT Image 1.5 Large: OpenAI's flagship model via Pollinations API. Completely free with your Pollen key.",
 
-  // Image Models
-  "pollinations-turbo": "Gemini Image 1 Mini: High-speed, high-quality image generation via Pollinations Turbo.",
-  "pollinations-flux": "Flux Pro (Pollinations): State-of-the-art HD image generation with superior detail.",
-  "pollinations-any": "Anime & Art (Pollinations): Optimized for artistic styles and anime aesthetics.",
-  "pollinations-dream": "Dream Artist (Pollinations): Surreal and imaginative creative image generation.",
-  "pollinations-pixart": "PixArt 1024 (Pollinations): High-resolution transformer-based image model.",
-  "pollinations-portrait": "Realistic Portrait (Pollinations): Specialized for human faces and realistic textures.",
-  "@cf/black-forest-labs/flux-1-schnell": "Flux-1 Schnell: The fastest high-quality open-source layout model from Black Forest Labs.",
+  // Image Models — Cloudflare
+  "@cf/black-forest-labs/flux-1-schnell": "Flux-1 Schnell: The fastest high-quality open-source model from Black Forest Labs.",
   "@cf/stabilityai/stable-diffusion-xl-base-1.0": "SDXL 1.0: Professional-grade imagery with broad artistic control.",
   "@cf/leonardoai/phoenix-1.0": "Leonardo Phoenix: High-end artistic fidelity and innovative style coherence.",
   "@cf/bytedance/sdxl-lightning": "SDXL Lightning: Ultra-fast generation using ByteDance's advanced distillation."
