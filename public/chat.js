@@ -450,10 +450,16 @@ promptInput.addEventListener("keydown", (e) => {
   }
 });
 
-promptInput.addEventListener("input", () => {
+function resizePromptInput() {
   promptInput.style.height = "auto";
   promptInput.style.height = promptInput.scrollHeight + "px";
-});
+}
+
+promptInput.addEventListener("input", resizePromptInput);
+window.addEventListener("resize", resizePromptInput);
+
+// Initial resize to handle wrapped placeholders
+setTimeout(resizePromptInput, 100);
 
 // Settings Logic
 if (settingsBtn) {
