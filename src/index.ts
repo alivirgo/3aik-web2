@@ -416,8 +416,8 @@ async function handleImageRequest(
           body: JSON.stringify({
             prompt: prompt,
             model: "ltx-2-3-fast",
-            duration: 5,
-            resolution: width === 1280 ? "1280x720" : "1280x720" // default to 720p for fast generation
+            duration: 6,
+            resolution: "1920x1080"
           })
         });
 
