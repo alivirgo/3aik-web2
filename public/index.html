@@ -116,7 +116,7 @@
       <div class="sidebar-section" id="image-model-section" style="display: none;">
         <div class="section-label">Image Model</div>
         <select id="image-model-select" class="modern-select">
-          <option value="pollinations-flux" selected>Flux Schnell (Pollinations)</option>
+          <option value="pollinations-flux">Flux Schnell (Pollinations)</option>
           <option value="pollinations-kontext">FLUX Kontext — Edit & Generate</option>
           <option value="pollinations-seedream">Seedream 4.0 — Photorealistic</option>
           <option value="pollinations-gptimage">GPT Image 1 Mini (Pollinations)</option>
@@ -124,7 +124,7 @@
           <option value="pollinations-any">Z-Image Turbo (Alibaba)</option>
           <option value="pollinations-dream">Seedream Art</option>
           <option value="pollinations-turbo">Flux Turbo</option>
-          <option value="@cf/leonardoai/phoenix-1.0">Phoenix 1.0</option>
+          <option value="@cf/leonardoai/phoenix-1.0" selected>Phoenix 1.0</option>
           <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning</option>
           <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell (CF)</option>
           <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">Stable Diffusion XL</option>
@@ -307,8 +307,11 @@
         <div class="input-wrapper">
           <textarea id="prompt-input" rows="1" placeholder="Type your message or image prompt..."
             autocomplete="off"></textarea>
-          <button id="send-btn" class="btn-send" title="Send">
-            <span class="send-icon">➤</span>
+          <button id="send-btn" class="send-btn" title="Send (Enter)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
           </button>
         </div>
         <div class="input-hint">
