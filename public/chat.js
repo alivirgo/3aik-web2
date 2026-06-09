@@ -821,6 +821,20 @@ function initGamesLogic() {
     });
   });
 
+  function handleFileSelection(file) {
+    if (!file) return;
+    selectedFile = file;
+    dropZone.querySelector("span").textContent = `Selected: ${file.name}`;
+    
+    // Show image preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      document.getElementById("det-preview-container").style.display = "block";
+      document.getElementById("det-image-preview").src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
   // Drop zone events
   if (dropZone) {
     dropZone.addEventListener("click", () => detImageInput.click());
@@ -833,8 +847,7 @@ function initGamesLogic() {
       e.preventDefault();
       dropZone.classList.remove("dragover");
       if (e.dataTransfer.files.length > 0) {
-        selectedFile = e.dataTransfer.files[0];
-        dropZone.querySelector("span").textContent = `Selected: ${selectedFile.name}`;
+        handleFileSelection(e.dataTransfer.files[0]);
       }
     });
   }
@@ -842,8 +855,7 @@ function initGamesLogic() {
   if (detImageInput) {
     detImageInput.addEventListener("change", (e) => {
       if (e.target.files.length > 0) {
-        selectedFile = e.target.files[0];
-        dropZone.querySelector("span").textContent = `Selected: ${selectedFile.name}`;
+        handleFileSelection(e.target.files[0]);
       }
     });
   }
@@ -851,9 +863,16 @@ function initGamesLogic() {
   // Check button logic
   if (detCheckBtn) {
     detCheckBtn.addEventListener("click", async () => {
-      detResult.style.display = "block";
-      detResult.className = "det-result";
-      detResult.textContent = "Analyzing... 🕵️";
+      const resultContainer = document.getElementById("det-result");
+      const mainResult = document.getElementById("det-main-result");
+      const breakdown = document.getElementById("det-breakdown");
+      const breakdownList = document.getElementById("det-breakdown-list");
+
+      resultContainer.style.display = "block";
+      mainResult.className = "det-result";
+      mainResult.textContent = "Analyzing... 🕵️";
+      breakdown.style.display = "none";
+      breakdownList.innerHTML = "";
 
       try {
         let response;
@@ -873,7 +892,7 @@ function initGamesLogic() {
             body: formData
           });
         } else {
-          const text = detTextInput.value.trim();
+          const text = document.getElementById("det-text-input").value.trim();
           if (text.length < 250) throw new Error("Text must be at least 250 characters.");
 
           response = await fetch("/api/aiornot", {
@@ -886,19 +905,28 @@ function initGamesLogic() {
         if (!response.ok) {
           const errData = await response.json();
           const detailStr = errData.details ? (errData.details.error?.message || JSON.stringify(errData.details)) : "";
-          throw new Error(errData.error + (detailStr ? `: ${detailStr}` : ""));
+          throw new Error((errData.error || "Unknown Error") + (detailStr ? `: ${detailStr}` : ""));
         }
 
         const data = await response.json();
 
-        // AI or Not v2 structure
+        // AI or Not v2 structure mapping
         let isAI = false;
         let confidence = 0;
+        let details = {};
 
         if (currentDetType === "image") {
-          // v2 image report: data.report.ai_generated.is_detected / confidence
-          isAI = data.report?.ai_generated?.is_detected || data.is_ai;
-          confidence = data.report?.ai_generated?.confidence || data.confidence || 0;
+          const aiGen = data.report?.ai_generated;
+          if (aiGen) {
+            isAI = aiGen.verdict === "ai";
+            // If it's AI, show the AI confidence. If it's human, show the human confidence.
+            confidence = isAI ? (aiGen.ai?.confidence || 0) : (aiGen.human?.confidence || 0);
+            details = aiGen.generator || {};
+          } else {
+            // Fallback for unexpected format
+            isAI = data.is_ai;
+            confidence = data.confidence || 0;
+          }
         } else {
           // v2 text report: data.report.ai_text.is_detected / confidence
           isAI = data.report?.ai_text?.is_detected || data.is_ai;
@@ -906,15 +934,41 @@ function initGamesLogic() {
         }
 
         if (isAI) {
-          detResult.classList.add("ai");
-          detResult.textContent = `❌ AI Detected (${Math.round(confidence * 100)}% confidence)`;
+          mainResult.classList.add("ai");
+          mainResult.innerHTML = `<span style="font-size: 1.5rem; font-weight: 800;">LIKELY AI</span><br><span style="font-size: 1rem; opacity: 0.9;">(${Math.round(confidence * 100)}% AI)</span>`;
         } else {
-          detResult.classList.add("human");
-          detResult.textContent = `✅ Likely Human (${Math.round((1 - confidence) * 100)}% confidence)`;
+          mainResult.classList.add("human");
+          mainResult.innerHTML = `<span style="font-size: 1.5rem; font-weight: 800;">LIKELY HUMAN</span><br><span style="font-size: 1rem; opacity: 0.9;">(${Math.round(confidence * 100)}% Human)</span>`;
         }
+
+        // Populate breakdown if available (for image)
+        const generatorKeys = Object.keys(details).filter(k => k !== "ai" && k !== "human");
+        if (generatorKeys.length > 0) {
+          breakdown.style.display = "block";
+          
+          // Sort by confidence descending
+          generatorKeys.sort((a, b) => (details[b]?.confidence || 0) - (details[a]?.confidence || 0));
+
+          for (const key of generatorKeys) {
+             const name = key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+             const perc = Math.round((details[key].confidence || 0) * 100);
+             breakdownList.innerHTML += `
+               <div style="margin-bottom: 6px;">
+                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                   <span>${name}</span>
+                   <span>${perc}%</span>
+                 </div>
+                 <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+                   <div style="width: ${perc}%; height: 100%; background: ${isAI ? '#ff4444' : '#00c853'}; border-radius: 3px;"></div>
+                 </div>
+               </div>
+             `;
+          }
+        }
+
       } catch (err) {
-        detResult.style.display = "block";
-        detResult.textContent = `Error: ${err.message}`;
+        mainResult.style.display = "block";
+        mainResult.textContent = `Error: ${err.message}`;
       }
     });
   }
