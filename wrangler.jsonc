@@ -12,6 +12,23 @@
   "ai": {
     "binding": "AI"
   },
+  "ratelimits": [
+    {
+      "name": "CHAT_RATE_LIMITER",
+      "namespace_id": "3101",
+      "simple": { "limit": 12, "period": 60 }
+    },
+    {
+      "name": "IMAGE_RATE_LIMITER",
+      "namespace_id": "3102",
+      "simple": { "limit": 2, "period": 60 }
+    },
+    {
+      "name": "AGENT_RATE_LIMITER",
+      "namespace_id": "3103",
+      "simple": { "limit": 20, "period": 60 }
+    }
+  ],
   "observability": {
     "enabled": true
   },

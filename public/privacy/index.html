@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d100f">
+  <meta name="color-scheme" content="dark light">
+  <title>Privacy policy — 3aik</title>
+  <meta name="description" content="How 3aik and 3aikGPT handle prompts, local history, files, device identifiers, and model-provider traffic.">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://3aik.com/privacy">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/privacy.css">
+</head>
+<body class="policy-page">
+  <a class="skip-link" href="#policy">Skip to privacy policy</a>
+  <header class="policy-header">
+    <a class="policy-brand" href="/" aria-label="Back to 3aik">
+      <span aria-hidden="true">3</span>
+      <strong>3aik</strong>
+    </a>
+    <a class="policy-back" href="/">Open workspace</a>
+  </header>
+
+  <main class="policy-main" id="policy">
+    <div class="policy-intro">
+      <p class="policy-eyebrow">NUC7 Studios · Effective 16 August 2026</p>
+      <h1>Privacy, in plain language.</h1>
+      <p>3aik keeps browser conversations on your device, sends only the content needed for a request to the selected AI provider, and does not require an account. Local history is not the same as local inference.</p>
+      <div class="policy-summary" aria-label="Privacy summary">
+        <span>No advertising trackers</span>
+        <span>No sale of personal data</span>
+        <span>User-controlled local history</span>
+      </div>
+    </div>
+
+    <nav class="policy-nav" aria-label="On this page">
+      <a href="#scope">Scope</a>
+      <a href="#data">Data</a>
+      <a href="#providers">Providers</a>
+      <a href="#choices">Your choices</a>
+      <a href="#contact">Contact</a>
+    </nav>
+
+    <article class="policy-copy">
+      <section id="scope">
+        <h2>1. Who this policy covers</h2>
+        <p>NUC7 Studios operates 3aik and the 3aikGPT Android application. This policy covers the hosted workspace at <a href="https://3aik.com">3aik.com</a>, its API, the Android WebView client, and the official command-line and desktop clients. A model endpoint that you configure yourself has its own operator and privacy terms.</p>
+      </section>
+
+      <section id="data">
+        <h2>2. Information processed</h2>
+        <h3>Content you choose to submit</h3>
+        <p>When you send a request, 3aik processes the prompt, selected attachments, relevant recent conversation context, mode settings, and optional custom instructions. Coding-agent requests can also contain file excerpts, command output, and diffs produced by tools you approve on your computer.</p>
+        <h3>Data kept on your device</h3>
+        <p>The browser and Android client can store threads, drafts, preferences, attachments, generated images, and the offline application shell in browser storage. The desktop and CLI clients store settings and a random device identifier locally. Workspace files changed by the coding agent remain wherever you selected them.</p>
+        <h3>Service and security data</h3>
+        <p>Requests inherently expose network information such as IP address, user agent, time, and route to Cloudflare. A random <code>x-3aik-device</code> identifier supports rate limiting and abuse prevention; it is not an account or a cross-device identity. The download counter reads aggregate public GitHub Release totals and does not inspect prompts.</p>
+      </section>
+
+      <section id="use">
+        <h2>3. Why information is used</h2>
+        <p>We use submitted content to return the requested output; local records to restore your workspace; and limited request metadata and device identifiers to operate, secure, troubleshoot, and protect the service. Where applicable law requires a legal basis, these activities rely on your request or consent, performance of the service you asked for, NUC7 Studios’ legitimate interest in a secure and reliable service, and legal obligations.</p>
+        <p>3aik does not contain third-party advertising or analytics SDKs, sell personal data, or share personal data for cross-context behavioural advertising.</p>
+      </section>
+
+      <section id="providers">
+        <h2>4. AI providers and transfers</h2>
+        <h3>3aik Cloud</h3>
+        <p>The hosted workspace sends inference requests through a Cloudflare Worker to Cloudflare Workers AI. The 3aik application does not write conversation payloads to a database, object store, or account profile. Cloudflare states that Workers AI customer content is not used to train its AI models or improve Cloudflare or third-party services without explicit consent. See <a href="https://developers.cloudflare.com/workers-ai/platform/data-usage/" target="_blank" rel="noopener noreferrer">Cloudflare’s Workers AI data-usage notice</a>.</p>
+        <p>Cloudflare processes service traffic on a global network. Operational and security metadata may be handled or retained under Cloudflare’s agreements, settings, and privacy documentation, including across borders. Do not submit secrets, regulated data, or information you lack permission to process.</p>
+        <h3>Local-model clients</h3>
+        <p>Ollama, LM Studio, and llama.cpp loopback presets send model traffic to software running on your device. A custom OpenAI-compatible endpoint may be on your local network or the internet. The CLI and desktop app send prompts and tool results only to the endpoint you select and do not silently fall back to 3aik Cloud; the selected endpoint’s operator can see that content.</p>
+        <h3>External links and downloads</h3>
+        <p>GitHub hosts source code and release downloads. Links opened outside 3aik, including links from model output, are governed by the destination’s policy. The Android app asks before opening an external destination.</p>
+      </section>
+
+      <section id="retention">
+        <h2>5. Retention and security</h2>
+        <p>Remembered browser data stays on the device until you delete it, disable remembered conversations, clear app/browser storage, or uninstall the application. The random device identifier remains until the relevant client data is reset. 3aik does not maintain a server-side conversation archive, so it cannot restore a deleted local thread.</p>
+        <p>We use HTTPS, restrictive browser security headers, bounded requests, abuse controls, and approval boundaries in coding clients. No system is risk-free. AI output can be inaccurate, and local tool access can affect files after your approval.</p>
+      </section>
+
+      <section id="choices">
+        <h2>6. Delete or export your data</h2>
+        <ul>
+          <li>Turn off <strong>Remember conversations</strong> to remove durable browser history and media while keeping the current session in memory.</li>
+          <li>Delete an individual thread, clear all threads, or export/import a workspace JSON backup from Settings.</li>
+          <li>On Android, use <strong>Privacy &amp; local data → Clear local app data</strong>, Android’s Clear storage control, or uninstall the app.</li>
+          <li>Remove CLI or desktop settings through the client, and delete any workspace files or exported backups yourself.</li>
+        </ul>
+        <p>Depending on your location, you may have rights to access, correct, delete, restrict, or object to processing, and to lodge a complaint with a data-protection authority. Because 3aik has no accounts or server-side conversation history, we may need enough request context to locate any operational record and may not be able to link anonymous traffic to you.</p>
+      </section>
+
+      <section id="children">
+        <h2>7. Children</h2>
+        <p>3aik is a general-purpose productivity tool and is not directed to children under 13. A parent or guardian who believes a child submitted personal information should contact us.</p>
+      </section>
+
+      <section id="changes">
+        <h2>8. Changes</h2>
+        <p>Material changes will be reflected on this page with a new effective date. Continued use after a change means the updated policy applies to later processing.</p>
+      </section>
+
+      <section id="contact">
+        <h2>9. Contact</h2>
+        <p>For privacy questions or rights requests, contact <strong>NUC7 Studios</strong> at <a href="mailto:alivirgo123@live.com">alivirgo123@live.com</a>. Please do not include passwords, API keys, or sensitive prompt content in the first message.</p>
+      </section>
+    </article>
+  </main>
+
+  <footer class="policy-footer">
+    <span>3aik · AI, on your terms.</span>
+    <a href="https://github.com/alivirgo/3aik-web2" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+  </footer>
+</body>
+</html>

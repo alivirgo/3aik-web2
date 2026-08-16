@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">3aikGPT: AI, On Your Terms</string>
+    <string name="toolbar_title">3aikGPT</string>
+    <string name="toolbar_subtitle_secure">3aik.com · secure connection</string>
+    <string name="toolbar_subtitle_offline">Offline · local data unchanged</string>
+    <string name="toolbar_logo_description">3aikGPT home</string>
+
+    <string name="menu_reload">Reload workspace</string>
+    <string name="menu_open_browser">Open 3aik.com in browser</string>
+    <string name="menu_privacy">Privacy &amp; local data</string>
+    <string name="menu_about">About 3aikGPT</string>
+
+    <string name="error_title_offline">You’re offline</string>
+    <string name="error_title_unavailable">Workspace unavailable</string>
+    <string name="error_message_offline">Connect to load the cloud workspace. Nothing stored locally by this app was deleted.</string>
+    <string name="error_message_generic">3aik.com could not be loaded securely. Check your connection and try again.</string>
+    <string name="retry">Try again</string>
+
+    <string name="onboarding_title">AI, on your terms</string>
+    <string name="onboarding_message">Your conversations and generated media are kept in this app’s local web storage unless you export or clear them.\n\nWhen you send a prompt or attachment in Cloud mode, it goes to 3aik and is processed by Cloudflare Workers AI. Local history does not make cloud inference offline or private.\n\nYou choose what to send. Workspace settings let you disable remembered history, export or delete threads, and the app menu can clear all local web data.</string>
+    <string name="onboarding_accept">I understand</string>
+
+    <string name="privacy_title">Privacy &amp; local data</string>
+    <string name="view_privacy_policy">View privacy policy</string>
+    <string name="privacy_message">History, drafts, preferences, and generated media are stored in this app’s WebView on this device. They are not Android cloud-backed up by this app. Prompts and chosen attachments still leave the device for processing by 3aik Cloud and Cloudflare Workers AI.\n\nUse Workspace settings to control remembered history and thread export/deletion. “Clear local app data” below removes the 3aik.com storage, cookies, and cache held by this app.</string>
+    <string name="clear_local_data">Clear local app data</string>
+    <string name="close">Close</string>
+    <string name="clear_confirm_title">Clear local app data?</string>
+    <string name="clear_confirm_message">This permanently deletes conversations, drafts, preferences, generated media, cookies, and cached pages stored by this app. Files you exported elsewhere are not affected.</string>
+    <string name="clear_confirm_action">Clear now</string>
+    <string name="cancel">Cancel</string>
+    <string name="data_cleared">Local app data cleared</string>
+    <string name="data_clear_failed">Android could not start data deletion. Update Android System WebView or clear this app’s storage in Android Settings.</string>
+    <string name="clear_fallback_title">System WebView update needed</string>
+    <string name="clear_fallback_message">This device’s System WebView cannot confirm complete removal of cookies, site storage, cached pages, and service workers. Android can instead close 3aikGPT and erase all of its app data, including onboarding preferences. Files you exported elsewhere are not affected.</string>
+    <string name="clear_fallback_action">Erase all app data</string>
+
+    <string name="about_title">3aikGPT: AI, On Your Terms</string>
+    <string name="about_message">Version %1$s\n\nDeveloped by NUC7 Studios\n\nA hardened Android window onto https://3aik.com. The app keeps web history locally and gives you controls to export or erase it; cloud prompts and attachments are still processed remotely by 3aik Cloud and Cloudflare Workers AI.</string>
+
+    <string name="external_title">Leave 3aikGPT?</string>
+    <string name="external_message">Open this secure external site in your browser?\n\n%1$s</string>
+    <string name="external_mail_message">Open your email app for this address?\n\n%1$s</string>
+    <string name="open">Open</string>
+    <string name="blocked_link">This link was blocked because it is not a permitted secure destination.</string>
+    <string name="no_handler">No compatible app is installed for this link.</string>
+    <string name="unsafe_page_blocked">Android Safe Browsing blocked a potentially unsafe page.</string>
+    <string name="certificate_error">The secure connection failed. The page was not opened.</string>
+    <string name="permission_denied">Camera, microphone, and location access are not available in this app.</string>
+
+    <string name="download_saved">Saved %1$s</string>
+    <string name="download_failed">The file could not be saved safely.</string>
+    <string name="download_too_large">This download is larger than the app’s 150 MB safety limit.</string>
+    <string name="download_unavailable">Use a current Android System WebView or open 3aik.com in your browser to download this file.</string>
+</resources>

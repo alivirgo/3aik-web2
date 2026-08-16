@@ -1,0 +1,101 @@
+{
+  "name": "@3aik/desktop",
+  "productName": "3aik",
+  "version": "3.0.0",
+  "description": "The secure Windows-first desktop workspace for 3aik chat and coding agents.",
+  "license": "MIT",
+  "private": true,
+  "homepage": "https://3aik.com",
+  "type": "commonjs",
+  "main": "src/main/index.cjs",
+  "author": {
+    "name": "3aik",
+    "email": "alivirgo123@live.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alivirgo/3aik-web2.git",
+    "directory": "apps/desktop"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "lint": "node --check src/main/index.cjs && node --check src/main/security.cjs && node --check src/main/settings-store.cjs && node --check src/main/credential-store.cjs && node --check src/preload/index.cjs && node --check src/shared/contracts.cjs && node --check src/agent/core-adapter.cjs && node --check src/agent/model-client.cjs && node --check src/renderer/app.js",
+    "test": "node --test",
+    "check": "npm run lint && npm test",
+    "pack:dir": "electron-builder --dir --publish never",
+    "pack:win": "electron-builder --win nsis portable --x64 --publish never"
+  },
+  "dependencies": {
+    "@3aik/agent-core": "file:../../packages/agent-core"
+  },
+  "devDependencies": {
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.3aik.desktop",
+    "productName": "3aik",
+    "copyright": "Copyright © 2026 3aik",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build-resources/icon.svg",
+        "to": "3aik-icon.svg"
+      },
+      {
+        "from": "build-resources/license.txt",
+        "to": "LICENSE.txt"
+      }
+    ],
+    "win": {
+      "icon": "build-resources/icon.svg",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "3aik-Setup-${version}-${arch}.${ext}",
+      "license": "build-resources/license.txt",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "3aik",
+      "uninstallDisplayName": "3aik Desktop",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "3aik-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "alivirgo",
+      "repo": "3aik-web2",
+      "releaseType": "release"
+    }
+  }
+}

@@ -1,0 +1,346 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/agent-core/package-lock.json
+            packages/cli/package-lock.json
+            apps/desktop/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix packages/agent-core
+      - run: npm ci --prefix packages/cli
+      - run: npm ci --prefix apps/desktop
+      - run: npm run check:all
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --prefix packages/cli --omit=dev --audit-level=high
+      - run: npm audit --prefix apps/desktop --audit-level=high
+      - name: Verify release versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          test "$(node -p "require('./package.json').version")" = "$version"
+          test "$(node -p "require('./packages/agent-core/package.json').version")" = "$version"
+          test "$(node -p "require('./packages/cli/package.json').version")" = "$version"
+          test "$(node -p "require('./apps/desktop/package.json').version")" = "$version"
+
+          gradle_file="apps/android/app/build.gradle.kts"
+          android_version="$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$gradle_file")"
+          android_code="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$gradle_file")"
+          android_package="$(sed -nE 's/^[[:space:]]*applicationId[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$gradle_file")"
+          android_namespace="$(sed -nE 's/^[[:space:]]*namespace[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$gradle_file")"
+          compile_sdk="$(sed -nE 's/^[[:space:]]*compileSdk[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$gradle_file")"
+          target_sdk="$(sed -nE 's/^[[:space:]]*targetSdk[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$gradle_file")"
+          test "$android_version" = "$version"
+          test "$android_package" = "com.nuc7.threeaikgpt"
+          test "$android_namespace" = "$android_package"
+          test "$compile_sdk" = "36"
+          test "$target_sdk" = "36"
+          if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Android releases require a stable numeric major.minor.patch tag." >&2
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          if (( 10#$minor > 99 || 10#$patch > 99 )); then
+            echo "Android minor and patch versions must each fit in two versionCode digits." >&2
+            exit 1
+          fi
+          expected_android_code="$((10#$major * 10000 + 10#$minor * 100 + 10#$patch))"
+          test "$android_code" = "$expected_android_code"
+
+          app_label="$(sed -nE 's@^[[:space:]]*<string name="app_name">(.*)</string>[[:space:]]*$@\1@p' apps/android/app/src/main/res/values/strings.xml)"
+          test "$app_label" = "3aikGPT: AI, On Your Terms"
+
+  cli:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            packages/agent-core/package-lock.json
+            packages/cli/package-lock.json
+      - run: npm ci --prefix packages/agent-core
+      - run: npm ci --prefix packages/cli
+      - run: npm --prefix packages/cli run pack:release
+      - name: Verify packed CLI in a clean directory
+        shell: bash
+        run: |
+          install_dir="$(mktemp -d)"
+          npm install --prefix "$install_dir" "$GITHUB_WORKSPACE/packages/cli/3aik-cli.tgz"
+          version="${GITHUB_REF_NAME#v}"
+          test "$("$install_dir/node_modules/.bin/3aik" --version)" = "$version"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli
+          path: |
+            packages/cli/3aik-cli.tgz
+            packages/cli/install.ps1
+            packages/cli/install.cmd
+          if-no-files-found: error
+
+  windows:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            packages/agent-core/package-lock.json
+            apps/desktop/package-lock.json
+      - run: npm ci --prefix packages/agent-core
+      - run: npm ci --prefix apps/desktop
+      - run: npm --prefix apps/desktop run pack:win
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error
+
+  android:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: android-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            apps/android/*.gradle.kts
+            apps/android/gradle.properties
+            apps/android/gradle/verification-metadata.xml
+            apps/android/gradle/wrapper/gradle-wrapper.properties
+            apps/android/app/*.gradle.kts
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-36
+            build-tools;36.0.0
+      - name: Validate protected Android signing configuration
+        id: signing
+        shell: bash
+        env:
+          THREEAIK_UPLOAD_KEYSTORE_BASE64: ${{ secrets.THREEAIK_UPLOAD_KEYSTORE_BASE64 }}
+          THREEAIK_UPLOAD_KEY_ALIAS: ${{ secrets.THREEAIK_UPLOAD_KEY_ALIAS }}
+          THREEAIK_UPLOAD_STORE_PASSWORD: ${{ secrets.THREEAIK_UPLOAD_STORE_PASSWORD }}
+          THREEAIK_UPLOAD_KEY_PASSWORD: ${{ secrets.THREEAIK_UPLOAD_KEY_PASSWORD }}
+          THREEAIK_UPLOAD_CERT_SHA256: ${{ secrets.THREEAIK_UPLOAD_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          present=0
+          for value in \
+            "$THREEAIK_UPLOAD_KEYSTORE_BASE64" \
+            "$THREEAIK_UPLOAD_KEY_ALIAS" \
+            "$THREEAIK_UPLOAD_STORE_PASSWORD" \
+            "$THREEAIK_UPLOAD_KEY_PASSWORD" \
+            "$THREEAIK_UPLOAD_CERT_SHA256"; do
+            if [[ -n "$value" ]]; then
+              present=$((present + 1))
+            fi
+          done
+
+          if [[ "$present" -ne 0 && "$present" -ne 5 ]]; then
+            echo "Android signing is only allowed when all five protected secrets are configured." >&2
+            exit 1
+          fi
+
+          if [[ "$present" -eq 0 ]]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "No Android upload-key secrets are configured; the release will contain a clearly named unsigned, non-Play AAB."
+            exit 0
+          fi
+
+          expected="$(printf '%s' "$THREEAIK_UPLOAD_CERT_SHA256" | tr -d '[:space:]:-' | tr '[:lower:]' '[:upper:]')"
+          if [[ ! "$expected" =~ ^[0-9A-F]{64}$ ]]; then
+            echo "THREEAIK_UPLOAD_CERT_SHA256 must be a 64-digit SHA-256 fingerprint, with optional colons." >&2
+            exit 1
+          fi
+          for value in "$THREEAIK_UPLOAD_KEY_ALIAS" "$THREEAIK_UPLOAD_STORE_PASSWORD" "$THREEAIK_UPLOAD_KEY_PASSWORD"; do
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "Android signing aliases and passwords must be single-line values." >&2
+              exit 1
+            fi
+          done
+
+          keystore="$RUNNER_TEMP/3aik-upload-keystore"
+          certificate="$RUNNER_TEMP/3aik-upload-certificate.der"
+          umask 077
+          if ! printf '%s' "$THREEAIK_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$keystore"; then
+            echo "The protected upload keystore is not valid base64." >&2
+            exit 1
+          fi
+          test -s "$keystore"
+          keytool -exportcert \
+            -keystore "$keystore" \
+            -alias "$THREEAIK_UPLOAD_KEY_ALIAS" \
+            -storepass:env THREEAIK_UPLOAD_STORE_PASSWORD \
+            -file "$certificate"
+          actual="$(sha256sum "$certificate" | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "The upload keystore certificate does not match THREEAIK_UPLOAD_CERT_SHA256." >&2
+            exit 1
+          fi
+
+          echo "THREEAIK_UPLOAD_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+          echo "THREEAIK_UPLOAD_KEY_ALIAS=$THREEAIK_UPLOAD_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "THREEAIK_UPLOAD_STORE_PASSWORD=$THREEAIK_UPLOAD_STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "THREEAIK_UPLOAD_KEY_PASSWORD=$THREEAIK_UPLOAD_KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "EXPECTED_ANDROID_CERT_SHA256=$expected" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Test, lint, and build Android release
+        shell: bash
+        run: |
+          chmod +x apps/android/gradlew apps/android/ci.sh
+          cd apps/android
+          ./ci.sh
+      - name: Remove Android signing passwords from later steps
+        if: always()
+        shell: bash
+        run: |
+          echo "THREEAIK_UPLOAD_KEY_ALIAS=" >> "$GITHUB_ENV"
+          echo "THREEAIK_UPLOAD_STORE_PASSWORD=" >> "$GITHUB_ENV"
+          echo "THREEAIK_UPLOAD_KEY_PASSWORD=" >> "$GITHUB_ENV"
+      - name: Verify and stage Android release artifacts
+        shell: bash
+        env:
+          SIGNED_BUILD: ${{ steps.signing.outputs.signed }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version_code="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' apps/android/app/build.gradle.kts)"
+          bundle="apps/android/app/build/outputs/bundle/release/app-release.aab"
+          mapping="apps/android/app/build/outputs/mapping/release/mapping.txt"
+          output="android-release-artifacts"
+          test -s "$bundle"
+          test -s "$mapping"
+          mkdir -p "$output"
+
+          mapfile -t signature_entries < <(jar tf "$bundle" | grep -Ei '^META-INF/[^/]+\.(RSA|DSA|EC)$' || true)
+          report="$output/3aikGPT-${version}-android-certificate.txt"
+          if [[ "$SIGNED_BUILD" == "true" ]]; then
+            if [[ "${#signature_entries[@]}" -eq 0 ]]; then
+              echo "The signed Android release contains no JAR signature block." >&2
+              exit 1
+            fi
+            LC_ALL=C jarsigner -verify -verbose -certs "$bundle" > "$RUNNER_TEMP/jarsigner-verification.txt" 2>&1
+            bundle_fingerprint="$(LC_ALL=C keytool -J-Duser.language=en -J-Duser.country=US -printcert -jarfile "$bundle" | sed -nE 's/^[[:space:]]*SHA256:[[:space:]]*([0-9A-Fa-f:]+).*/\1/p' | head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+            if [[ -z "$bundle_fingerprint" || "$bundle_fingerprint" != "$EXPECTED_ANDROID_CERT_SHA256" ]]; then
+              echo "The AAB signer certificate does not match the protected expected fingerprint." >&2
+              exit 1
+            fi
+            aab_name="3aikGPT-${version}-PLAY-UPLOAD-SIGNED.aab"
+            {
+              echo "artifact=$aab_name"
+              echo "package=com.nuc7.threeaikgpt"
+              echo "versionName=$version"
+              echo "versionCode=$version_code"
+              echo "signature=verified upload-key JAR signature"
+              echo "playUploadable=true"
+              echo "certificateSha256=$bundle_fingerprint"
+              printf 'signatureEntries='
+              printf '%s ' "${signature_entries[@]}"
+              printf '\n'
+            } > "$report"
+          else
+            if [[ "${#signature_entries[@]}" -ne 0 ]]; then
+              echo "Unsigned fallback unexpectedly contains a signing block." >&2
+              exit 1
+            fi
+            aab_name="3aikGPT-${version}-UNSIGNED-NOT-FOR-PLAY.aab"
+            {
+              echo "artifact=$aab_name"
+              echo "package=com.nuc7.threeaikgpt"
+              echo "versionName=$version"
+              echo "versionCode=$version_code"
+              echo "signature=UNSIGNED"
+              echo "playUploadable=false"
+              echo "reason=no protected Android upload-key secret set was configured"
+            } > "$report"
+          fi
+
+          cp "$bundle" "$output/$aab_name"
+          cp "$mapping" "$output/3aikGPT-${version}-mapping.txt"
+          (
+            cd "$output"
+            sha256sum \
+              "$aab_name" \
+              "3aikGPT-${version}-mapping.txt" \
+              "3aikGPT-${version}-android-certificate.txt" \
+              > "3aikGPT-${version}-android-SHA256SUMS.txt"
+          )
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android
+          path: android-release-artifacts/
+          if-no-files-found: error
+      - name: Remove ephemeral Android upload key material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/3aik-upload-keystore" "$RUNNER_TEMP/3aik-upload-certificate.der"
+
+  publish:
+    needs: [cli, windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --generate-notes --title "3aik $GITHUB_REF_NAME"

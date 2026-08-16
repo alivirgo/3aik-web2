@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    >
+    <meta name="color-scheme" content="dark light">
+    <title>3aik</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+
+    <header class="titlebar" aria-label="Application title bar">
+      <div class="titlebar-brand">
+        <img src="./assets/mark.svg" alt="" width="26" height="26">
+        <span>3aik</span>
+        <span class="titlebar-product">Desktop</span>
+      </div>
+      <div class="titlebar-center" aria-live="polite">
+        <span class="connection-dot" id="title-status-dot"></span>
+        <span id="title-status">Ready</span>
+      </div>
+    </header>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <nav class="primary-nav">
+          <button class="nav-item is-active" type="button" data-view="chat" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 18.5 3.5 21l1-4A8 8 0 1 1 7 18.5Z"></path>
+              <path d="M8 10h8M8 14h5"></path>
+            </svg>
+            <span>Chat</span>
+            <kbd>1</kbd>
+          </button>
+          <button class="nav-item" type="button" data-view="agent">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"></path>
+            </svg>
+            <span>Coding Agent</span>
+            <span class="nav-badge">Local</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+
+        <section class="project-mini" id="project-mini" hidden>
+          <span class="eyebrow">Current project</span>
+          <button class="project-mini-button" id="project-mini-button" type="button">
+            <span class="folder-tile" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M3 7.5h7l2 2h9v9.5H3Z"></path></svg>
+            </span>
+            <span class="project-mini-copy">
+              <strong id="project-mini-name">Project</strong>
+              <small id="project-mini-path"></small>
+            </span>
+          </button>
+        </section>
+
+        <nav class="secondary-nav" aria-label="Application">
+          <button class="nav-item" type="button" data-view="settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19 13.5v-3l-2-.7-.6-1.4.9-1.9-2.1-2.1-1.9.9-1.4-.6L11.2 3h-3l-.7 2.3-1.4.6-1.9-.9-2.1 2.1.9 1.9-.6 1.4L1 11.1v3l2.3.7.6 1.4-.9 1.9 2.1 2.1 1.9-.9 1.4.6.7 2.1h3l.7-2.1 1.4-.6 1.9.9 2.1-2.1-.9-1.9.6-1.4Z"></path>
+            </svg>
+            <span>Settings</span>
+            <kbd>Ctrl ,</kbd>
+          </button>
+          <button class="account-row" type="button" data-view="about" aria-label="About 3aik">
+            <img src="./assets/mark.svg" alt="" width="30" height="30">
+            <span>
+              <strong>3aik Desktop</strong>
+              <small id="sidebar-version">Version</small>
+            </span>
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+          </button>
+        </nav>
+      </aside>
+
+      <main class="workspace" id="workspace" tabindex="-1">
+        <section class="view chat-view is-active" id="view-chat" data-view-panel="chat" aria-labelledby="chat-title">
+          <header class="workspace-bar chat-bar">
+            <div>
+              <div class="workspace-heading-row">
+                <h1 id="chat-title">AI workspace</h1>
+                <span class="live-pill"><span></span> Production</span>
+              </div>
+              <p>Chat, reason, code, and create with the live 3aik workspace.</p>
+            </div>
+            <div class="toolbar-actions">
+              <span class="status-label" id="chat-status"><span></span> Connecting</span>
+              <button class="icon-button" id="reload-chat" type="button" aria-label="Reload chat" title="Reload chat (F5)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"></path></svg>
+              </button>
+            </div>
+          </header>
+          <div class="chat-frame" id="chat-frame" role="region" aria-label="3aik web chat">
+            <div class="chat-loading" aria-hidden="true">
+              <img src="./assets/mark.svg" alt="" width="48" height="48">
+              <span>Loading your workspace…</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="view agent-view" id="view-agent" data-view-panel="agent" aria-labelledby="agent-title" hidden>
+          <header class="workspace-bar agent-bar">
+            <div>
+              <div class="workspace-heading-row">
+                <h1 id="agent-title">Coding Agent</h1>
+                <span class="safety-pill">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 3v5c0 4.6-2.9 8.1-7 10-4.1-1.9-7-5.4-7-10V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                  Approval gated
+                </span>
+              </div>
+              <p>Plan work locally, review every action, and keep tools outside the renderer.</p>
+            </div>
+            <button class="button button-secondary" id="choose-project-top" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v9.5H3Z"></path></svg>
+              Choose project
+            </button>
+          </header>
+
+          <div class="agent-canvas">
+            <div class="agent-main-column">
+              <section class="project-banner" id="project-banner">
+                <div class="project-empty-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M3 7.5h7l2 2h9v9.5H3Z"></path><path d="M12 13v4M10 15h4"></path></svg>
+                </div>
+                <div class="project-banner-copy">
+                  <span class="eyebrow">Workspace</span>
+                  <strong id="project-name">Choose a project to begin</strong>
+                  <span id="project-path">3aik only receives the folder you explicitly select.</span>
+                </div>
+                <button class="button button-quiet" id="choose-project-banner" type="button">Browse…</button>
+              </section>
+
+              <section class="activity-panel" aria-labelledby="activity-title">
+                <div class="panel-heading">
+                  <div>
+                    <h2 id="activity-title">Activity</h2>
+                    <p id="activity-subtitle">Your agent’s work will appear here.</p>
+                  </div>
+                  <button class="text-button" id="clear-activity" type="button" hidden>Clear</button>
+                </div>
+
+                <div class="activity-empty" id="activity-empty">
+                  <div class="empty-orbit" aria-hidden="true">
+                    <span></span>
+                    <img src="./assets/mark.svg" alt="" width="42" height="42">
+                  </div>
+                  <h3>Ready when you are</h3>
+                  <p>Ask for a code review, feature plan, bug investigation, or a carefully approved change.</p>
+                  <div class="prompt-suggestions" aria-label="Suggested tasks">
+                    <button type="button" data-prompt="Review this project and identify its highest-impact reliability risks.">Review reliability</button>
+                    <button type="button" data-prompt="Explain the architecture of this project and its key data flows.">Explain architecture</button>
+                    <button type="button" data-prompt="Plan an accessible test suite for the most important user journeys.">Plan tests</button>
+                  </div>
+                </div>
+                <ol class="activity-list" id="activity-list" aria-live="polite" aria-relevant="additions"></ol>
+              </section>
+
+              <form class="agent-composer" id="agent-form">
+                <label class="sr-only" for="agent-task">Task for coding agent</label>
+                <textarea id="agent-task" rows="3" maxlength="8000" placeholder="Describe a task for the coding agent…" disabled></textarea>
+                <div class="composer-footer">
+                  <div class="composer-context">
+                    <span class="adapter-dot"></span>
+                    <span id="adapter-label">3aik Agent Core</span>
+                    <span class="context-separator">·</span>
+                    <span id="approval-label">Ask before changes</span>
+                  </div>
+                  <div class="composer-actions">
+                    <span class="shortcut-hint">Ctrl ↵</span>
+                    <button class="button button-danger" id="stop-task" type="button" hidden>Stop</button>
+                    <button class="send-button" id="run-task" type="submit" disabled>
+                      <span>Run task</span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-5Z"></path><path d="m12 14 7-9"></path></svg>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <aside class="agent-side-column" aria-label="Agent review">
+              <section class="review-card approval-card" id="approval-card" hidden>
+                <div class="review-card-heading">
+                  <span class="review-icon warning">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19Z"></path><path d="M12 9v5M12 17.5v.1"></path></svg>
+                  </span>
+                  <div>
+                    <span class="eyebrow">Waiting for you</span>
+                    <h2 id="approval-title">Approval needed</h2>
+                  </div>
+                </div>
+                <p id="approval-message"></p>
+                <div class="preview-warning approval-preview-warning" id="approval-preview-warning" role="alert" hidden></div>
+                <div class="risk-row"><span>Scope</span><strong id="approval-risk">No filesystem changes</strong></div>
+                <div class="approval-actions">
+                  <button class="button button-secondary" id="deny-approval" type="button">Decline</button>
+                  <button class="button button-primary" id="grant-approval" type="button">Approve action</button>
+                </div>
+              </section>
+
+              <section class="review-card diff-card">
+                <div class="review-card-heading">
+                  <span class="review-icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v16h4M16 4h4v16h-4M9 9h6M9 15h6"></path></svg>
+                  </span>
+                  <div>
+                    <span class="eyebrow">Review gate</span>
+                    <h2>Proposed changes</h2>
+                  </div>
+                </div>
+                <div class="diff-empty" id="diff-empty">
+                  <p>No working-tree changes yet.</p>
+                  <span>Live Git diffs appear here as the approved task changes your project.</span>
+                </div>
+                <div class="diff-preview" id="diff-preview" hidden>
+                  <div class="diff-summary">
+                    <strong id="diff-title">Change preview</strong>
+                    <p id="diff-summary"></p>
+                  </div>
+                  <div class="preview-warning" id="diff-preview-warning" role="status" hidden></div>
+                  <div id="diff-files"></div>
+                </div>
+              </section>
+
+              <section class="trust-card">
+                <div class="trust-heading">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 3v5c0 4.6-2.9 8.1-7 10-4.1-1.9-7-5.4-7-10V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                  <strong>Permission boundary</strong>
+                </div>
+                <ul>
+                  <li>Tools run only in the trusted main process</li>
+                  <li>The renderer has no Node.js access</li>
+                  <li>Every write, patch, and command requires approval</li>
+                </ul>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view settings-view" id="view-settings" data-view-panel="settings" aria-labelledby="settings-title" hidden>
+          <header class="workspace-bar">
+            <div>
+              <h1 id="settings-title">Settings</h1>
+              <p>Make the desktop workspace feel and behave the way you expect.</p>
+            </div>
+          </header>
+          <div class="settings-scroll">
+            <form class="settings-form" id="settings-form">
+              <section class="settings-section" aria-labelledby="appearance-title">
+                <div class="settings-section-heading">
+                  <span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-1-.8-1.8-1.8-1.8h-2.3c-1 0-1.8-.8-1.8-1.8 0-.5.2-.9.5-1.3l1.2-1.2A9 9 0 0 0 12 3Z"></path><circle cx="7.5" cy="11" r=".7"></circle><circle cx="10" cy="7.5" r=".7"></circle><circle cx="15" cy="6.5" r=".7"></circle></svg></span>
+                  <div><h2 id="appearance-title">Appearance</h2><p>Follow Windows or choose a fixed theme.</p></div>
+                </div>
+                <fieldset class="segmented-control">
+                  <legend class="sr-only">Theme</legend>
+                  <label><input type="radio" name="theme" value="system" checked><span>System</span></label>
+                  <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+                  <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+                </fieldset>
+              </section>
+
+              <section class="settings-section" aria-labelledby="agent-settings-title">
+                <div class="settings-section-heading">
+                  <span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"></path></svg></span>
+                  <div><h2 id="agent-settings-title">Coding Agent</h2><p>Control its network endpoint and approval behavior.</p></div>
+                </div>
+                <fieldset class="provider-picker">
+                  <legend class="sr-only">Model provider</legend>
+                  <label class="provider-option">
+                    <input type="radio" name="agentProvider" value="3aik-cloud" checked>
+                    <span class="provider-option-card">
+                      <span class="provider-logo cloud"><img src="./assets/mark.svg" alt="" width="28" height="28"></span>
+                      <span class="provider-copy"><strong>3aik Cloud</strong><small>Managed models and agent orchestration</small></span>
+                      <span class="provider-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 12 3 3 7-7"></path></svg></span>
+                    </span>
+                  </label>
+                  <label class="provider-option">
+                    <input type="radio" name="agentProvider" value="openai-compatible">
+                    <span class="provider-option-card">
+                      <span class="provider-logo local"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="3"></rect><path d="M8 9h8M8 13h5M8 16h3"></path></svg></span>
+                      <span class="provider-copy"><strong>Local model</strong><small>OpenAI-compatible, private by design</small></span>
+                      <span class="provider-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 12 3 3 7-7"></path></svg></span>
+                    </span>
+                  </label>
+                </fieldset>
+
+                <div class="provider-details" id="cloud-provider-fields">
+                  <label class="stacked-field standalone-field" for="agent-base-url">
+                    <span><strong>3aik service</strong><small>Prompts use the device-scoped <code>/api/agent</code> endpoint.</small></span>
+                    <input id="agent-base-url" name="agentBaseUrl" type="url" inputmode="url" value="https://3aik.com" required spellcheck="false">
+                  </label>
+                </div>
+
+                <div class="provider-details local-provider-details" id="local-provider-fields" hidden>
+                  <div class="local-privacy-note">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 3v5c0 4.6-2.9 8.1-7 10-4.1-1.9-7-5.4-7-10V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                    <span><strong>Local route enforced</strong>Your prompts and tool-loop turns never fall back to 3aik Cloud while this provider is selected.</span>
+                  </div>
+                  <div class="preset-row" aria-label="Local server presets">
+                    <button type="button" class="preset-button is-active" data-local-preset="ollama"><strong>Ollama</strong><small>:11434</small></button>
+                    <button type="button" class="preset-button" data-local-preset="lm-studio"><strong>LM Studio</strong><small>:1234</small></button>
+                    <button type="button" class="preset-button" data-local-preset="llama-cpp"><strong>llama.cpp</strong><small>:8080</small></button>
+                    <button type="button" class="preset-button" data-local-preset="custom"><strong>Custom</strong><small>Private host</small></button>
+                  </div>
+                  <div class="settings-fields local-fields">
+                    <label class="stacked-field" for="local-base-url">
+                      <span><strong>Base URL</strong><small>Use an OpenAI-compatible <code>/v1</code> endpoint on localhost or your private network.</small></span>
+                      <input id="local-base-url" name="localBaseUrl" type="url" inputmode="url" value="http://127.0.0.1:11434/v1" required spellcheck="false">
+                    </label>
+                    <label class="stacked-field" for="local-model">
+                      <span><strong>Model</strong><small>Enter the exact model ID reported by your server.</small></span>
+                      <input id="local-model" name="localModel" type="text" value="qwen3-coder" maxlength="160" required spellcheck="false" list="detected-models">
+                      <datalist id="detected-models"></datalist>
+                    </label>
+                    <label class="stacked-field" for="local-api-key">
+                      <span><strong>API key <em>optional</em></strong><small id="api-key-status">Most local servers do not require a key.</small></span>
+                      <span class="secret-input-row">
+                        <input id="local-api-key" name="localApiKey" type="password" autocomplete="off" placeholder="Leave blank to keep the stored key">
+                        <button class="button button-quiet" id="clear-api-key" type="button" hidden>Clear stored key</button>
+                      </span>
+                    </label>
+                    <label class="toggle-row remember-secret-row" id="remember-key-row">
+                      <span><strong>Remember API key securely</strong><small id="secure-storage-help">Protected by Windows secure storage.</small></span>
+                      <input id="remember-local-api-key" name="rememberLocalApiKey" type="checkbox" checked>
+                      <span class="toggle" aria-hidden="true"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="provider-test-row">
+                  <span id="connection-test-status" aria-live="polite">Test before saving to verify the selected provider.</span>
+                  <button class="button button-secondary" id="test-model-connection" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10M12 7v10"></path><circle cx="12" cy="12" r="9"></circle></svg>
+                    Test connection
+                  </button>
+                </div>
+
+                <div class="settings-fields approval-fields">
+                  <label class="field-row" for="approval-mode">
+                    <span><strong>Approval mode</strong><small>Keep changes behind a deliberate review gate.</small></span>
+                    <select id="approval-mode" name="approvalMode">
+                      <option value="ask">Ask before changes</option>
+                      <option value="read-only">Read-only</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              <section class="settings-section" aria-labelledby="behavior-title">
+                <div class="settings-section-heading">
+                  <span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4"></path></svg></span>
+                  <div><h2 id="behavior-title">Workspace behavior</h2><p>Choose what the app remembers and how dense activity feels.</p></div>
+                </div>
+                <div class="settings-fields">
+                  <label class="toggle-row">
+                    <span><strong>Reopen the last project</strong><small>Restore only a folder you previously selected.</small></span>
+                    <input id="open-last-project" name="openLastProject" type="checkbox" checked>
+                    <span class="toggle" aria-hidden="true"></span>
+                  </label>
+                  <label class="toggle-row">
+                    <span><strong>Compact activity</strong><small>Show a denser coding-agent timeline.</small></span>
+                    <input id="compact-activity" name="compactActivity" type="checkbox">
+                    <span class="toggle" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </section>
+
+              <div class="settings-actions">
+                <span id="settings-status" aria-live="polite"></span>
+                <button class="button button-primary" type="submit">Save settings</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="view about-view" id="view-about" data-view-panel="about" aria-labelledby="about-title" hidden>
+          <div class="about-scroll">
+            <div class="about-hero">
+              <div class="about-mark"><img src="./assets/mark.svg" alt="" width="84" height="84"></div>
+              <span class="eyebrow">Your AI workspace</span>
+              <h1 id="about-title">3aik Desktop</h1>
+              <p>One focused home for the live 3aik workspace and a secure, review-first coding agent.</p>
+              <span class="version-pill" id="about-version">Version</span>
+            </div>
+            <div class="about-grid">
+              <section class="about-card">
+                <h2>Updates</h2>
+                <p id="update-message">Check GitHub Releases for a newer desktop build.</p>
+                <div class="about-actions">
+                  <button class="button button-primary" id="check-updates" type="button">Check for updates</button>
+                  <button class="button button-secondary" id="view-release" type="button" hidden>View release</button>
+                </div>
+              </section>
+              <section class="about-card">
+                <h2>Runtime</h2>
+                <dl class="runtime-list">
+                  <div><dt>Electron</dt><dd id="runtime-electron">—</dd></div>
+                  <div><dt>Chromium</dt><dd id="runtime-chromium">—</dd></div>
+                  <div><dt>Node.js</dt><dd id="runtime-node">—</dd></div>
+                  <div><dt>Platform</dt><dd id="runtime-platform">—</dd></div>
+                </dl>
+              </section>
+              <section class="about-card security-about-card">
+                <h2>Security posture</h2>
+                <ul>
+                  <li>Sandboxed renderers with context isolation</li>
+                  <li>Allowlisted IPC and navigation</li>
+                  <li>Dedicated partition for production chat</li>
+                  <li>No command execution in web content</li>
+                </ul>
+              </section>
+              <section class="about-card">
+                <h2>Source &amp; feedback</h2>
+                <p>Inspect the code, report an issue, or follow desktop releases on GitHub.</p>
+                <button class="button button-secondary" id="open-repository" type="button">Open GitHub repository</button>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

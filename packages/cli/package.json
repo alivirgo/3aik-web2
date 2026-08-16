@@ -1,0 +1,35 @@
+{
+  "name": "@3aik/cli",
+  "version": "3.0.0",
+  "description": "3aik coding agent for PowerShell, Command Prompt, and POSIX shells",
+  "type": "module",
+  "bin": {
+    "3aik": "./bin/3aik.js"
+  },
+  "exports": {
+    ".": "./src/main.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "install.ps1",
+    "install.cmd"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node ./bin/3aik.js",
+    "test": "node --test",
+    "check": "node --check src/args.js && node --check src/commands.js && node --check src/config.js && node --check src/main.js && node --check src/ui.js && node --check bin/3aik.js && node --check scripts/release-pack.js && npm test",
+    "pack:release": "node scripts/release-pack.js"
+  },
+  "dependencies": {
+    "@3aik/agent-core": "file:../agent-core"
+  },
+  "bundledDependencies": [
+    "@3aik/agent-core"
+  ],
+  "license": "MIT"
+}

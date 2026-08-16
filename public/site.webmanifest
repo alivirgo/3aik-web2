@@ -1,10 +1,19 @@
 {
+  "id": "/",
   "name": "3aik AI Workspace",
   "short_name": "3aik",
-  "description": "A focused AI workspace for thinking, coding, and image creation.",
+  "description": "A local-first AI workspace for thinking, coding, and image creation.",
+  "lang": "en",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0d100f",
   "theme_color": "#0d100f",
-  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+  "categories": ["productivity", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
 }

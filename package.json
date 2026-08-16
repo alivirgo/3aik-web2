@@ -1,7 +1,7 @@
 {
   "name": "3aik-web2",
-  "version": "2.0.0",
-  "description": "A local-first AI workspace on Cloudflare Workers",
+  "version": "3.0.0",
+  "description": "A local-first AI workspace with web, CLI, desktop, cloud, and local model support",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,14 +13,21 @@
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "lint:client": "node --check public/chat.js",
+    "lint:client": "node --check public/chat.js && node --check public/sw.js && node --check scripts/smoke-production.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run lint:client && npm test && wrangler deploy --dry-run"
+    "check:web": "npm run typecheck && npm run lint:client && npm test && wrangler deploy --dry-run",
+    "check:agent-core": "npm --prefix packages/agent-core run check",
+    "check:cli": "npm --prefix packages/cli run check",
+    "check:desktop": "npm --prefix apps/desktop run check",
+    "check:all": "npm run check:web && npm run check:agent-core && npm run check:cli && npm run check:desktop",
+    "check": "npm run check:web",
+    "smoke:production": "node scripts/smoke-production.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260816.1",
     "@types/node": "26.2.0",
+    "fake-indexeddb": "6.2.5",
     "happy-dom": "^20.11.2",
     "typescript": "7.0.2",
     "vitest": "4.1.10",

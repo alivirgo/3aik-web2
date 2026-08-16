@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ThreeAikGPT" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/brand_accent</item>
+        <item name="colorOnPrimary">@color/brand_accent_ink</item>
+        <item name="colorSecondary">@color/brand_accent</item>
+        <item name="colorOnSecondary">@color/brand_accent_ink</item>
+        <item name="colorSurface">@color/brand_surface</item>
+        <item name="colorOnSurface">@color/brand_text</item>
+        <item name="colorSurfaceContainer">@color/brand_surface_raised</item>
+        <item name="colorOutline">@color/brand_line</item>
+        <item name="android:colorAccent">@color/brand_accent</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:navigationBarColor">@color/brand_background</item>
+        <item name="android:statusBarColor">@color/brand_background</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@color/brand_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

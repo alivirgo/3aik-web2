@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!--
+      API 37 is not available from the installed stable Android command-line tools. Target API 36
+      is the current Google Play submission target; Core 1.18 is its latest compatible stable line.
+      AGP 9.3's documented/tested Gradle baseline is 9.5. These are intentional compatibility pins.
+    -->
+    <issue id="OldTargetApi" severity="ignore" />
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+</lint>

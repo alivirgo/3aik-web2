@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d100f">
   <meta name="color-scheme" content="dark light">
-  <title>3aik — Your private AI workspace</title>
-  <meta name="description" content="Think, code, and create images with a focused AI workspace. No account required; conversations stay on your device.">
+  <title>3aik — Your local-first AI workspace</title>
+  <meta name="description" content="Think, code, and create images in a local-first AI workspace. No account required; history stays on your device and prompts are processed by Cloudflare AI.">
   <meta name="author" content="Ali">
-  <meta property="og:title" content="3aik — Your private AI workspace">
+  <meta property="og:title" content="3aik — Your local-first AI workspace">
   <meta property="og:description" content="A focused, no-login AI workspace for thinking, coding, and image creation.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://3aik.com/">
+  <meta property="og:image" content="https://3aik.com/og.png">
+  <meta property="og:image:alt" content="3aik — AI, on your terms. Ask, Reason, Code, Create.">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="canonical" href="https://3aik.com/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/site.webmanifest">
@@ -60,7 +63,7 @@
         </button>
         <button class="mode-button" type="button" data-mode="image" aria-pressed="false">
           <span class="mode-glyph" aria-hidden="true">I</span>
-          <span><strong>Image</strong><small>Create with FLUX</small></span>
+          <span><strong>Image</strong><small>Create images</small></span>
         </button>
       </nav>
 
@@ -82,12 +85,20 @@
       <div class="sidebar-footer">
         <div class="privacy-note">
           <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-          <span><strong>Local by default</strong><small>No account. History stays here.</small></span>
+          <span><strong>Local history</strong><small>Prompts are processed by Cloudflare AI.</small></span>
         </div>
+        <button class="footer-button featured" id="apps-button" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3h8v5H8zM5 10h14v11H5zM9 14h6M9 17h4"/></svg>
+          <span class="apps-footer-copy"><span>Get CLI &amp; desktop apps</span><small id="sidebar-download-count" role="status" aria-live="polite">Checking verified downloads…</small></span>
+        </button>
         <button class="footer-button" id="theme-toggle" type="button" aria-label="Switch color theme">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.5A7 7 0 0 1 12 3Z"/></svg>
           <span id="theme-label">Light theme</span>
         </button>
+        <a class="footer-button" href="/privacy">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.7 2.8 8 7 10 4.2-2 7-5.3 7-10V6l-7-3Z"/><path d="M9.5 12 11 13.5l3.5-4"/></svg>
+          <span>Privacy policy</span>
+        </a>
       </div>
     </aside>
 
@@ -101,6 +112,20 @@
           <h1 id="thread-title">Untitled thread</h1>
         </div>
         <div class="topbar-actions">
+          <div class="thread-controls" id="thread-controls" hidden>
+            <button class="toolbar-button" id="rename-thread" type="button" title="Rename thread" aria-label="Rename thread">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 20 4-.9L18.5 6.6a2 2 0 0 0-3-2.7L5 16.2 4 20Z"/></svg>
+              <span>Rename</span>
+            </button>
+            <button class="toolbar-button" id="branch-thread" type="button" title="Branch this thread" aria-label="Branch this thread">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M8 9c5 0 5-2 8-2"/></svg>
+              <span>Branch</span>
+            </button>
+            <button class="toolbar-button" id="export-thread" type="button" title="Export as Markdown" aria-label="Export thread as Markdown">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M5 19h14"/></svg>
+              <span>Export</span>
+            </button>
+          </div>
           <span class="status-pill" id="status-pill"><i aria-hidden="true"></i><span>Ready</span></span>
           <button class="icon-button" id="settings-button" type="button" aria-label="Open settings">
             <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
@@ -110,7 +135,7 @@
 
       <section class="conversation" id="conversation" aria-label="Conversation">
         <div class="empty-state" id="empty-state">
-          <span class="empty-kicker" id="empty-kicker">Llama 4 Scout · fast and versatile</span>
+          <span class="empty-kicker" id="empty-kicker">3aik Auto · fast and versatile</span>
           <h2 id="empty-title">What can we<br><em>figure out?</em></h2>
           <p id="empty-description">Ask a question, untangle an idea, or turn a rough thought into something useful.</p>
           <div class="suggestion-grid" id="suggestion-grid"></div>
@@ -125,10 +150,15 @@
 
       <section class="composer-area" aria-label="Message composer">
         <div class="composer-meta">
-          <span class="model-chip"><i aria-hidden="true"></i><span id="active-model">Llama 4 Scout</span></span>
+          <span class="model-chip"><i aria-hidden="true"></i><span id="active-model">3aik Auto</span><small id="actual-model" hidden></small></span>
           <span id="composer-context">Replies stream as they are written</span>
         </div>
+        <div class="attachment-tray" id="attachment-tray" aria-label="Attachments" hidden></div>
         <form class="composer" id="composer-form">
+          <input id="attachment-input" type="file" accept=".txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.html,.css,.js,.mjs,.cjs,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.cs,.php,.sh,.ps1,.sql,.toml,.ini,.log,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden>
+          <button class="attach-button" id="attach-button" type="button" aria-label="Attach files" title="Attach text, code, or images">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m20.5 11.5-8.7 8.7a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 17.4a2 2 0 0 1-2.8-2.8l8.2-8.2"/></svg>
+          </button>
           <label class="sr-only" for="prompt-input">Message 3aik</label>
           <textarea id="prompt-input" rows="1" maxlength="12000" placeholder="Message 3aik…" autocomplete="off"></textarea>
           <div class="composer-actions">
@@ -139,7 +169,7 @@
             </button>
           </div>
         </form>
-        <p class="composer-note">3aik can make mistakes. Verify important information.</p>
+        <p class="composer-note">Drop or paste files · History stays on this device · Submitted content is processed by Cloudflare AI · Verify important information.</p>
       </section>
 
       <nav class="mobile-mode-nav" aria-label="Workspace modes">
@@ -163,18 +193,26 @@
         <label class="field-label" for="system-prompt">Custom instructions <span>Optional</span></label>
         <textarea class="field-control" id="system-prompt" rows="4" maxlength="2000" placeholder="How should 3aik respond to you?"></textarea>
         <div class="field-row">
-          <label class="field-label" for="temperature">Creativity <output id="temperature-value">0.7</output></label>
+          <label class="field-label" for="temperature">Creativity <span class="field-value"><output id="temperature-value">Auto</output><button class="inline-reset" id="temperature-auto" type="button">Use mode default</button></span></label>
           <input class="range-control" id="temperature" type="range" min="0" max="1.2" step="0.1" value="0.7">
         </div>
         <div class="field-row">
           <label class="field-label" for="max-tokens">Response length <span>tokens</span></label>
-          <input class="field-control compact" id="max-tokens" type="number" min="256" max="4096" step="128" value="2048">
+          <input class="field-control compact" id="max-tokens" type="number" min="256" max="8192" step="256" value="4096">
         </div>
         <label class="toggle-row" for="remember-history">
-          <span><strong>Remember conversations</strong><small>Store thread text in this browser only.</small></span>
+          <span><strong>Remember conversations</strong><small>Store threads and file references in this browser. Submitted content still goes to Cloudflare AI.</small></span>
           <input id="remember-history" type="checkbox" checked>
           <i aria-hidden="true"></i>
         </label>
+        <section class="backup-panel" aria-labelledby="backup-title">
+          <div><strong id="backup-title">Workspace backup</strong><small>Export or restore threads, preferences, drafts, and locally stored file blobs.</small></div>
+          <div class="backup-actions">
+            <button class="secondary-button" id="export-workspace" type="button">Export JSON</button>
+            <button class="secondary-button" id="import-workspace" type="button">Import JSON</button>
+            <input id="workspace-file" type="file" accept="application/json,.json" hidden>
+          </div>
+        </section>
       </div>
       <div class="dialog-footer">
         <button class="secondary-button" value="cancel">Cancel</button>
@@ -183,9 +221,59 @@
     </form>
   </dialog>
 
+  <dialog class="settings-dialog rename-dialog" id="rename-dialog" aria-labelledby="rename-title">
+    <form method="dialog" id="rename-form">
+      <div class="dialog-header">
+        <div><span class="eyebrow">Thread</span><h2 id="rename-title">Rename conversation</h2></div>
+        <button class="icon-button" value="cancel" aria-label="Close rename dialog">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <label class="field-label" for="rename-input">Name</label>
+        <input class="field-control" id="rename-input" maxlength="80" autocomplete="off">
+      </div>
+      <div class="dialog-footer">
+        <button class="secondary-button" value="cancel">Cancel</button>
+        <button class="primary-button" id="save-rename" value="default">Rename</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="settings-dialog apps-dialog" id="apps-dialog" aria-labelledby="apps-title">
+    <div class="dialog-header">
+      <div><span class="eyebrow">3aik everywhere</span><h2 id="apps-title">Move from chat to action</h2></div>
+      <button class="icon-button" id="apps-close" type="button" aria-label="Close apps dialog">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body apps-body">
+      <div class="apps-intro">
+        <p class="dialog-lead">Use the same focused experience from PowerShell, Command Prompt, Windows Terminal, or a native Windows app.</p>
+        <span class="download-stat" role="status" aria-live="polite"><strong id="download-count">Loading…</strong><small>verified GitHub release downloads</small></span>
+      </div>
+      <article class="app-download-card">
+        <span class="app-download-icon" aria-hidden="true">&gt;_</span>
+        <div><strong>3aik Coding Agent</strong><p>Plans work, reads and edits files, runs commands, reviews diffs, and asks before risky actions.</p>
+          <div class="install-command"><code id="cli-command">npm install --global https://github.com/alivirgo/3aik-web2/releases/latest/download/3aik-cli.tgz</code><button id="copy-cli-command" type="button">Copy</button></div>
+          <small class="requirement-note">Requires Node.js 24 or newer. Adds the <code>3aik</code> command to PowerShell, CMD, and compatible shells.</small>
+          <a class="primary-link" href="https://github.com/alivirgo/3aik-web2/releases/latest" target="_blank" rel="noopener noreferrer">Download CLI release</a>
+        </div>
+      </article>
+      <article class="app-download-card">
+        <span class="app-download-icon windows" aria-hidden="true">⊞</span>
+        <div><strong>3aik for Windows</strong><p>A desktop workspace with folders, coding-agent approvals, activity, diff review, and a native installer.</p>
+          <a class="primary-link" href="https://github.com/alivirgo/3aik-web2/releases/latest" target="_blank" rel="noopener noreferrer">Download Windows release</a>
+        </div>
+      </article>
+      <div class="local-model-note"><strong>Bring your own model</strong><span>CLI and desktop support on-device Ollama, LM Studio, and llama.cpp presets plus configurable OpenAI-compatible endpoints. Provider traffic goes only to the endpoint you select and never falls back to 3aik Cloud.</span></div>
+      <p class="release-note">Installers are published on GitHub Releases. The hosted browser workspace intentionally does not connect to local model endpoints.</p>
+    </div>
+  </dialog>
+
   <dialog class="media-dialog" id="media-dialog" aria-label="Generated image preview">
     <div class="media-dialog-toolbar">
-      <span>Generated with FLUX.1 Schnell</span>
+      <span id="media-model">Generated by 3aik Image</span>
       <div>
         <button class="secondary-button" id="media-download" type="button">Download</button>
         <button class="icon-button" id="media-close" type="button" aria-label="Close preview">

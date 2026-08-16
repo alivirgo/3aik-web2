@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+build/
+app/build/
+local.properties
+*.jks
+*.keystore
+keystore.properties
+captures/
+lint-results*.html
+lint-results*.sarif

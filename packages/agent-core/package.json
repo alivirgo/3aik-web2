@@ -1,0 +1,25 @@
+{
+  "name": "@3aik/agent-core",
+  "version": "3.0.0",
+  "description": "Safe, reusable local coding-agent engine for 3aik",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./api": "./src/api.js",
+    "./protocol": "./src/protocol.js",
+    "./workspace": "./src/workspace.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/agent.js && node --check src/api.js && node --check src/errors.js && node --check src/index.js && node --check src/openai.js && node --check src/patch.js && node --check src/protocol.js && node --check src/safety.js && node --check src/workspace.js && npm test"
+  },
+  "license": "MIT"
+}
