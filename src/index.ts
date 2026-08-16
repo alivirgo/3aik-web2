@@ -166,11 +166,13 @@ async function handleImage(request: Request, env: Env): Promise<Response> {
 
 		const bytes = await extractImageBytes(result);
 		if (!bytes?.byteLength) throw new Error("The image model returned no data.");
+		const format = detectImageFormat(bytes);
+		if (!format) throw new Error("The image model returned an unsupported format.");
 
 		return new Response(bytes.buffer as ArrayBuffer, {
 			headers: {
-				"content-type": "image/png",
-				"content-disposition": "inline; filename=3aik-image.png",
+				"content-type": format.mime,
+				"content-disposition": `inline; filename=3aik-image.${format.extension}`,
 				"cache-control": "no-store",
 				"x-content-type-options": "nosniff",
 			},
@@ -291,6 +293,23 @@ function base64ToBytes(value: string): Uint8Array {
 	const bytes = new Uint8Array(binary.length);
 	for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
 	return bytes;
+}
+
+export function detectImageFormat(bytes: Uint8Array): { mime: string; extension: string } | null {
+	if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+		return { mime: "image/png", extension: "png" };
+	}
+	if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+		return { mime: "image/jpeg", extension: "jpg" };
+	}
+	if (
+		bytes.length >= 12
+		&& String.fromCharCode(...bytes.slice(0, 4)) === "RIFF"
+		&& String.fromCharCode(...bytes.slice(8, 12)) === "WEBP"
+	) {
+		return { mime: "image/webp", extension: "webp" };
+	}
+	return null;
 }
 
 function extractText(result: unknown): string {

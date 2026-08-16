@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateChatPayload, validateImagePayload } from "../src/index";
+import { detectImageFormat, validateChatPayload, validateImagePayload } from "../src/index";
 
 describe("chat request validation", () => {
   it("normalizes a valid request", () => {
@@ -45,6 +45,12 @@ describe("chat request validation", () => {
 describe("image request validation", () => {
   it("trims a valid prompt", () => {
     expect(validateImagePayload({ prompt: "  a green horizon  " })).toEqual({ prompt: "a green horizon" });
+  });
+
+  it("detects the actual generated image type", () => {
+    expect(detectImageFormat(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toEqual({ mime: "image/jpeg", extension: "jpg" });
+    expect(detectImageFormat(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toEqual({ mime: "image/png", extension: "png" });
+    expect(detectImageFormat(new Uint8Array([0, 1, 2, 3]))).toBeNull();
   });
 
   it("rejects empty and oversized prompts", () => {

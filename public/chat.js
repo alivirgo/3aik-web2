@@ -55,7 +55,7 @@ const MODES = {
     title: "Describe it.<br><em>See it.</em>",
     description: "Write a visual prompt with the subject, composition, light, mood, and style you want.",
     placeholder: "Describe the image you want to create…",
-    context: "Square PNG · stored locally on this device",
+    context: "Square image · stored locally on this device",
     suggestions: [
       ["EDITORIAL", "A quiet editorial portrait with soft window light"],
       ["PRODUCT", "A premium product photo on a bold color field"],
@@ -547,8 +547,9 @@ async function replaceWithImage(container, message, blob) {
   const download = document.createElement("button");
   download.type = "button";
   download.className = "secondary-button";
-  download.textContent = "Download PNG";
-  download.addEventListener("click", () => downloadBlob(blob, `3aik-${message.id}.png`));
+  const extension = imageExtension(blob.type);
+  download.textContent = `Download ${extension.toUpperCase()}`;
+  download.addEventListener("click", () => downloadBlob(blob, `3aik-${message.id}.${extension}`));
   footer.append(caption, download);
   card.append(image, footer);
   container.replaceChildren(card);
@@ -942,7 +943,7 @@ function previewImage(blob, prompt) {
   state.objectUrls.add(url);
   elements.mediaPreview.src = url;
   elements.mediaPreview.alt = prompt;
-  state.preview = { blob, name: `3aik-${Date.now()}.png` };
+  state.preview = { blob, name: `3aik-${Date.now()}.${imageExtension(blob.type)}` };
   elements.mediaDialog.showModal();
 }
 
@@ -955,6 +956,12 @@ function downloadBlob(blob, name) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function imageExtension(mime) {
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/webp") return "webp";
+  return "png";
 }
 
 function revokeObjectUrls() {
