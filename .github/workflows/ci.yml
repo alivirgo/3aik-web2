@@ -2,43 +2,27 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [18.x]
-
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Use Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Type-check
-        run: npx tsc --noEmit
-
-      - name: Run tests
-        run: npm test --silent || true
-
-      - name: Audit dependencies
-        run: |
-          npm audit --audit-level=moderate || true
-
-      - name: Upload test results (if any)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-logs
-          path: |
-            ./test-results || true
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm audit --audit-level=high

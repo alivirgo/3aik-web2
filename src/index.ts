@@ -1,802 +1,353 @@
-/**
- * AI Chat + Image Application (Cloudflare Workers AI)
- *
- * Supports:
- * - Text chat via LLaMA
- * - Image generation via Stable Diffusion XL Base 1.0
- *
- * @license MIT
- */
-import { Env, ChatMessage } from "./types";
-import { findPredefinedAnswer } from "./faq";
+import type { ChatMessage, Env } from "./types";
 
-const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
-const DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
-// API key is now fetched from env.POLLINATIONS_API_KEY
+const JSON_HEADERS = {
+	"content-type": "application/json; charset=utf-8",
+	"cache-control": "no-store",
+};
 
+const MAX_BODY_BYTES = 128_000;
+const MAX_MESSAGE_CHARS = 12_000;
+const MAX_TOTAL_MESSAGE_CHARS = 60_000;
+const MAX_SYSTEM_PROMPT_CHARS = 2_000;
+const MAX_MESSAGES = 24;
 
+export const MODELS = {
+	chat: {
+		id: "@cf/meta/llama-4-scout-17b-16e-instruct",
+		label: "Llama 4 Scout",
+		description: "Fast, capable everyday assistance",
+		systemPrompt:
+			"You are 3aik, a practical and thoughtful AI assistant. Be accurate, direct, and useful. State uncertainty clearly. Use clean Markdown when structure helps.",
+		defaultTemperature: 0.7,
+	},
+	deep: {
+		id: "@cf/openai/gpt-oss-120b",
+		label: "GPT OSS 120B",
+		description: "Deeper reasoning for difficult questions",
+		systemPrompt:
+			"You are 3aik in deep reasoning mode. Work through difficult questions carefully, verify your assumptions, and give a concise final answer with the reasoning that is useful to the user. Never reveal hidden chain-of-thought or private scratch work.",
+		defaultTemperature: 0.45,
+	},
+	code: {
+		id: "@cf/qwen/qwen2.5-coder-32b-instruct",
+		label: "Qwen 2.5 Coder 32B",
+		description: "Implementation, debugging, and code review",
+		systemPrompt:
+			"You are 3aik in coding mode, an experienced software engineer. Prefer correct, maintainable solutions. Explain important tradeoffs, include complete code when requested, and use fenced Markdown code blocks with a language label.",
+		defaultTemperature: 0.25,
+	},
+} as const;
 
-const ALLOWED_TEXT_MODELS = [
-  "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-  "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-  "@cf/meta/llama-3.1-8b-instruct",
-  "@cf/meta/llama-3.2-3b-instruct",
-  "@cf/qwen/qwen2.5-coder-32b-instruct",
-  "@cf/openai/gpt-oss-120b",
-  "@cf/meta/llama-3.1-70b-instruct",
-  "@cf/google/gemma-3-12b-it",
-  "@cf/meta/llama-4-scout-17b-16e-instruct",
-  "pollinations-chat",
-  "pollinations-code",
-  "pollinations-gpt5",
-  "pollinations-claude",
-  "pollinations-grok",
-  "pollinations-deepseek",
-  "pollinations-mistral",
-  "gemini-search"
-];
+export type TextMode = keyof typeof MODELS;
 
-const ALLOWED_IMAGE_MODELS = [
-  "@cf/black-forest-labs/flux-1-schnell",
-  "@cf/stabilityai/stable-diffusion-xl-base-1.0",
-  "@cf/leonardoai/phoenix-1.0",
-  "@cf/stabilityai/stable-diffusion-3-large-turbo",
-  "@cf/bytedance/sdxl-lightning",
-  "pollinations-flux",
-  "pollinations-kontext",
-  "pollinations-seedream",
-  "pollinations-gptimage",
-  "pollinations-klein",
-  "pollinations-any",
-  "pollinations-dream",
-  "pollinations-pixart",
-  "pollinations-portrait",
-  "pollinations-turbo",
-  "video-seedance",
-  "video-seedance-2",
-  "video-veo",
-  "video-grok-video",
-  "video-ltx",
-  "gif-animate",
-  "gpt-image-2"
-];
+interface ValidChatPayload {
+	messages: ChatMessage[];
+	mode: TextMode;
+	temperature: number;
+	maxTokens: number;
+	systemPrompt: string;
+}
 
-// System prompt for chat
-const SYSTEM_PROMPT =
-  "You are a helpful, concise, and accurate assistant.";
+interface ValidImagePayload {
+	prompt: string;
+}
+
+class HttpError extends Error {
+	constructor(
+		public status: number,
+		message: string,
+		public code: string,
+	) {
+		super(message);
+	}
+}
 
 export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<Response> {
-    const url = new URL(request.url);
+	async fetch(request: Request, env: Env): Promise<Response> {
+		const url = new URL(request.url);
 
-    // Serve frontend
-    if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
-      return env.ASSETS.fetch(request);
-    }
+		try {
+			if (url.pathname === "/api/health") {
+				if (request.method !== "GET") return methodNotAllowed(["GET"]);
+				return json({
+					status: "ready",
+					service: "3aik",
+					version: "2.0",
+					modes: Object.entries(MODELS).map(([id, model]) => ({
+						id,
+						label: model.label,
+						description: model.description,
+					})),
+					image: { label: "FLUX.1 Schnell", available: true },
+				});
+			}
 
-    // Text chat
-    if (url.pathname === "/api/chat" && request.method === "POST") {
-      return handleChatRequest(request, env);
-    }
+			if (url.pathname === "/api/chat") {
+				if (request.method !== "POST") return methodNotAllowed(["POST"]);
+				return await handleChat(request, env);
+			}
 
-    // Super Chat
-    if (url.pathname === "/api/super-chat" && request.method === "POST") {
-      return handleSuperChatRequest(request, env);
-    }
+			if (url.pathname === "/api/image") {
+				if (request.method !== "POST") return methodNotAllowed(["POST"]);
+				return await handleImage(request, env);
+			}
 
-    // Image generation
-    if (url.pathname === "/api/image" && request.method === "POST") {
-      return handleImageRequest(request, env);
-    }
+			if (url.pathname.startsWith("/api/")) {
+				return problem(404, "not_found", "That API route does not exist.");
+			}
 
-    // Visitor Stats
-    if (url.pathname === "/api/stats") {
-      return handleStatsRequest(request, env);
-    }
+			const assetResponse = await env.ASSETS.fetch(request);
+			return withSecurityHeaders(assetResponse);
+		} catch (error) {
+			if (error instanceof HttpError) {
+				return problem(error.status, error.code, error.message);
+			}
 
-    // AI or Not Detection
-    if (url.pathname === "/api/aiornot" && request.method === "POST") {
-      return handleAIOrNotRequest(request, env);
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
+			console.error("[Worker] Unexpected request failure", error);
+			return problem(500, "internal_error", "Something went wrong. Please try again.");
+		}
+	},
 } satisfies ExportedHandler<Env>;
 
-/**
- * Visitor Stats handler (KV based)
- */
-async function handleStatsRequest(request: Request, env: Env): Promise<Response> {
-  try {
-    const key = "visitor_count";
-    let count = parseInt(await env.NUC7_STATS.get(key) || "0");
+async function handleChat(request: Request, env: Env): Promise<Response> {
+	const body = await readJson(request);
+	const payload = validateChatPayload(body);
+	const model = MODELS[payload.mode];
+	const systemPrompt = payload.systemPrompt
+		? `${model.systemPrompt}\n\nAdditional instructions from the user:\n${payload.systemPrompt}`
+		: model.systemPrompt;
 
-    // Increment only for the first request if possible, or just always for simple "hits"
-    // Since this is called by the frontend on load, incrementing here is correct.
-    count++;
-    await env.NUC7_STATS.put(key, count.toString());
+	const messages: ChatMessage[] = [
+		{ role: "system", content: systemPrompt },
+		...payload.messages,
+	];
 
-    return new Response(JSON.stringify({ count }), {
-      headers: { "content-type": "application/json" }
-    });
-  } catch (err) {
-    console.error("[Stats] Error:", err);
-    return new Response(JSON.stringify({ count: 0, error: "Stats unavailable" }), {
-      status: 200, // Return 200 so frontend doesn't break, just shows 0
-      headers: { "content-type": "application/json" }
-    });
-  }
+	try {
+		const result = await env.AI.run(model.id as keyof AiModels, {
+			messages,
+			stream: true,
+			max_tokens: payload.maxTokens,
+			temperature: payload.temperature,
+		} as never);
+
+		if (result instanceof ReadableStream) {
+			return new Response(result, { headers: streamHeaders() });
+		}
+
+		if (result && typeof result === "object" && "getReader" in result) {
+			return new Response(result as ReadableStream, { headers: streamHeaders() });
+		}
+
+		const content = extractText(result);
+		if (!content) throw new Error("The model returned an empty response.");
+
+		return new Response(toSse({ response: content, done: true }), {
+			headers: streamHeaders(),
+		});
+	} catch (error) {
+		console.error(`[Chat] ${payload.mode} model request failed`, error);
+		return problem(
+			502,
+			"model_unavailable",
+			"The selected model is temporarily unavailable. Try another mode in a moment.",
+		);
+	}
 }
 
-/**
- * Text chat handler (LLaMA with streaming)
- */
-async function handleChatRequest(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  try {
-    const { messages = [], model, temperature = 0.7, max_tokens = 2048, systemPrompt, search = false } = (await request.json()) as {
-      messages: ChatMessage[],
-      model?: string,
-      temperature?: number,
-      max_tokens?: number,
-      systemPrompt?: string,
-      search?: boolean
-    };
+async function handleImage(request: Request, env: Env): Promise<Response> {
+	const body = await readJson(request);
+	const { prompt } = validateImagePayload(body);
 
-    const lastUserMessage = messages[messages.length - 1]?.content || "";
-    const predefined = findPredefinedAnswer(lastUserMessage);
-    if (predefined) {
-      console.log(`[Chat] Found predefined answer for: "${lastUserMessage.slice(0, 30)}..."`);
-      return new Response(`data: ${JSON.stringify({ response: predefined })}\n\n`, {
-        headers: { "content-type": "text/event-stream" }
-      });
-    }
+	try {
+		const result = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", {
+			prompt,
+			steps: 4,
+		});
 
-    // Safety check for model ID
-    let modelToUse: string = (model && ALLOWED_TEXT_MODELS.includes(model)) ? model : DEFAULT_TEXT_MODEL;
+		const bytes = await extractImageBytes(result);
+		if (!bytes?.byteLength) throw new Error("The image model returned no data.");
 
-    // Handle Search Feature
-    let searchContext = "";
-    if (search && modelToUse !== "gemini-search") {
-      console.log(`[Chat] Global Search requested for ${modelToUse}. Fetching context...`);
-      try {
-        const searchRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}`
-          },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: messages[messages.length - 1]?.content || "" }],
-            model: "gemini-search",
-            stream: false
-          })
-        });
-
-        if (searchRes.ok) {
-          const searchData = await searchRes.json() as any;
-          searchContext = searchData.choices?.[0]?.message?.content || "";
-          console.log(`[Chat] Search context retrieved (${searchContext.length} chars)`);
-        }
-      } catch (sErr) {
-        console.error("[Chat] Background search failed:", sErr);
-      }
-    }
-
-    if (search && modelToUse === "gemini-search") {
-      modelToUse = "gemini-search";
-    }
-
-    // Sanitize messages: only keep role and content to prevent token bloating from metadata
-    const sanitizedMessages = messages.map(m => ({
-      role: m.role,
-      content: m.content || ""
-    }));
-
-    if (!sanitizedMessages.some((m) => m.role === "system")) {
-      let finalSystemPrompt = systemPrompt || SYSTEM_PROMPT;
-      if (searchContext) {
-        finalSystemPrompt += `\n\nWEB SEARCH CONTEXT:\n${searchContext}\n\nPlease use the above real-time information to answer the user's request accurately.`;
-      }
-      sanitizedMessages.unshift({ role: "system", content: finalSystemPrompt });
-    } else if (searchContext) {
-        // If system prompt already exists, append context to the last user message to ensure model sees it
-        const lastMsg = sanitizedMessages[sanitizedMessages.length - 1];
-        if (lastMsg && lastMsg.role === "user") {
-            lastMsg.content += `\n\n(Context from Web Search: ${searchContext})`;
-        }
-    }
-
-    console.log(`[Chat] Request: model=${modelToUse}, temp=${temperature}, tokens=${max_tokens} | History count: ${sanitizedMessages.length}`);
-
-    // Pollinations Chat Logic
-    if (modelToUse.startsWith("pollinations-") || modelToUse === "gemini-search") {
-      let pModel = "openai";
-      if (modelToUse === "pollinations-code") pModel = "qwen-coder";
-      if (modelToUse === "pollinations-gpt5") pModel = "gpt-5.4-mini";
-      if (modelToUse === "pollinations-claude") pModel = "claude";
-      if (modelToUse === "pollinations-grok") pModel = "grok-4.3";
-      if (modelToUse === "pollinations-deepseek") pModel = "deepseek";
-      if (modelToUse === "pollinations-mistral") pModel = "mistral-4";
-      if (modelToUse === "gemini-search") pModel = "gemini-search"; 
-
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json"
-      };
-      if (env.POLLINATIONS_API_KEY) {
-        headers["Authorization"] = `Bearer ${env.POLLINATIONS_API_KEY}`;
-      }
-
-      console.log("[DEBUG] Fetching Pollinations with Model:", pModel);
-      console.log("[DEBUG] Headers:", JSON.stringify(headers));
-      console.log("[DEBUG] Body:", JSON.stringify({
-        messages: sanitizedMessages,
-        stream: true,
-        model: pModel
-      }));
-
-      const pRes = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          messages: sanitizedMessages,
-          stream: true,
-          model: pModel
-        })
-      });
-
-      console.log("[DEBUG] Pollinations status:", pRes.status, pRes.statusText);
-      if (!pRes.ok) {
-        const errorText = await pRes.text();
-        console.log("[DEBUG] Pollinations error body:", errorText);
-        throw new Error(`Pollinations API failed: ${pRes.status} ${pRes.statusText}`);
-      }
-
-      return new Response(pRes.body, {
-        headers: {
-          "content-type": "text/event-stream; charset=utf-8",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        },
-      });
-    }
-
-    let stream: any;
-    try {
-      // Validate/Sanitize Params
-      const safeTemp = Math.max(0, Math.min(1, temperature));
-      const safeTokens = Math.max(1, Math.min(4000, max_tokens));
-
-      stream = await env.AI.run(modelToUse as any, {
-        messages: sanitizedMessages,
-        stream: true,
-        max_tokens: safeTokens,
-        temperature: safeTemp,
-      });
-    } catch (apiErr: any) {
-      console.error(`[Chat] Cloudflare AI.run failed for ${modelToUse}:`, apiErr);
-      throw new Error(`AI Model Error (${modelToUse}): ${apiErr.message || "Unknown error"}`);
-    }
-
-    // Handle both ReadableStream and direct return
-    let responseStream = stream;
-    if (stream instanceof ReadableStream) {
-      console.log("[Chat] Result is ReadableStream");
-      responseStream = stream;
-    } else if (stream && typeof stream === "object" && "getReader" in stream) {
-      console.log("[Chat] Result has getReader method");
-      responseStream = stream as ReadableStream;
-    } else {
-      console.log("[Chat] Result type:", typeof stream);
-      // If not a stream, wrap it
-      responseStream = new ReadableStream({
-        start(controller) {
-          if (typeof stream === "string") {
-            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ response: stream })}\n\n`));
-          } else {
-            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(stream)}\n\n`));
-          }
-          controller.close();
-        },
-      });
-    }
-
-    return new Response(responseStream, {
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      },
-    });
-  } catch (err) {
-    console.error("[Chat] Error:", err);
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
-  }
+		return new Response(bytes.buffer as ArrayBuffer, {
+			headers: {
+				"content-type": "image/png",
+				"content-disposition": "inline; filename=3aik-image.png",
+				"cache-control": "no-store",
+				"x-content-type-options": "nosniff",
+			},
+		});
+	} catch (error) {
+		console.error("[Image] Generation failed", error);
+		return problem(
+			502,
+			"image_unavailable",
+			"Image generation is temporarily unavailable. Please try again shortly.",
+		);
+	}
 }
 
-/**
- * Image generation handler (Multiple models with fallback)
- */
-async function handleImageRequest(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  try {
-    const body = (await request.json()) as {
-      prompt: string,
-      model?: string,
-      width?: number,
-      height?: number,
-      search?: boolean
-    };
-    
-    let { prompt, model: modelToUse = DEFAULT_IMAGE_MODEL, width = 1024, height = 1024, search = false } = body;
+export function validateChatPayload(input: unknown): ValidChatPayload {
+	if (!isRecord(input)) {
+		throw new HttpError(400, "Request body must be a JSON object.", "invalid_request");
+	}
 
-    // Search Augmentation for Images
-    if (search) {
-      console.log("[Image Gen] Search enabled, fetching context...");
-      try {
-        const searchRes = await env.AI.run("@cf/google/gemini-search" as any, {
-          prompt: `Give me a very short, highly descriptive visual summary (max 30 words) for an image prompt based on this: ${prompt}. Focus only on visual details.`,
-        });
-        
-        let searchContext = "";
-        if (typeof searchRes === "string") searchContext = searchRes;
-        else if (searchRes && typeof searchRes === "object") searchContext = (searchRes as any).response || (searchRes as any).result || "";
-        
-        if (searchContext) {
-          // Clean search context for URL safety (no newlines, capped length)
-          const cleanContext = searchContext.replace(/\n/g, " ").slice(0, 150);
-          console.log("[Image Gen] Injected Search Context:", cleanContext);
-          prompt = `${cleanContext} ${prompt}`;
-        }
-      } catch (sErr) {
-        console.warn("[Image Gen] Search failed:", sErr);
-      }
-    }
+	const rawMessages = input.messages;
+	if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+		throw new HttpError(400, "At least one message is required.", "invalid_messages");
+	}
+	if (rawMessages.length > MAX_MESSAGES) {
+		throw new HttpError(400, `A maximum of ${MAX_MESSAGES} messages is supported.`, "too_many_messages");
+	}
 
-    if (!prompt) {
-      return new Response(
-        JSON.stringify({ error: "Prompt required" }),
-        { status: 400, headers: { "content-type": "application/json" } }
-      );
-    }
+	let totalChars = 0;
+	const messages: ChatMessage[] = rawMessages.map((message, index) => {
+		if (!isRecord(message) || (message.role !== "user" && message.role !== "assistant")) {
+			throw new HttpError(400, `Message ${index + 1} has an invalid role.`, "invalid_message");
+		}
+		if (typeof message.content !== "string") {
+			throw new HttpError(400, `Message ${index + 1} must contain text.`, "invalid_message");
+		}
 
-    // Validate model
-    if (!ALLOWED_IMAGE_MODELS.includes(modelToUse)) {
-      modelToUse = DEFAULT_IMAGE_MODEL;
-    }
-    
-    console.log(`[Image Gen] Prompt: "${prompt}" | Model: ${modelToUse} | Search: ${search}`);
+		const content = message.content.trim();
+		if (!content || content.length > MAX_MESSAGE_CHARS) {
+			throw new HttpError(
+				400,
+				`Each message must be between 1 and ${MAX_MESSAGE_CHARS.toLocaleString()} characters.`,
+				"invalid_message_length",
+			);
+		}
 
-    // GPT Image 2 / Pollinations / Video / GIF Logic - Secure Proxy
-    if (modelToUse === "gpt-image-2" || modelToUse.startsWith("pollinations-") || modelToUse.startsWith("video-") || modelToUse.startsWith("gif-")) {
-      const seed = Math.floor(Math.random() * 10000000);
-      let pUrl = "";
+		totalChars += content.length;
+		return { role: message.role, content };
+	});
 
-      if (modelToUse === "gpt-image-2") {
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=gptimage-large&nologo=true&enhance=true&seed=${seed}`;
-      } else if (modelToUse.startsWith("pollinations-")) {
-        let pModel = modelToUse.replace("pollinations-", "");
-        // Manual mappings for Pollinations API model slugs
-        const imageModelMap: Record<string, string> = {
-          "flux": "flux",
-          "kontext": "kontext",
-          "seedream": "seedream",
-          "gptimage": "gptimage",
-          "klein": "klein",
-          "turbo": "flux",
-          "dream": "seedream",
-          "pixart": "flux",
-          "portrait": "flux",
-          "any": "zimage"
-        };
-        pModel = imageModelMap[pModel] || pModel;
-        
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${pModel}&nologo=true&enhance=true&seed=${seed}`;
-      } else if (modelToUse === "video-ltx") {
-        console.log(`[Media Gen] Fetching securely from LTX Studio API directly`);
-        if (!env.LTX_API_KEY) throw new Error("LTX API key is missing");
+	if (totalChars > MAX_TOTAL_MESSAGE_CHARS) {
+		throw new HttpError(413, "The conversation is too large. Start a new thread and try again.", "conversation_too_large");
+	}
+	if (messages.at(-1)?.role !== "user") {
+		throw new HttpError(400, "The final message must be from the user.", "invalid_messages");
+	}
 
-        const ltxRes = await fetch("https://api.ltx.video/v1/text-to-video", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${env.LTX_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            prompt: prompt,
-            model: "ltx-2-3-fast",
-            duration: 6,
-            resolution: "1920x1080"
-          })
-        });
+	const mode = typeof input.mode === "string" && input.mode in MODELS ? (input.mode as TextMode) : "chat";
+	const temperature = clampNumber(input.temperature, MODELS[mode].defaultTemperature, 0, 1.2);
+	const maxTokens = Math.round(clampNumber(input.maxTokens, 2_048, 256, 4_096));
+	const systemPrompt = typeof input.systemPrompt === "string" ? input.systemPrompt.trim() : "";
+	if (systemPrompt.length > MAX_SYSTEM_PROMPT_CHARS) {
+		throw new HttpError(
+			400,
+			`Custom instructions cannot exceed ${MAX_SYSTEM_PROMPT_CHARS.toLocaleString()} characters.`,
+			"system_prompt_too_large",
+		);
+	}
 
-        if (!ltxRes.ok) {
-          const errText = await ltxRes.text();
-          throw new Error(`LTX API failed: ${ltxRes.status} ${errText}`);
-        }
-
-        const buffer = await ltxRes.arrayBuffer();
-        const b64 = u8ToBase64(new Uint8Array(buffer));
-        
-        return new Response(JSON.stringify({ images: [{ b64, mime: "video/mp4" }] }), {
-          headers: { "content-type": "application/json" },
-        });
-      } else if (modelToUse.startsWith("video-")) {
-        const pModel = modelToUse.replace("video-", "");
-        const videoModelMap: Record<string, string> = {
-          "seedance": "seedance-pro",
-          "seedance-2": "seedance-2.0",
-          "veo": "veo",
-          "grok-video": "grok-video-pro",
-          "ltx": "ltx-2"
-        };
-        const resolvedModel = videoModelMap[pModel] || pModel;
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=${resolvedModel}&seed=${seed}`;
-      } else if (modelToUse.startsWith("gif-")) {
-        pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&model=animate&seed=${seed}`;
-      }
-
-      console.log(`[Media Gen] Fetching securely from Pollinations: ${pUrl}`);
-
-      let mime = "image/png";
-      if (modelToUse.startsWith("video-")) mime = "video/mp4";
-      if (modelToUse.startsWith("gif-")) mime = "image/gif";
-
-      const headers: Record<string, string> = {};
-      if (env.POLLINATIONS_API_KEY) {
-        headers["Authorization"] = `Bearer ${env.POLLINATIONS_API_KEY}`;
-      }
-
-      const mediaRes = await fetch(pUrl, { headers });
-      if (!mediaRes.ok) {
-        throw new Error(`Pollinations Media API failed: ${mediaRes.status} ${mediaRes.statusText}`);
-      }
-
-      const buffer = await mediaRes.arrayBuffer();
-      const b64 = u8ToBase64(new Uint8Array(buffer));
-
-      return new Response(JSON.stringify({ images: [{ b64, mime }] }), {
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    let lastError: Error | null = null;
-    let result: any = null;
-    let usedModel = modelToUse;
-
-    try {
-      result = await env.AI.run(modelToUse as any, { prompt, width, height });
-    } catch (err) {
-      console.warn(`[Image Gen] Model ${modelToUse} failed, falling back...`);
-      lastError = err as Error;
-      // Filter out pollinations models for CF fallback
-      const cfFallbacks = ALLOWED_IMAGE_MODELS.filter(m => !m.startsWith("pollinations-"));
-
-      for (const fallbackModel of cfFallbacks) {
-        if (fallbackModel === modelToUse) continue;
-        try {
-          console.log(`[Image Gen] Trying fallback: ${fallbackModel}`);
-          result = await env.AI.run(fallbackModel as any, { prompt, width, height });
-          usedModel = fallbackModel;
-          break;
-        } catch (fErr) {
-          console.warn(`[Image Gen] ${fallbackModel} failed`);
-        }
-      }
-    }
-
-    if (!result) {
-      throw new Error(`All models failed. Last error: ${lastError?.message || "unknown"}`);
-    }
-
-    let b64: string | undefined;
-
-    // Detection logic
-    if (result instanceof Uint8Array) {
-      b64 = u8ToBase64(result);
-    } else if (result instanceof ReadableStream) {
-      const reader = result.getReader();
-      const chunks: Uint8Array[] = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
-      const total = chunks.reduce((acc, c) => acc + c.length, 0);
-      const combined = new Uint8Array(total);
-      let offset = 0;
-      for (const c of chunks) {
-        combined.set(c, offset);
-        offset += c.length;
-      }
-      b64 = u8ToBase64(combined);
-    } else if (typeof result === "object") {
-      const data = result.image || result.images?.[0] || result.output || result.result;
-      if (data instanceof Uint8Array) {
-        b64 = u8ToBase64(data);
-      } else if (typeof data === "string") {
-        b64 = data.includes(",") ? data.split(",")[1] : data;
-      } else if (data && typeof data === "object" && (data.b64 || data.b64_json)) {
-        b64 = data.b64 || data.b64_json;
-      } else if (typeof result.b64_json === "string") {
-        b64 = result.b64_json;
-      }
-    }
-
-    if (b64) {
-      return new Response(JSON.stringify({ images: [{ b64, mime: "image/png" }] }), {
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    throw new Error(`Failed to extract image data from ${usedModel} response.`);
-  } catch (err) {
-    console.error("[Image Gen] Error:", err);
-    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
-  }
+	return { messages, mode, temperature, maxTokens, systemPrompt };
 }
 
-/**
- * AI or Not detection handler (API proxy)
- */
-async function handleAIOrNotRequest(request: Request, env: Env): Promise<Response> {
-  try {
-    const contentType = request.headers.get("content-type") || "";
-    let endpoint = "https://api.aiornot.com/v2/image/sync";
-    let body: any;
-    const headers = new Headers();
-    headers.set("Authorization", `Bearer ${env.AIORNOT_API_KEY}`);
+export function validateImagePayload(input: unknown): ValidImagePayload {
+	if (!isRecord(input) || typeof input.prompt !== "string") {
+		throw new HttpError(400, "An image prompt is required.", "invalid_prompt");
+	}
 
-    if (contentType.includes("application/json")) {
-      const json = await request.json() as any;
-      if (json.text) {
-        endpoint = "https://api.aiornot.com/v2/text/sync";
-      }
-      body = JSON.stringify(json);
-      headers.set("Content-Type", "application/json");
-    } else if (contentType.includes("multipart/form-data")) {
-      // Reconstruct FormData to ensure correct boundary handling in Workers
-      const incomingFormData = await request.formData();
-      const outgoingFormData = new FormData();
-      for (const [key, value] of incomingFormData.entries()) {
-        outgoingFormData.append(key, value as any);
-      }
-      body = outgoingFormData;
-      // Note: We MUST NOT set Content-Type header here; fetch will generate a new boundary
-    } else {
-      // Fallback for direct binary or other types
-      body = request.body;
-      if (contentType) headers.set("Content-Type", contentType);
-    }
-
-    console.log(`[AIorNot] Proxying to ${endpoint} | Content-Type: ${contentType}`);
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: headers,
-      body: body
-    });
-
-    const responseText = await response.text();
-    let responseData: any;
-    try {
-      responseData = JSON.parse(responseText);
-    } catch {
-      responseData = { raw: responseText };
-    }
-
-    if (!response.ok) {
-      console.error(`[AIorNot] Upstream error ${response.status}:`, responseText);
-      return new Response(JSON.stringify({
-        error: `Upstream error (${response.status})`,
-        details: responseData
-      }), {
-        status: response.status,
-        headers: {
-          "content-type": "application/json",
-          "access-control-allow-origin": "*"
-        }
-      });
-    }
-
-    return new Response(JSON.stringify(responseData), {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "access-control-allow-origin": "*"
-      }
-    });
-  } catch (err) {
-    console.error("[AIorNot] Failure:", err);
-    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
-      status: 500,
-      headers: { "content-type": "application/json" }
-    });
-  }
+	const prompt = input.prompt.trim();
+	if (!prompt || prompt.length > 2_000) {
+		throw new HttpError(400, "Image prompts must be between 1 and 2,000 characters.", "invalid_prompt");
+	}
+	return { prompt };
 }
 
-/**
- * Utility: Convert Uint8Array to Base64 efficiently
- */
-function u8ToBase64(u8: any): string | undefined {
-  if (!u8) return undefined;
-  const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+async function readJson(request: Request): Promise<unknown> {
+	const contentType = request.headers.get("content-type") ?? "";
+	if (!contentType.toLowerCase().includes("application/json")) {
+		throw new HttpError(415, "Content-Type must be application/json.", "unsupported_media_type");
+	}
+
+	const contentLength = Number(request.headers.get("content-length") ?? "0");
+	if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+		throw new HttpError(413, "Request body is too large.", "payload_too_large");
+	}
+
+	try {
+		return await request.json();
+	} catch {
+		throw new HttpError(400, "Request body contains invalid JSON.", "invalid_json");
+	}
 }
 
-/**
- * Super Chat handler (Multi-model aggregation + summarization)
- */
-async function handleSuperChatRequest(request: Request, env: Env): Promise<Response> {
-  try {
-    const { messages = [] } = (await request.json()) as { messages: ChatMessage[] };
-    const lastUserMessage = messages[messages.length - 1]?.content || "";
+async function extractImageBytes(result: unknown): Promise<Uint8Array | null> {
+	if (result instanceof Uint8Array) return result;
+	if (result instanceof ArrayBuffer) return new Uint8Array(result);
+	if (result instanceof ReadableStream) {
+		return new Uint8Array(await new Response(result).arrayBuffer());
+	}
+	if (isRecord(result)) {
+		const encoded = typeof result.image === "string" ? result.image : null;
+		if (encoded) return base64ToBytes(encoded);
+	}
+	return null;
+}
 
-    // Fast Response: Check for predefined answers
-    const predefined = findPredefinedAnswer(lastUserMessage);
-    if (predefined) {
-      console.log(`[Super Chat] Found predefined answer for: "${lastUserMessage.slice(0, 30)}..."`);
-      return new Response(`data: ${JSON.stringify({ response: predefined })}\n\n`, {
-        headers: { "content-type": "text/event-stream" }
-      });
-    }
+function base64ToBytes(value: string): Uint8Array {
+	const clean = value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
+	const binary = atob(clean);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+	return bytes;
+}
 
-    // Hard-coded response for model identification
-    const modelQueries = ["who are you", "what model are you", "which model are you", "what are you"];
-    if (modelQueries.some(q => lastUserMessage.toLowerCase().includes(q))) {
-      return new Response(`data: ${JSON.stringify({ response: "I am 3aik - an advanced AI assistant." })}\n\n`, {
-        headers: { "content-type": "text/event-stream" }
-      });
-    }
+function extractText(result: unknown): string {
+	if (typeof result === "string") return result;
+	if (!isRecord(result)) return "";
+	if (typeof result.response === "string") return result.response;
+	if (typeof result.result === "string") return result.result;
+	return "";
+}
 
-    console.log(`[Super Chat] Starting multi-model fetch for prompt: "${lastUserMessage.slice(0, 50)}..."`);
+function withSecurityHeaders(response: Response): Response {
+	const headers = new Headers(response.headers);
+	headers.set("x-content-type-options", "nosniff");
+	headers.set("x-frame-options", "DENY");
+	headers.set("referrer-policy", "strict-origin-when-cross-origin");
+	headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+	headers.set(
+		"content-security-policy",
+		"default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; upgrade-insecure-requests",
+	);
+	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
-    // 1. Fetch from 3 models in parallel with individual timeouts
-    const fetchWithTimeout = async (model: string, timeoutMs: number = 8000) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      
-      try {
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json"
-        };
-        if (env.POLLINATIONS_API_KEY) {
-          headers["Authorization"] = `Bearer ${env.POLLINATIONS_API_KEY}`;
-        }
+function streamHeaders(): HeadersInit {
+	return {
+		"content-type": "text/event-stream; charset=utf-8",
+		"cache-control": "no-cache, no-store",
+		connection: "keep-alive",
+		"x-accel-buffering": "no",
+		"x-content-type-options": "nosniff",
+	};
+}
 
-        const response = await fetch("https://gen.pollinations.ai/v1/chat/completions", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ 
-            messages: [{ role: "user", content: lastUserMessage }], 
-            model: model, 
-            stream: false 
-          }),
-          signal: controller.signal
-        });
-        
-        if (!response.ok) return null;
-        return await response.json();
-      } catch (e) {
-        console.warn(`[Super Chat] Fetch failed for ${model}:`, e);
-        return null;
-      } finally {
-        clearTimeout(timeout);
-      }
-    };
+function methodNotAllowed(allowed: string[]): Response {
+	const response = problem(405, "method_not_allowed", "That method is not allowed for this route.");
+	response.headers.set("allow", allowed.join(", "));
+	return response;
+}
 
-    const [resGemini, resChatGPT, resClaude] = await Promise.all([
-      fetchWithTimeout("gemini"),
-      fetchWithTimeout("openai"),
-      fetchWithTimeout("claude")
-    ]);
+function problem(status: number, code: string, message: string): Response {
+	return json({ error: { code, message } }, status);
+}
 
-    const getText = (res: any) => {
-      if (!res) return "";
-      if (typeof res === "string") return res;
-      if (res.choices?.[0]?.message?.content) return res.choices[0].message.content;
-      if (res.response) return res.response;
-      return "";
-    };
+function json(value: unknown, status = 200): Response {
+	return new Response(JSON.stringify(value), { status, headers: JSON_HEADERS });
+}
 
-    let textGemini = getText(resGemini);
-    let textChatGPT = getText(resChatGPT);
-    let textClaude = getText(resClaude);
+function toSse(value: unknown): string {
+	return `data: ${JSON.stringify(value)}\n\n`;
+}
 
-    console.log(`[Super Chat] Fetched responses. Gemini: ${textGemini.length}, ChatGPT: ${textChatGPT.length}, Claude: ${textClaude.length}`);
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
-    // If all models failed, try Cloudflare AI as a final fallback
-    if (!textGemini && !textChatGPT && !textClaude) {
-        console.warn("[Super Chat] All external models failed. Falling back to Cloudflare AI...");
-        try {
-            const cfRes = await env.AI.run("@cf/meta/llama-3.1-70b-instruct" as any, {
-                messages: [{ role: "user", content: lastUserMessage }],
-                max_tokens: 1024
-            }) as any;
-            
-            const cfText = cfRes.response || cfRes.result || "";
-            if (cfText) {
-                textGemini = cfText; // Use as Source A
-                console.log("[Super Chat] Cloudflare fallback successful.");
-            }
-        } catch (cfErr) {
-            console.error("[Super Chat] Cloudflare fallback also failed:", cfErr);
-        }
-    }
-
-    // If still nothing, error out
-    if (!textGemini && !textChatGPT && !textClaude) {
-        throw new Error("All AI models and fallbacks failed to respond. Please try again.");
-    }
-
-    // 2. Summarize using a more reliable model (e.g., openai/gpt-4o-mini)
-    const summarizationPrompt = `
-I have multiple sources with different perspectives.
-Your task is to synthesize these into one final, highly authentic, solid, and comprehensive response.
-DO NOT explain that you are synthesizing. Just provide the final answer.
-Your response MUST start with: "Super Chat response from 3aik: "
-
-RESPONSE 1:
-${textGemini || "(No response)"}
-
-RESPONSE 2:
-${textChatGPT || "(No response)"}
-
-RESPONSE 3:
-${textClaude || "(No response)"}
-
-Final Cumulative Response:`;
-
-    let summaryRes = await fetch("https://text.pollinations.ai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.POLLINATIONS_API_KEY}` },
-      body: JSON.stringify({
-        messages: [
-            { role: "system", content: "You are a master synthesizer. Your goal is to combine information from multiple sources into a single, cohesive, and authoritative response. Start your response with exactly: 'Super Chat response from 3aik: '. Do not include any other meta-commentary about the sources or the synthesis process." }, 
-            { role: "user", content: summarizationPrompt }
-        ],
-        model: "openai", // Use stable openai model for summarization
-        stream: true
-      })
-    });
-
-    // Fallback to unsummarized if summarization completely fails
-    if (!summaryRes.ok) {
-        console.warn("[Super Chat] Summarization failed, falling back to direct responses.");
-        const fallbackText = `Super Chat response from 3aik: \n\n${textGemini ? `**Source A:**\n${textGemini}\n\n` : ""}${textChatGPT ? `**Source B:**\n${textChatGPT}\n\n` : ""}${textClaude ? `**Source C:**\n${textClaude}` : ""}`;
-        return new Response(`data: ${JSON.stringify({ response: fallbackText.trim() })}\n\n`, {
-            headers: { "content-type": "text/event-stream" }
-        });
-    }
-
-    return new Response(summaryRes.body, {
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      },
-    });
-
-  } catch (err) {
-    console.error("[Super Chat] Error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
-  }
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+	const parsed = typeof value === "number" ? value : Number(value);
+	if (!Number.isFinite(parsed)) return fallback;
+	return Math.min(max, Math.max(min, parsed));
 }

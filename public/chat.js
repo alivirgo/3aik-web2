@@ -1,1003 +1,1121 @@
-// DOM Elements
-const messagesEl = document.getElementById("messages");
-const messagesContainer = document.querySelector(".messages-container");
-const promptInput = document.getElementById("prompt-input");
-const btnSend = document.getElementById("send-btn");
-const modelSelect = document.getElementById("model-select");
-const imageModelSelect = document.getElementById("image-model-select");
-const codingModelSelect = document.getElementById("coding-model-select");
-const videoModelSelect = document.getElementById("video-model-select");
-const gifModelSelect = document.getElementById("gif-model-select");
-const systemPromptInput = document.getElementById("system-prompt");
-const temperatureInput = document.getElementById("temperature");
-const maxTokensInput = document.getElementById("max-tokens");
-const sizeSelect = document.getElementById("size-select");
-const searchToggle = document.getElementById("search-toggle");
-const mobileModeSelect = document.getElementById("mobile-mode-select");
-const mobileModelSelect = document.getElementById("mobile-model-select");
-const loadingOverlay = document.getElementById("loading-overlay");
-const lightboxModal = document.getElementById("lightbox-modal");
-const lightboxImg = document.getElementById("lightbox-img");
-const lightboxVideo = document.getElementById("lightbox-video");
-const closeLightboxBtn = document.getElementById("close-lightbox");
+"use strict";
 
-// Modals
-const settingsModal = document.getElementById("settings-modal");
-const settingsBtn = document.getElementById("settings-btn");
-const closeSettingsBtn = document.getElementById("close-settings");
-const saveSettingsBtn = document.getElementById("save-settings-btn");
+const HISTORY_KEY = "3aik:history:v2";
+const PREFERENCES_KEY = "3aik:preferences:v2";
+const MEDIA_DB_NAME = "3aik-media-v2";
+const MAX_THREADS = 30;
 
-// State
-let conversation = [];
-let currentMode = "chat"; // text, image, video, gif, coding
-let isAutoScrollEnabled = true;
-
-const MODEL_INFO = {
-  // Text Models — Pollinations
-  "pollinations-chat": "GPT-5.4 Nano: OpenAI's fast and balanced model via Pollinations. Vision-capable with 400K context.",
-  "pollinations-gpt5": "GPT-5.4 Mini: Balanced speed & cost from OpenAI via Pollinations. Great all-rounder.",
-  "pollinations-code": "Qwen3 Coder 30B: Specialized for code generation via Pollinations. 262K context window.",
-  "pollinations-claude": "Claude Sonnet 4.6: Anthropic's most capable & balanced model. 1M context, vision support.",
-  "pollinations-grok": "Grok 4.3: xAI's multimodal reasoning model with 1M context. Fast and intelligent.",
-  "pollinations-deepseek": "DeepSeek V4 Flash: Fast reasoning & coding with 1M context. Chain-of-thought capable.",
-  "pollinations-mistral": "Mistral Small 4: Unified reasoning & multimodal model with 262K context. Tool-calling support.",
-  "gemini-search": "Live Search AI: Google Gemini with real-time web search grounding for up-to-date answers.",
-
-  // Text Models — Cloudflare
-  "@cf/meta/llama-3.3-70b-instruct-fp8-fast": "Llama 3.3 70B (Fast): High-speed, high-performance Meta model.",
-  "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": "DeepSeek R1 32B: Specialized for deep reasoning and complex logic.",
-  "@cf/meta/llama-3.1-8b-instruct": "Llama 3.1 8B: Balanced Meta AI for versatile everyday tasks.",
-  "@cf/qwen/qwen2.5-coder-32b-instruct": "Qwen 2.5 Coder 32B: Advanced programming assistant for debugging and logic.",
-  "@cf/openai/gpt-oss-120b": "GPT OSS 120B: Ultra-large parameter model for complex creative and analytical text.",
-  "@cf/meta/llama-3.1-70b-instruct": "Llama 3.1 70B: High-capacity Meta AI for deep comprehension and creative writing.",
-  "@cf/google/gemma-3-12b-it": "Gemma 3 12B: Google's multimodal open model with high-performance reasoning.",
-  "@cf/meta/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B: Meta's next-gen efficient MoE model for fast chat.",
-
-  // Image Models — Pollinations
-  "pollinations-flux": "Flux Schnell: Fast high-quality image generation from Black Forest Labs via Pollinations.",
-  "pollinations-kontext": "FLUX Kontext: In-context editing & generation. Perfect for iterative image refinement.",
-  "pollinations-seedream": "Seedream 4.0: ByteDance's photorealistic image generator with reference image support.",
-  "pollinations-gptimage": "GPT Image 1 Mini: OpenAI's fast & affordable image generation via Pollinations.",
-  "pollinations-klein": "FLUX.2 Klein 4B: Fast image generation and editing from Black Forest Labs.",
-  "pollinations-turbo": "Flux Turbo: High-speed Flux image generation optimized for quick results.",
-  "pollinations-any": "Z-Image Turbo: Alibaba's S3-DiT 6B with 2x SPAN upscaling for sharp images.",
-  "pollinations-dream": "Seedream Art: ByteDance's artistic image generation for creative visuals.",
-  "pollinations-pixart": "Flux HD: High-resolution image generation optimized for detailed outputs.",
-  "pollinations-portrait": "Flux Portrait: Specialized for human faces and realistic portrait generation.",
-  "gpt-image-2": "GPT Image 1.5 Large: OpenAI's flagship model via Pollinations API. Completely free with your Pollen key.",
-
-  // Image Models — Cloudflare
-  "@cf/black-forest-labs/flux-1-schnell": "Flux-1 Schnell: The fastest high-quality open-source model from Black Forest Labs.",
-  "@cf/stabilityai/stable-diffusion-xl-base-1.0": "SDXL 1.0: Professional-grade imagery with broad artistic control.",
-  "@cf/leonardoai/phoenix-1.0": "Leonardo Phoenix: High-end artistic fidelity and innovative style coherence.",
-  "@cf/bytedance/sdxl-lightning": "SDXL Lightning: Ultra-fast generation using ByteDance's advanced distillation."
+const MODES = {
+  chat: {
+    name: "Ask",
+    model: "Llama 4 Scout",
+    kicker: "Llama 4 Scout · fast and versatile",
+    title: "What can we<br><em>figure out?</em>",
+    description: "Ask a question, untangle an idea, or turn a rough thought into something useful.",
+    placeholder: "Message 3aik…",
+    context: "Replies stream as they are written",
+    suggestions: [
+      ["EXPLAIN", "Explain a difficult idea in plain language"],
+      ["WRITE", "Turn rough notes into a clear, polished draft"],
+      ["PLAN", "Break a goal into a practical next-step plan"],
+    ],
+  },
+  deep: {
+    name: "Deep",
+    model: "GPT OSS 120B",
+    kicker: "GPT OSS 120B · deliberate reasoning",
+    title: "Bring me the<br><em>hard problem.</em>",
+    description: "Use a larger reasoning model for decisions, analysis, and questions with several moving parts.",
+    placeholder: "Describe the problem in detail…",
+    context: "Best for difficult, multi-step questions",
+    suggestions: [
+      ["DECIDE", "Compare two options and challenge my assumptions"],
+      ["ANALYZE", "Find the weak points in this argument"],
+      ["STRATEGY", "Build a strategy from these constraints"],
+    ],
+  },
+  code: {
+    name: "Code",
+    model: "Qwen 2.5 Coder 32B",
+    kicker: "Qwen 2.5 Coder · implementation focused",
+    title: "Build it.<br><em>Fix it. Ship it.</em>",
+    description: "Get implementation help, debug failures, review code, or turn a product idea into a technical plan.",
+    placeholder: "Paste code or describe what you want to build…",
+    context: "Code blocks include one-click copy",
+    suggestions: [
+      ["DEBUG", "Help me trace a bug from this error message"],
+      ["BUILD", "Turn a feature idea into working code"],
+      ["REVIEW", "Review this code for correctness and security"],
+    ],
+  },
+  image: {
+    name: "Image",
+    model: "FLUX.1 Schnell",
+    kicker: "FLUX.1 Schnell · image generation",
+    title: "Describe it.<br><em>See it.</em>",
+    description: "Write a visual prompt with the subject, composition, light, mood, and style you want.",
+    placeholder: "Describe the image you want to create…",
+    context: "Square PNG · stored locally on this device",
+    suggestions: [
+      ["EDITORIAL", "A quiet editorial portrait with soft window light"],
+      ["PRODUCT", "A premium product photo on a bold color field"],
+      ["WORLD", "An impossible landscape at the edge of a storm"],
+    ],
+  },
 };
 
-/**
- * UI: Scroll chat to bottom with improved reliability
- */
-function scrollToBottom(force = false) {
-  if (!isAutoScrollEnabled && !force) return;
+const elements = {
+  sidebar: document.querySelector("#sidebar"),
+  sidebarScrim: document.querySelector("#sidebar-scrim"),
+  sidebarClose: document.querySelector("#sidebar-close"),
+  mobileMenu: document.querySelector("#mobile-menu"),
+  newThread: document.querySelector("#new-thread"),
+  clearThreads: document.querySelector("#clear-threads"),
+  threadSearch: document.querySelector("#thread-search"),
+  threadList: document.querySelector("#thread-list"),
+  threadEmpty: document.querySelector("#thread-empty"),
+  themeToggle: document.querySelector("#theme-toggle"),
+  themeLabel: document.querySelector("#theme-label"),
+  modeBreadcrumb: document.querySelector("#mode-breadcrumb"),
+  threadTitle: document.querySelector("#thread-title"),
+  statusPill: document.querySelector("#status-pill"),
+  conversation: document.querySelector("#conversation"),
+  emptyState: document.querySelector("#empty-state"),
+  emptyKicker: document.querySelector("#empty-kicker"),
+  emptyTitle: document.querySelector("#empty-title"),
+  emptyDescription: document.querySelector("#empty-description"),
+  suggestionGrid: document.querySelector("#suggestion-grid"),
+  messages: document.querySelector("#messages"),
+  jumpBottom: document.querySelector("#jump-bottom"),
+  activeModel: document.querySelector("#active-model"),
+  composerContext: document.querySelector("#composer-context"),
+  composerForm: document.querySelector("#composer-form"),
+  prompt: document.querySelector("#prompt-input"),
+  characterCount: document.querySelector("#character-count"),
+  sendButton: document.querySelector("#send-button"),
+  settingsButton: document.querySelector("#settings-button"),
+  settingsDialog: document.querySelector("#settings-dialog"),
+  settingsForm: document.querySelector("#settings-form"),
+  systemPrompt: document.querySelector("#system-prompt"),
+  temperature: document.querySelector("#temperature"),
+  temperatureValue: document.querySelector("#temperature-value"),
+  maxTokens: document.querySelector("#max-tokens"),
+  rememberHistory: document.querySelector("#remember-history"),
+  saveSettings: document.querySelector("#save-settings"),
+  mediaDialog: document.querySelector("#media-dialog"),
+  mediaPreview: document.querySelector("#media-preview"),
+  mediaDownload: document.querySelector("#media-download"),
+  mediaClose: document.querySelector("#media-close"),
+  toast: document.querySelector("#toast"),
+};
 
-  // Use requestAnimationFrame to ensure DOM is updated
-  requestAnimationFrame(() => {
-    messagesContainer.scrollTo({
-      top: messagesContainer.scrollHeight,
-      behavior: force ? "auto" : "smooth"
+const defaultPreferences = {
+  theme: window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark",
+  systemPrompt: "",
+  temperature: 0.6,
+  maxTokens: 2048,
+  rememberHistory: true,
+};
+
+const preferences = loadPreferences();
+const history = loadHistory();
+const state = {
+  mode: MODES[history.mode] ? history.mode : "chat",
+  activeThreadId: history.activeThreadId || null,
+  threads: Array.isArray(history.threads) ? history.threads.filter(isValidThread).slice(0, MAX_THREADS) : [],
+  busy: false,
+  controller: null,
+  renderVersion: 0,
+  objectUrls: new Set(),
+  preview: null,
+};
+
+if (!state.threads.some((thread) => thread.id === state.activeThreadId)) state.activeThreadId = null;
+
+initialize();
+
+function initialize() {
+  applyTheme(preferences.theme);
+  bindEvents();
+  if (state.activeThreadId) state.mode = getActiveThread().mode;
+  renderMode();
+  renderThreads();
+  renderConversation();
+  resizePrompt();
+  updateComposerState();
+  checkHealth();
+}
+
+function bindEvents() {
+  document.querySelectorAll("[data-mode]").forEach((button) => {
+    button.addEventListener("click", () => switchMode(button.dataset.mode));
+  });
+
+  elements.newThread.addEventListener("click", () => startNewThread());
+  elements.clearThreads.addEventListener("click", clearAllThreads);
+  elements.threadSearch.addEventListener("input", renderThreads);
+  elements.themeToggle.addEventListener("click", toggleTheme);
+  elements.mobileMenu.addEventListener("click", openSidebar);
+  elements.sidebarClose.addEventListener("click", closeSidebar);
+  elements.sidebarScrim.addEventListener("click", closeSidebar);
+
+  elements.composerForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (state.busy) {
+      state.controller?.abort();
+      return;
+    }
+    sendPrompt();
+  });
+
+  elements.prompt.addEventListener("input", () => {
+    resizePrompt();
+    updateComposerState();
+  });
+
+  elements.prompt.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && window.innerWidth > 620) {
+      event.preventDefault();
+      elements.composerForm.requestSubmit();
+    }
+  });
+
+  elements.conversation.addEventListener("scroll", () => {
+    const distance = elements.conversation.scrollHeight - elements.conversation.scrollTop - elements.conversation.clientHeight;
+    elements.jumpBottom.hidden = distance < 180;
+  }, { passive: true });
+  elements.jumpBottom.addEventListener("click", () => scrollToBottom("smooth"));
+
+  elements.settingsButton.addEventListener("click", openSettings);
+  elements.temperature.addEventListener("input", () => {
+    elements.temperatureValue.value = Number(elements.temperature.value).toFixed(1);
+    elements.temperatureValue.textContent = Number(elements.temperature.value).toFixed(1);
+  });
+  elements.saveSettings.addEventListener("click", saveSettings);
+
+  elements.mediaClose.addEventListener("click", () => elements.mediaDialog.close());
+  elements.mediaDownload.addEventListener("click", () => {
+    if (state.preview) downloadBlob(state.preview.blob, state.preview.name);
+  });
+  elements.mediaDialog.addEventListener("click", (event) => {
+    if (event.target === elements.mediaDialog) elements.mediaDialog.close();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      if (window.innerWidth <= 900) openSidebar();
+      elements.threadSearch.focus();
+    }
+    if (modifier && event.shiftKey && event.key.toLowerCase() === "o") {
+      event.preventDefault();
+      startNewThread();
+    }
+    if (event.key === "Escape" && elements.sidebar.classList.contains("is-open")) closeSidebar();
+  });
+}
+
+function switchMode(mode, options = {}) {
+  if (!MODES[mode] || mode === state.mode && !options.force) {
+    closeSidebar();
+    return;
+  }
+
+  if (state.busy) state.controller?.abort();
+  const active = getActiveThread();
+  if (active?.messages.length && active.mode !== mode) state.activeThreadId = null;
+  state.mode = mode;
+  const current = getActiveThread();
+  if (current && current.messages.length === 0) current.mode = mode;
+  saveHistory();
+  renderMode();
+  renderThreads();
+  renderConversation();
+  closeSidebar();
+  elements.prompt.focus();
+}
+
+function renderMode() {
+  const mode = MODES[state.mode];
+  document.querySelectorAll("[data-mode]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode));
+  });
+  elements.modeBreadcrumb.textContent = mode.name;
+  elements.activeModel.textContent = mode.model;
+  elements.emptyKicker.textContent = mode.kicker;
+  elements.emptyTitle.innerHTML = mode.title;
+  elements.emptyDescription.textContent = mode.description;
+  elements.prompt.placeholder = mode.placeholder;
+  elements.composerContext.textContent = mode.context;
+  renderSuggestions(mode.suggestions);
+  updatePageTitle();
+}
+
+function renderSuggestions(suggestions) {
+  elements.suggestionGrid.replaceChildren();
+  suggestions.forEach(([label, prompt]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggestion-button";
+    const tag = document.createElement("span");
+    tag.textContent = label;
+    const text = document.createElement("strong");
+    text.textContent = prompt;
+    button.append(tag, text);
+    button.addEventListener("click", () => {
+      elements.prompt.value = prompt;
+      resizePrompt();
+      updateComposerState();
+      elements.prompt.focus();
     });
+    elements.suggestionGrid.append(button);
   });
 }
 
-// User scroll detection to toggle auto-scroll
-messagesContainer.addEventListener("scroll", () => {
-  const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
-  // If user scrolls up significantly, disable auto-scroll
-  const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
-  isAutoScrollEnabled = isAtBottom;
-});
-
-/**
- * UI: Render a text message
- */
-function addTextMessage(role, content) {
-  const el = document.createElement("div");
-  el.className = `message ${role}-msg`;
-
-  const avatar = document.createElement("div");
-  avatar.className = "msg-avatar";
-  avatar.textContent = role === "user" ? "👤" : "✨";
-
-  const contentEl = document.createElement("div");
-  contentEl.className = "msg-content";
-
-  const textEl = document.createElement("div");
-  textEl.className = "msg-text";
-
-  // Check for reasoning blocks <think>...</think>
-  const rtMatch = content.match(/<think>([\s\S]*?)<\/think>/);
-  if (rtMatch) {
-    const reasoning = rtMatch[1].trim();
-    const cleanContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
-
-    const reasoningBlock = document.createElement("div");
-    reasoningBlock.className = "reasoning-block collapsed";
-
-    const header = document.createElement("div");
-    header.className = "reasoning-header";
-    header.textContent = "Thought Process";
-    header.onclick = () => {
-      reasoningBlock.classList.toggle("collapsed");
-      scrollToBottom();
-    };
-
-    const reasoningContent = document.createElement("div");
-    reasoningContent.className = "reasoning-content";
-    reasoningContent.textContent = reasoning;
-
-    reasoningBlock.appendChild(header);
-    reasoningBlock.appendChild(reasoningContent);
-    contentEl.appendChild(reasoningBlock);
-
-    textEl.innerHTML = marked.parse(cleanContent || "Thinking complete. Generating response...");
-  } else {
-    textEl.innerHTML = marked.parse(content);
-  }
-
-  contentEl.appendChild(textEl);
-  el.appendChild(avatar);
-  el.appendChild(contentEl);
-  messagesEl.appendChild(el);
-
-  // Wait for animations/rendering before scrolling
-  setTimeout(() => scrollToBottom(), 50);
-  return textEl;
+function startNewThread(mode = state.mode) {
+  if (state.busy) state.controller?.abort();
+  state.activeThreadId = null;
+  state.mode = mode;
+  elements.threadSearch.value = "";
+  saveHistory();
+  renderMode();
+  renderThreads();
+  renderConversation();
+  closeSidebar();
+  elements.prompt.focus();
 }
 
-/**
- * UI: Render a media message (image/video/gif)
- */
-function addMediaMessage(mediaSrc, caption, type = "image", replaceTarget = null) {
-  const el = replaceTarget || document.createElement("div");
-  el.className = "message assistant-msg";
-  el.innerHTML = ""; // Clear existing content if replacing
+function ensureThread(prompt) {
+  let thread = getActiveThread();
+  if (thread) return thread;
 
-  const avatar = document.createElement("div");
-  avatar.className = "msg-avatar";
-  avatar.textContent = type === "video" ? "🎬" : (type === "gif" ? "🎞️" : "🎨");
-
-  const content = document.createElement("div");
-  content.className = "msg-content";
-
-  let mediaEl;
-  if (type === "video") {
-    mediaEl = document.createElement("video");
-    mediaEl.className = "msg-video";
-    mediaEl.controls = true;
-    mediaEl.autoplay = true;
-    mediaEl.loop = true;
-    mediaEl.muted = true;
-    mediaEl.playsInline = true;
-    mediaEl.onloadedmetadata = () => scrollToBottom(true);
-
-    const source = document.createElement("source");
-    source.src = mediaSrc;
-    source.type = "video/mp4";
-    mediaEl.appendChild(source);
-  } else {
-    mediaEl = document.createElement("img");
-    mediaEl.className = "msg-image fade-in";
-    mediaEl.src = mediaSrc;
-    mediaEl.alt = caption;
-    mediaEl.loading = "lazy";
-    mediaEl.onload = () => scrollToBottom(true);
-  }
-
-  // Click to open lightbox
-  mediaEl.addEventListener("click", () => openLightbox(mediaSrc, type));
-
-  const captionEl = document.createElement("div");
-  captionEl.className = "msg-subtext";
-  captionEl.textContent = caption;
-
-  const downloadBtn = document.createElement("button");
-  downloadBtn.className = "msg-download";
-  downloadBtn.textContent = "⬇️ Download";
-  downloadBtn.addEventListener("click", () => {
-    const a = document.createElement("a");
-    a.href = mediaSrc;
-    a.download = `3aik-${Date.now()}.${type === "video" ? "mp4" : (type === "gif" ? "gif" : "png")}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  });
-
-  content.appendChild(mediaEl);
-  content.appendChild(captionEl);
-  content.appendChild(downloadBtn);
-  el.appendChild(avatar);
-  el.appendChild(content);
-
-  if (!replaceTarget) {
-    messagesEl.appendChild(el);
-  }
-
-  scrollToBottom(true);
+  thread = {
+    id: createId(),
+    title: makeTitle(prompt),
+    mode: state.mode,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: [],
+  };
+  state.threads.unshift(thread);
+  state.activeThreadId = thread.id;
+  trimThreads();
+  return thread;
 }
 
-/**
- * API: Handle Text Generation (Streaming)
- */
-async function generateText() {
-  const prompt = promptInput.value.trim();
-  if (!prompt) return;
+async function sendPrompt() {
+  const prompt = elements.prompt.value.trim();
+  if (!prompt || state.busy) return;
 
-  promptInput.value = "";
-  promptInput.style.height = "auto";
-  addTextMessage("user", prompt);
-  conversation.push({ role: "user", content: prompt });
+  const thread = ensureThread(prompt);
+  const userMessage = { id: createId(), role: "user", kind: "text", content: prompt, createdAt: Date.now() };
+  thread.messages.push(userMessage);
+  thread.updatedAt = Date.now();
+  elements.prompt.value = "";
+  resizePrompt();
+  saveHistory();
+  renderThreads();
+  await renderConversation();
+  scrollToBottom("smooth");
 
-  const textEl = addTextMessage("assistant", "...");
+  setBusy(true, state.mode === "image" ? "Creating" : "Thinking");
+  state.controller = new AbortController();
+  if (state.mode === "image") await generateImage(thread, prompt, state.controller.signal);
+  else await generateText(thread, state.controller.signal);
+  state.controller = null;
+  setBusy(false, "Ready");
+  updateComposerState();
+}
+
+async function generateText(thread, signal) {
+  const placeholder = createAssistantShell({ streaming: true });
+  elements.messages.append(placeholder.article);
+  scrollToBottom("smooth");
   let fullResponse = "";
-
-  // Enable auto-scroll for streaming
-  isAutoScrollEnabled = true;
+  let streamBuffer = "";
 
   try {
-    const isCoding = currentMode === "coding";
-    let selectedModel = isCoding ? codingModelSelect.value : modelSelect.value;
-    if (window.innerWidth <= 768 && mobileModelSelect && !isCoding) {
-      selectedModel = mobileModelSelect.value;
-    }
+    const messages = thread.messages
+      .filter((message) => message.kind === "text" && (message.role === "user" || message.role === "assistant"))
+      .slice(-24)
+      .map(({ role, content }) => ({ role, content }));
 
-    // Force search if selectedModel is gemini-search
-    const isSearch = (searchToggle && searchToggle.checked) || selectedModel === "gemini-search";
-    if (selectedModel === "gemini-search") selectedModel = "gemini-search"; // safety
-    const systemPromptText = isCoding
-      ? (systemPromptInput.value || "You are an expert software engineer. Provide high-quality, efficient, and well-documented code. Always use markdown for code blocks.")
-      : systemPromptInput.value;
-
-    const MAX_HISTORY = 12;
-    const messagesToSend = conversation
-      .slice(-MAX_HISTORY)
-      .map(m => ({
-        role: m.role,
-        content: m.content ? m.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim() : ""
-      }))
-      .filter(m => m.content);
-
-    const response = await fetch(currentMode === "super-chat" ? "/api/super-chat" : "/api/chat", {
+    const response = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        messages: messagesToSend,
-        model: selectedModel,
-        systemPrompt: systemPromptText,
-        temperature: parseFloat(temperatureInput.value),
-        max_tokens: parseInt(maxTokensInput.value, 10),
-        search: isSearch
+        messages,
+        mode: thread.mode,
+        temperature: preferences.temperature,
+        maxTokens: preferences.maxTokens,
+        systemPrompt: preferences.systemPrompt,
       }),
+      signal,
     });
 
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || "Failed to fetch response");
-    }
+    if (!response.ok) throw new Error(await readError(response));
+    if (!response.body) throw new Error("This browser could not read the response stream.");
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
-
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const { events, buffer: remaining } = parseSSE(buffer);
-      buffer = remaining;
-
-      for (const event of events) {
+      streamBuffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const parsed = parseSse(streamBuffer);
+      streamBuffer = parsed.remainder;
+      for (const data of parsed.events) {
+        if (data === "[DONE]") continue;
         try {
-          const json = JSON.parse(event);
-          const delta = json.response || json.delta?.content || (json.choices?.[0]?.delta?.content) || json.content || "";
-
+          const delta = extractDelta(JSON.parse(data));
           if (delta) {
             fullResponse += delta;
-            let displayResponse = fullResponse;
-            const rtMatch = fullResponse.match(/<think>([\s\S]*?)<\/think>/);
-            if (rtMatch) {
-              displayResponse = fullResponse.replace(/<think>[\s\S]*?<\/think>/, "").trim() || "Thinking complete. Generating response...";
-            } else if (fullResponse.includes("<think>")) {
-              displayResponse = "Thinking...";
-            } else if (fullResponse.length === 0 && isSearch) {
-              displayResponse = "🔍 *Searching the web for updated information...*";
-            }
-            textEl.innerHTML = marked.parse(displayResponse);
-
-            // Continuous auto-scroll during stream
-            scrollToBottom();
+            renderRichText(stripPrivateReasoning(fullResponse), placeholder.content, true);
+            maybeFollowStream();
           }
-        } catch (e) {
-          console.warn("[Chat] SSE Parse error:", e);
+        } catch {
+          // Ignore malformed heartbeat events while keeping the stream alive.
         }
       }
+      if (done) break;
     }
 
-    if (!fullResponse) {
-      textEl.textContent = "⚠️ No response received from the model.";
-    } else {
-      conversation.push({ role: "assistant", content: fullResponse });
-    }
+    if (!fullResponse.trim()) throw new Error("The model returned an empty response. Please try again.");
+    const cleanResponse = stripPrivateReasoning(fullResponse).trim();
+    renderRichText(cleanResponse, placeholder.content, false);
+    placeholder.actions.hidden = false;
+    placeholder.copyButton.addEventListener("click", () => copyText(cleanResponse));
+    thread.messages.push({ id: createId(), role: "assistant", kind: "text", content: cleanResponse, createdAt: Date.now() });
+    thread.updatedAt = Date.now();
+    saveHistory();
+    renderThreads();
   } catch (error) {
-    console.error("[Chat] Error:", error);
-    textEl.textContent = `Error: ${error.message}`;
-  } finally {
-    // Highlight any new code blocks
-    textEl.querySelectorAll('pre code').forEach((block) => {
-      hljs.highlightElement(block);
-    });
+    if (error.name === "AbortError") {
+      if (fullResponse.trim()) {
+        const cleanResponse = stripPrivateReasoning(fullResponse).trim();
+        renderRichText(`${cleanResponse}\n\n_Response stopped._`, placeholder.content, false);
+        thread.messages.push({ id: createId(), role: "assistant", kind: "text", content: cleanResponse, createdAt: Date.now() });
+        saveHistory();
+      } else {
+        placeholder.article.remove();
+      }
+      showToast("Response stopped");
+      return;
+    }
+    renderError(placeholder.content, error.message || "The request failed.");
+    setStatus("Unavailable", "error");
   }
 }
 
-/**
- * API: Handle Media Generation
- */
-async function generateMedia() {
-  const prompt = promptInput.value.trim();
-  if (!prompt) return;
-
-  promptInput.value = "";
-  promptInput.style.height = "auto";
-  addTextMessage("user", prompt);
-
-  // Create a skeleton placeholder instead of a text message
-  const skeletonEl = document.createElement("div");
-  skeletonEl.className = "message assistant-msg";
-  skeletonEl.innerHTML = `
-    <div class="msg-avatar">🎨</div>
-    <div class="msg-content">
-      <div class="media-skeleton"></div>
-      <div class="msg-subtext">Generating your masterpiece...</div>
-    </div>
-  `;
-  messagesEl.appendChild(skeletonEl);
-  scrollToBottom(true);
-  
-  const loadingContainer = skeletonEl; // We'll replace this entire element later
+async function generateImage(thread, prompt, signal) {
+  const shell = createAssistantShell({ image: true });
+  const skeleton = document.createElement("div");
+  skeleton.className = "image-skeleton";
+  shell.content.append(skeleton);
+  elements.messages.append(shell.article);
+  scrollToBottom("smooth");
 
   try {
-    const dimensions = sizeSelect.value.split("x");
     const response = await fetch("/api/image", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        model: currentMode === "video" ? videoModelSelect.value : (currentMode === "gif" ? gifModelSelect.value : imageModelSelect.value),
-        width: parseInt(dimensions[0]),
-        height: parseInt(dimensions[1]),
-        search: searchToggle.checked, // Pass search toggle state
-      }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt }),
+      signal,
     });
+    if (!response.ok) throw new Error(await readError(response));
 
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || "Failed to generate media");
-    }
-
-    const { images: mediaList } = await response.json();
-    if (!mediaList || mediaList.length === 0) throw new Error("No media returned.");
-
-    const media = mediaList[0];
-    let mediaSrc = media.url || (media.b64 ? `data:${media.mime || "image/png"};base64,${media.b64}` : "");
-    if (!mediaSrc) throw new Error("Invalid media response format.");
-
-    const type = currentMode === "video" ? "video" : (currentMode === "gif" ? "gif" : "image");
-
-    // Replace the loading message with the final media
-    addMediaMessage(mediaSrc, prompt, type, loadingContainer);
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/") || blob.size === 0) throw new Error("The image response was invalid.");
+    const message = { id: createId(), role: "assistant", kind: "image", prompt, createdAt: Date.now() };
+    await putMedia(message.id, blob);
+    thread.messages.push(message);
+    thread.updatedAt = Date.now();
+    saveHistory();
+    await replaceWithImage(shell.content, message, blob);
+    renderThreads();
   } catch (error) {
-    console.error("[Media] Error:", error);
-
-    // Replace the loading message with an error message
-    loadingContainer.innerHTML = "";
-    const avatar = document.createElement("div");
-    avatar.className = "msg-avatar";
-    avatar.textContent = "✨";
-
-    const contentEl = document.createElement("div");
-    contentEl.className = "msg-content";
-
-    const textEl = document.createElement("div");
-    textEl.className = "msg-text";
-    textEl.textContent = `⚠️ Failed to generate: ${error.message}`;
-
-    contentEl.appendChild(textEl);
-    loadingContainer.appendChild(avatar);
-    loadingContainer.appendChild(contentEl);
-  }
-}
-
-/**
- * Logic: Parse SSE (Server-Sent Events)
- */
-function parseSSE(buffer) {
-  const events = [];
-  buffer = buffer.replace(/\r/g, "");
-  let index;
-  while ((index = buffer.indexOf("\n\n")) !== -1) {
-    const chunk = buffer.slice(0, index);
-    buffer = buffer.slice(index + 2);
-    const lines = chunk.split("\n");
-    const data = lines
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trim());
-    if (data.length) events.push(data.join("\n"));
-  }
-  return { events, buffer };
-}
-
-/**
- * Event Listeners
- */
-btnSend.addEventListener("click", () => {
-  if (currentMode === "chat" || currentMode === "coding" || currentMode === "super-chat") generateText();
-  else generateMedia();
-});
-
-promptInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    btnSend.click();
-  }
-});
-
-function resizePromptInput() {
-  promptInput.style.height = "auto";
-  promptInput.style.height = promptInput.scrollHeight + "px";
-}
-
-promptInput.addEventListener("input", resizePromptInput);
-window.addEventListener("resize", resizePromptInput);
-
-// Initial resize to handle wrapped placeholders
-setTimeout(resizePromptInput, 100);
-
-// Settings Logic
-if (settingsBtn) {
-  settingsBtn.addEventListener("click", () => {
-    console.log("[UI] Opening Settings Modal");
-    settingsModal.style.display = "flex";
-  });
-}
-
-if (closeSettingsBtn) {
-  closeSettingsBtn.addEventListener("click", () => settingsModal.style.display = "none");
-}
-
-if (saveSettingsBtn) {
-  saveSettingsBtn.addEventListener("click", () => {
-    settingsModal.style.display = "none";
-  });
-}
-
-temperatureInput.addEventListener("input", () => {
-  document.getElementById("temp-value").textContent = temperatureInput.value;
-});
-
-/**
- * Lightbox Logic
- */
-function openLightbox(src, type) {
-  if (!lightboxModal) return;
-  
-  if (type === "video") {
-    lightboxImg.style.display = "none";
-    lightboxVideo.style.display = "block";
-    lightboxVideo.src = src;
-  } else {
-    lightboxVideo.style.display = "none";
-    lightboxVideo.src = "";
-    lightboxImg.style.display = "block";
-    lightboxImg.src = src;
-  }
-  
-  lightboxModal.style.display = "flex";
-  document.body.style.overflow = "hidden"; // Prevent background scroll
-}
-
-function closeLightbox() {
-  if (!lightboxModal) return;
-  lightboxModal.style.display = "none";
-  lightboxVideo.src = "";
-  document.body.style.overflow = "";
-}
-
-if (closeLightboxBtn) {
-  closeLightboxBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    closeLightbox();
-  });
-}
-
-if (lightboxModal) {
-  lightboxModal.addEventListener("click", closeLightbox);
-}
-
-// Close on escape key
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeLightbox();
-});
-
-// Clear History
-const btnClear = document.getElementById("clear-btn");
-if (btnClear) {
-  btnClear.addEventListener("click", () => {
-    if (confirm("Clear all history?")) {
-      conversation = [];
-      messagesEl.innerHTML = `
-        <div class="message assistant-msg">
-          <div class="msg-avatar">🤖</div>
-          <div class="msg-content">
-            <div class="msg-text">History cleared.</div>
-          </div>
-        </div>
-      `;
-      scrollToBottom(true);
+    if (error.name === "AbortError") {
+      shell.article.remove();
+      showToast("Image generation stopped");
+      return;
     }
-  });
+    renderError(shell.content, error.message || "Image generation failed.");
+    setStatus("Unavailable", "error");
+  }
 }
 
-// Mode Switching Logic (Centralized)
-function switchMode(mode) {
-  currentMode = mode;
+async function renderConversation() {
+  const version = ++state.renderVersion;
+  revokeObjectUrls();
+  elements.messages.replaceChildren();
+  const thread = getActiveThread();
+  const hasMessages = Boolean(thread?.messages.length);
+  elements.emptyState.classList.toggle("is-hidden", hasMessages);
+  elements.messages.classList.toggle("has-messages", hasMessages);
+  elements.threadTitle.textContent = thread?.title || "Untitled thread";
+  updatePageTitle();
+  if (!hasMessages) return;
 
-  // Update active state in sidebar
-  document.querySelectorAll(".nav-btn").forEach((btn) => {
-    if (btn.dataset.mode === mode) btn.classList.add("active");
-    else btn.classList.remove("active");
-  });
-
-  // Toggle Visibility
-  const textModelSection = document.getElementById("text-model-section");
-  const codingModelSection = document.getElementById("coding-model-section");
-  const imageModelSection = document.getElementById("image-model-section");
-  const videoModelSection = document.getElementById("video-model-section");
-  const gifModelSection = document.getElementById("gif-model-section");
-  const mediaSizeSection = document.getElementById("media-size-section");
-
-  if (textModelSection) textModelSection.style.display = (mode === "chat") ? "block" : "none";
-  if (codingModelSection) codingModelSection.style.display = (mode === "coding") ? "block" : "none";
-  if (imageModelSection) imageModelSection.style.display = (mode === "image") ? "block" : "none";
-  if (videoModelSection) videoModelSection.style.display = (mode === "video") ? "block" : "none";
-  if (gifModelSection) gifModelSection.style.display = (mode === "gif") ? "block" : "none";
-  if (mediaSizeSection) mediaSizeSection.style.display = (mode === "image" || mode === "video" || mode === "gif") ? "block" : "none";
-
-  // Toggle Containers
-  const gamesContainer = document.getElementById("games-container");
-  if (messagesContainer) messagesContainer.style.display = (mode === "games") ? "none" : "flex";
-  if (gamesContainer) gamesContainer.style.display = (mode === "games") ? "block" : "none";
-
-  // Hide input area for games mode
-  const inputArea = document.querySelector(".input-area");
-  if (inputArea) {
-    if (mode === "games") {
-      inputArea.style.display = "none";
+  for (const message of thread.messages) {
+    if (version !== state.renderVersion) return;
+    if (message.role === "user") {
+      elements.messages.append(renderUserMessage(message));
+    } else if (message.kind === "image") {
+      const shell = createAssistantShell({ image: true });
+      const skeleton = document.createElement("div");
+      skeleton.className = "image-skeleton";
+      shell.content.append(skeleton);
+      elements.messages.append(shell.article);
+      const blob = await getMedia(message.id);
+      if (version !== state.renderVersion) return;
+      if (blob) await replaceWithImage(shell.content, message, blob);
+      else renderExpiredImage(shell.content, message);
     } else {
-      inputArea.style.display = "block";
-      // Update placeholder for super-chat
-      const textarea = document.getElementById("prompt-input");
-      if (textarea) {
-        textarea.placeholder = mode === "super-chat" 
-          ? "Ask Super Chat (Synthesized Responses)..." 
-          : "Type your message or image prompt...";
-      }
+      elements.messages.append(renderAssistantMessage(message));
     }
   }
+  requestAnimationFrame(() => scrollToBottom("auto"));
+}
 
-  if (mode === "games") {
-    initGamesLogic();
+function renderUserMessage(message) {
+  const article = document.createElement("article");
+  article.className = "message user";
+  const bubble = document.createElement("div");
+  bubble.className = "user-bubble";
+  bubble.textContent = message.content;
+  article.append(bubble);
+  return article;
+}
+
+function renderAssistantMessage(message) {
+  const shell = createAssistantShell({ createdAt: message.createdAt });
+  renderRichText(message.content, shell.content, false);
+  shell.actions.hidden = false;
+  shell.copyButton.addEventListener("click", () => copyText(message.content));
+  return shell.article;
+}
+
+function createAssistantShell(options = {}) {
+  const article = document.createElement("article");
+  article.className = "message assistant";
+  const heading = document.createElement("div");
+  heading.className = "message-heading";
+  const mark = document.createElement("span");
+  mark.className = "assistant-mark";
+  mark.textContent = "3";
+  const name = document.createElement("strong");
+  name.textContent = options.image ? "3aik image" : "3aik";
+  const time = document.createElement("time");
+  time.textContent = formatTime(options.createdAt || Date.now());
+  heading.append(mark, name, time);
+
+  const content = document.createElement("div");
+  content.className = "message-content";
+  if (options.streaming) {
+    const cursor = document.createElement("span");
+    cursor.className = "typing-cursor";
+    cursor.setAttribute("aria-label", "Generating response");
+    content.append(cursor);
   }
 
-  // Sync mobile selectors
-  if (mobileModeSelect) mobileModeSelect.value = mode;
-  updateMobileModelOptions();
-
-  // Close sidebar on mobile
-  if (window.innerWidth <= 768) {
-    document.querySelector(".sidebar").classList.remove("open");
-  }
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
+  actions.hidden = true;
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "message-action";
+  copyButton.append(createIcon("copy"), document.createTextNode("Copy"));
+  actions.append(copyButton);
+  article.append(heading, content, actions);
+  return { article, content, actions, copyButton };
 }
 
-// Sidebar Buttons
-document.querySelectorAll(".nav-btn").forEach((btn) => {
-  btn.addEventListener("click", () => switchMode(btn.dataset.mode));
-});
+async function replaceWithImage(container, message, blob) {
+  const url = URL.createObjectURL(blob);
+  state.objectUrls.add(url);
+  const card = document.createElement("div");
+  card.className = "image-card";
+  const image = document.createElement("img");
+  image.src = url;
+  image.alt = message.prompt;
+  image.loading = "lazy";
+  image.addEventListener("click", () => previewImage(blob, message.prompt));
+  const footer = document.createElement("div");
+  footer.className = "image-card-footer";
+  const caption = document.createElement("span");
+  caption.textContent = message.prompt;
+  const download = document.createElement("button");
+  download.type = "button";
+  download.className = "secondary-button";
+  download.textContent = "Download PNG";
+  download.addEventListener("click", () => downloadBlob(blob, `3aik-${message.id}.png`));
+  footer.append(caption, download);
+  card.append(image, footer);
+  container.replaceChildren(card);
+}
 
-// Mobile Menu Toggle
-const menuToggle = document.getElementById("menu-toggle");
-const sidebar = document.querySelector(".sidebar");
-if (menuToggle) {
-  menuToggle.addEventListener("click", () => {
-    sidebar.classList.toggle("open");
+function renderExpiredImage(container, message) {
+  const card = document.createElement("div");
+  card.className = "error-card";
+  card.textContent = "This locally stored image is no longer available. Your prompt is still here.";
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "secondary-button";
+  retry.textContent = "Use prompt again";
+  retry.addEventListener("click", () => {
+    elements.prompt.value = message.prompt;
+    resizePrompt();
+    updateComposerState();
+    elements.prompt.focus();
   });
+  container.replaceChildren(card, retry);
 }
 
-if (mobileModeSelect) {
-  mobileModeSelect.addEventListener("change", (e) => {
-    switchMode(e.target.value);
-  });
+function renderError(container, message) {
+  const card = document.createElement("div");
+  card.className = "error-card";
+  card.textContent = message;
+  container.replaceChildren(card);
 }
 
-const updateMobileModelOptions = () => {
-  if (!mobileModelSelect) return;
+function renderRichText(markdown, container, streaming) {
+  container.replaceChildren();
+  const source = String(markdown || "").replace(/\r/g, "");
+  const lines = source.split("\n");
+  let paragraph = [];
+  let list = null;
+  let code = null;
+  let language = "text";
 
-  let options = [];
-  if (currentMode === "chat") {
-    options = Array.from(modelSelect.options).map(o => ({ value: o.value, text: o.text }));
-    // Ensure gemini-search is visible if toggle is on (if not already in options)
-    if (searchToggle && searchToggle.checked && !options.some(o => o.value === "gemini-search")) {
-      options.unshift({ value: "gemini-search", text: "Live Search AI" });
-    }
-  } else if (currentMode === "coding") {
-    options = Array.from(codingModelSelect.options).map(o => ({ value: o.value, text: o.text }));
-  } else if (currentMode === "image") {
-    options = Array.from(imageModelSelect.options).map(o => ({ value: o.value, text: o.text }));
-  } else if (currentMode === "video") {
-    options = Array.from(videoModelSelect.options).map(o => ({ value: o.value, text: o.text }));
-  } else if (currentMode === "gif") {
-    options = Array.from(gifModelSelect.options).map(o => ({ value: o.value, text: o.text }));
-  }
-
-  mobileModelSelect.innerHTML = options.map(o => `<option value="${o.value}">${o.text}</option>`).join('');
-
-  // Set initial value to match sidebar
-  if (currentMode === "chat") mobileModelSelect.value = modelSelect.value;
-  else if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value;
-  else if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value;
-  else if (currentMode === "video") mobileModelSelect.value = videoModelSelect.value;
-  else if (currentMode === "gif") mobileModelSelect.value = gifModelSelect.value;
-};
-
-if (mobileModelSelect) {
-  mobileModelSelect.addEventListener("change", () => {
-    if (currentMode === "chat") modelSelect.value = mobileModelSelect.value;
-    else if (currentMode === "coding") codingModelSelect.value = mobileModelSelect.value;
-    else if (currentMode === "image") imageModelSelect.value = mobileModelSelect.value;
-    else if (currentMode === "video") videoModelSelect.value = mobileModelSelect.value;
-    else if (currentMode === "gif") gifModelSelect.value = mobileModelSelect.value;
-  });
-}
-
-if (searchToggle) {
-  searchToggle.addEventListener("change", updateMobileModelOptions);
-}
-
-// Sidebar selects also sync to mobile
-modelSelect.addEventListener("change", () => { 
-  if (currentMode === "chat") {
-    mobileModelSelect.value = modelSelect.value;
-  } 
-});
-
-if (searchToggle) {
-  searchToggle.addEventListener("change", () => {
-    updateMobileModelOptions();
-  });
-}
-
-codingModelSelect.addEventListener("change", () => { if (currentMode === "coding") mobileModelSelect.value = codingModelSelect.value; });
-imageModelSelect.addEventListener("change", () => { if (currentMode === "image") mobileModelSelect.value = imageModelSelect.value; });
-videoModelSelect.addEventListener("change", () => { if (currentMode === "video") mobileModelSelect.value = videoModelSelect.value; });
-gifModelSelect.addEventListener("change", () => { if (currentMode === "gif") mobileModelSelect.value = gifModelSelect.value; });
-
-/**
- * Games Tab Logic: AI or Not Detector
- */
-let gamesInitialized = false;
-function initGamesLogic() {
-  if (gamesInitialized) return;
-  gamesInitialized = true;
-
-  const detTabBtns = document.querySelectorAll(".det-tab-btn");
-  const detAreas = document.querySelectorAll(".det-area");
-  const detCheckBtn = document.getElementById("det-check-btn");
-  const detResult = document.getElementById("det-result");
-  const dropZone = document.getElementById("drop-zone");
-  const detImageInput = document.getElementById("det-image-input");
-  const detTextInput = document.getElementById("det-text-input");
-
-  // Overlay Elements
-  const gameOverlay = document.getElementById("game-overlay");
-  const gameIframe = document.getElementById("game-iframe");
-  const overlayTitle = document.getElementById("overlay-title");
-  const closeOverlayBtn = document.getElementById("close-overlay");
-  const refreshOverlayBtn = document.getElementById("refresh-overlay");
-  const overlayBody = document.querySelector(".overlay-body");
-
-  const clippingConfig = {
-    "AI Chess": { x: 250, y: 150, width: 1050, height: 850 },
-    "Face Battle": { x: 100, y: 80, width: 900, height: 750 },
-    "AI Waifu": { x: 120, y: 120, width: 1300, height: 750 },
-    "AI Faces": { x: 0, y: 0, width: 1024, height: 1024 },
-    "AI Rentals": { x: 0, y: 0, width: 1200, height: 900 }
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const p = document.createElement("p");
+    appendInline(p, paragraph.join(" "));
+    container.append(p);
+    paragraph = [];
+  };
+  const closeList = () => { list = null; };
+  const flushCode = () => {
+    if (code === null) return;
+    container.append(createCodeBlock(code.join("\n"), language));
+    code = null;
+    language = "text";
   };
 
-  function applyClipping(title) {
-    const config = clippingConfig[title];
-    if (!config) {
-      // Default / Full Screen
-      gameIframe.style.width = "100%";
-      gameIframe.style.height = "100%";
-      gameIframe.style.left = "0";
-      gameIframe.style.top = "0";
-      gameIframe.style.transform = "none";
+  lines.forEach((line) => {
+    const fence = line.match(/^```\s*([\w.+#-]*)\s*$/);
+    if (fence) {
+      flushParagraph();
+      closeList();
+      if (code === null) {
+        code = [];
+        language = fence[1] || "text";
+      } else flushCode();
+      return;
+    }
+    if (code !== null) {
+      code.push(line);
+      return;
+    }
+    if (!line.trim()) {
+      flushParagraph();
+      closeList();
       return;
     }
 
-    const viewportWidth = overlayBody.clientWidth;
-    const viewportHeight = overlayBody.clientHeight;
-
-    // Calculate scale to fit
-    const scaleX = viewportWidth / config.width;
-    const scaleY = viewportHeight / config.height;
-    const scale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
-
-    gameIframe.style.width = `${config.width}px`;
-    gameIframe.style.height = `${config.height}px`;
-
-    // Position within the viewport center
-    const scaledWidth = config.width * scale;
-    const scaledHeight = config.height * scale;
-
-    const centeringOffsetX = (viewportWidth - scaledWidth) / 2;
-    const centeringOffsetY = (viewportHeight - scaledHeight) / 2;
-
-    gameIframe.style.left = `${centeringOffsetX - (config.x * scale)}px`;
-    gameIframe.style.top = `${centeringOffsetY - (config.y * scale)}px`;
-    gameIframe.style.transform = `scale(${scale})`;
-  }
-
-  window.addEventListener("resize", () => {
-    if (gameOverlay.style.display === "flex") {
-      applyClipping(overlayTitle.textContent);
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const h = document.createElement(`h${Math.min(heading[1].length + 1, 4)}`);
+      appendInline(h, heading[2]);
+      container.append(h);
+      return;
     }
-  });
 
-  if (closeOverlayBtn) {
-    closeOverlayBtn.addEventListener("click", () => {
-      gameOverlay.style.display = "none";
-      gameIframe.src = ""; // Stop the site when closing
-    });
-  }
-
-  if (refreshOverlayBtn) {
-    refreshOverlayBtn.addEventListener("click", () => {
-      const currentSrc = gameIframe.src;
-      gameIframe.src = ""; // Clear
-      setTimeout(() => { gameIframe.src = currentSrc; }, 50); // Restore to trigger reload
-    });
-  }
-
-  // Intercept all game links/buttons
-  document.querySelectorAll(".game-card").forEach(card => {
-    const title = card.querySelector("h3")?.textContent || "Game";
-    const actionBtn = card.querySelector(".btn-game, a");
-
-    if (actionBtn && !card.classList.contains("wide-card")) { // Don't intercept the AI or Not detector
-      actionBtn.addEventListener("click", (e) => {
-        // If it's a link, prevent default
-        const url = actionBtn.getAttribute("href") || (actionBtn.onclick ? null : "");
-        if (url || actionBtn.dataset.url) {
-          e.preventDefault();
-          const targetUrl = url || actionBtn.dataset.url;
-          if (targetUrl) {
-            overlayTitle.textContent = title;
-            gameIframe.src = targetUrl;
-            gameOverlay.style.display = "flex";
-            // Wait for display:flex to calculate dimensions
-            setTimeout(() => applyClipping(title), 50);
-          }
-        } else if (actionBtn.getAttribute("onclick")) {
-          // Special case for ThisPersonDoesNotExist which might use onclick
-          const match = actionBtn.getAttribute("onclick").match(/'([^']+)'/);
-          if (match) {
-            e.preventDefault();
-            overlayTitle.textContent = title;
-            gameIframe.src = match[1];
-            gameOverlay.style.display = "flex";
-            setTimeout(() => applyClipping(title), 50);
-          }
-        }
-      });
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      flushParagraph();
+      const tag = numbered ? "ol" : "ul";
+      if (!list || list.tagName.toLowerCase() !== tag) {
+        list = document.createElement(tag);
+        container.append(list);
+      }
+      const item = document.createElement("li");
+      appendInline(item, (bullet || numbered)[1]);
+      list.append(item);
+      return;
     }
+
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      flushParagraph();
+      closeList();
+      const blockquote = document.createElement("blockquote");
+      appendInline(blockquote, quote[1]);
+      container.append(blockquote);
+      return;
+    }
+
+    paragraph.push(line.trim());
   });
 
-  let currentDetType = "image";
-  let selectedFile = null;
-
-  // Tab switching
-  detTabBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      currentDetType = btn.dataset.detType;
-      detTabBtns.forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-
-      detAreas.forEach(area => area.style.display = "none");
-      document.getElementById(`det-${currentDetType}-area`).style.display = "block";
-      detResult.style.display = "none";
-    });
-  });
-
-  function handleFileSelection(file) {
-    if (!file) return;
-    selectedFile = file;
-    dropZone.querySelector("span").textContent = `Selected: ${file.name}`;
-    
-    // Show image preview
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      document.getElementById("det-preview-container").style.display = "block";
-      document.getElementById("det-image-preview").src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  }
-
-  // Drop zone events
-  if (dropZone) {
-    dropZone.addEventListener("click", () => detImageInput.click());
-    dropZone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      dropZone.classList.add("dragover");
-    });
-    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
-    dropZone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      dropZone.classList.remove("dragover");
-      if (e.dataTransfer.files.length > 0) {
-        handleFileSelection(e.dataTransfer.files[0]);
-      }
-    });
-  }
-
-  if (detImageInput) {
-    detImageInput.addEventListener("change", (e) => {
-      if (e.target.files.length > 0) {
-        handleFileSelection(e.target.files[0]);
-      }
-    });
-  }
-
-  // Check button logic
-  if (detCheckBtn) {
-    detCheckBtn.addEventListener("click", async () => {
-      const resultContainer = document.getElementById("det-result");
-      const mainResult = document.getElementById("det-main-result");
-      const breakdown = document.getElementById("det-breakdown");
-      const breakdownList = document.getElementById("det-breakdown-list");
-
-      resultContainer.style.display = "block";
-      mainResult.className = "det-result";
-      mainResult.textContent = "Analyzing... 🕵️";
-      breakdown.style.display = "none";
-      breakdownList.innerHTML = "";
-
-      try {
-        let response;
-        if (currentDetType === "image") {
-          if (!selectedFile) throw new Error("Please select an image first.");
-
-          // AI or Not v2 limit is 10MB
-          if (selectedFile.size > 10 * 1024 * 1024) {
-            throw new Error("File too large. Maximum size is 10MB.");
-          }
-
-          const formData = new FormData();
-          formData.append("image", selectedFile);
-
-          response = await fetch("/api/aiornot", {
-            method: "POST",
-            body: formData
-          });
-        } else {
-          const text = document.getElementById("det-text-input").value.trim();
-          if (text.length < 250) throw new Error("Text must be at least 250 characters.");
-
-          response = await fetch("/api/aiornot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text })
-          });
-        }
-
-        if (!response.ok) {
-          const errData = await response.json();
-          const detailStr = errData.details ? (errData.details.error?.message || JSON.stringify(errData.details)) : "";
-          throw new Error((errData.error || "Unknown Error") + (detailStr ? `: ${detailStr}` : ""));
-        }
-
-        const data = await response.json();
-
-        // AI or Not v2 structure mapping
-        let isAI = false;
-        let confidence = 0;
-        let details = {};
-
-        if (currentDetType === "image") {
-          const aiGen = data.report?.ai_generated;
-          if (aiGen) {
-            isAI = aiGen.verdict === "ai";
-            // If it's AI, show the AI confidence. If it's human, show the human confidence.
-            confidence = isAI ? (aiGen.ai?.confidence || 0) : (aiGen.human?.confidence || 0);
-            details = aiGen.generator || {};
-          } else {
-            // Fallback for unexpected format
-            isAI = data.is_ai;
-            confidence = data.confidence || 0;
-          }
-        } else {
-          // v2 text report: data.report.ai_text.is_detected / confidence
-          isAI = data.report?.ai_text?.is_detected || data.is_ai;
-          confidence = data.report?.ai_text?.confidence || data.confidence || 0;
-        }
-
-        if (isAI) {
-          mainResult.classList.add("ai");
-          mainResult.innerHTML = `<span style="font-size: 1.5rem; font-weight: 800;">LIKELY AI</span><br><span style="font-size: 1rem; opacity: 0.9;">(${Math.round(confidence * 100)}% AI)</span>`;
-        } else {
-          mainResult.classList.add("human");
-          mainResult.innerHTML = `<span style="font-size: 1.5rem; font-weight: 800;">LIKELY HUMAN</span><br><span style="font-size: 1rem; opacity: 0.9;">(${Math.round(confidence * 100)}% Human)</span>`;
-        }
-
-        // Populate breakdown if available (for image)
-        const generatorKeys = Object.keys(details).filter(k => k !== "ai" && k !== "human");
-        if (generatorKeys.length > 0) {
-          breakdown.style.display = "block";
-          
-          // Sort by confidence descending
-          generatorKeys.sort((a, b) => (details[b]?.confidence || 0) - (details[a]?.confidence || 0));
-
-          for (const key of generatorKeys) {
-             const name = key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
-             const perc = Math.round((details[key].confidence || 0) * 100);
-             breakdownList.innerHTML += `
-               <div style="margin-bottom: 6px;">
-                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                   <span>${name}</span>
-                   <span>${perc}%</span>
-                 </div>
-                 <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
-                   <div style="width: ${perc}%; height: 100%; background: ${isAI ? '#ff4444' : '#00c853'}; border-radius: 3px;"></div>
-                 </div>
-               </div>
-             `;
-          }
-        }
-
-      } catch (err) {
-        mainResult.style.display = "block";
-        mainResult.textContent = `Error: ${err.message}`;
-      }
-    });
+  flushParagraph();
+  flushCode();
+  if (streaming) {
+    const cursor = document.createElement("span");
+    cursor.className = "typing-cursor";
+    cursor.setAttribute("aria-hidden", "true");
+    container.append(cursor);
   }
 }
 
-/**
- * UI: Fetch and update visitor count
- */
-async function updateVisitorCount() {
+function appendInline(parent, text) {
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<]+)/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) parent.append(document.createTextNode(text.slice(cursor, match.index)));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.append(code);
+    } else if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.append(strong);
+    } else {
+      const markdownLink = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+      const link = document.createElement("a");
+      link.href = markdownLink ? markdownLink[2] : token;
+      link.textContent = markdownLink ? markdownLink[1] : token;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      parent.append(link);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) parent.append(document.createTextNode(text.slice(cursor)));
+}
+
+function createCodeBlock(code, language) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "code-block";
+  const toolbar = document.createElement("div");
+  toolbar.className = "code-toolbar";
+  const label = document.createElement("span");
+  label.textContent = language;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Copy code";
+  button.addEventListener("click", () => copyText(code));
+  const pre = document.createElement("pre");
+  const codeElement = document.createElement("code");
+  codeElement.textContent = code;
+  toolbar.append(label, button);
+  pre.append(codeElement);
+  wrapper.append(toolbar, pre);
+  return wrapper;
+}
+
+function renderThreads() {
+  const query = elements.threadSearch.value.trim().toLowerCase();
+  const threads = [...state.threads]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .filter((thread) => !query || thread.title.toLowerCase().includes(query));
+  elements.threadList.replaceChildren();
+  elements.threadEmpty.hidden = threads.length > 0;
+  elements.clearThreads.hidden = state.threads.length === 0;
+
+  threads.forEach((thread) => {
+    const row = document.createElement("div");
+    row.className = `thread-item${thread.id === state.activeThreadId ? " is-active" : ""}`;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "thread-open";
+    open.setAttribute("aria-current", thread.id === state.activeThreadId ? "page" : "false");
+    const title = document.createElement("strong");
+    title.textContent = thread.title;
+    const meta = document.createElement("small");
+    meta.textContent = `${MODES[thread.mode]?.name || "Ask"} · ${formatRelativeTime(thread.updatedAt)}`;
+    open.append(title, meta);
+    open.addEventListener("click", () => openThread(thread.id));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "thread-delete";
+    remove.setAttribute("aria-label", `Delete ${thread.title}`);
+    remove.append(createIcon("trash"));
+    remove.addEventListener("click", () => deleteThread(thread.id));
+    row.append(open, remove);
+    elements.threadList.append(row);
+  });
+}
+
+function openThread(id) {
+  const thread = state.threads.find((candidate) => candidate.id === id);
+  if (!thread) return;
+  if (state.busy) state.controller?.abort();
+  state.activeThreadId = id;
+  state.mode = thread.mode;
+  saveHistory();
+  renderMode();
+  renderThreads();
+  renderConversation();
+  closeSidebar();
+}
+
+async function deleteThread(id) {
+  const thread = state.threads.find((candidate) => candidate.id === id);
+  if (!thread || !window.confirm(`Delete “${thread.title}”?`)) return;
+  state.threads = state.threads.filter((candidate) => candidate.id !== id);
+  if (state.activeThreadId === id) state.activeThreadId = null;
+  await Promise.all(thread.messages.filter((message) => message.kind === "image").map((message) => deleteMedia(message.id)));
+  saveHistory();
+  renderThreads();
+  renderConversation();
+}
+
+async function clearAllThreads() {
+  if (!state.threads.length || !window.confirm("Delete every local conversation and generated image?")) return;
+  state.threads = [];
+  state.activeThreadId = null;
+  await clearMedia();
+  saveHistory();
+  renderThreads();
+  renderConversation();
+  showToast("Local history cleared");
+}
+
+function trimThreads() {
+  if (state.threads.length <= MAX_THREADS) return;
+  const removed = state.threads.splice(MAX_THREADS);
+  removed.flatMap((thread) => thread.messages).filter((message) => message.kind === "image").forEach((message) => deleteMedia(message.id));
+}
+
+function openSettings() {
+  elements.systemPrompt.value = preferences.systemPrompt;
+  elements.temperature.value = String(preferences.temperature);
+  elements.temperatureValue.value = Number(preferences.temperature).toFixed(1);
+  elements.temperatureValue.textContent = Number(preferences.temperature).toFixed(1);
+  elements.maxTokens.value = String(preferences.maxTokens);
+  elements.rememberHistory.checked = preferences.rememberHistory;
+  elements.settingsDialog.showModal();
+}
+
+function saveSettings(event) {
+  event.preventDefault();
+  preferences.systemPrompt = elements.systemPrompt.value.trim().slice(0, 2000);
+  preferences.temperature = clamp(Number(elements.temperature.value), 0, 1.2);
+  preferences.maxTokens = Math.round(clamp(Number(elements.maxTokens.value), 256, 4096));
+  preferences.rememberHistory = elements.rememberHistory.checked;
+  savePreferences();
+  saveHistory();
+  elements.settingsDialog.close();
+  showToast("Preferences saved");
+}
+
+function toggleTheme() {
+  preferences.theme = preferences.theme === "dark" ? "light" : "dark";
+  applyTheme(preferences.theme);
+  savePreferences();
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]').content = theme === "dark" ? "#0d100f" : "#f2f2eb";
+  elements.themeLabel.textContent = theme === "dark" ? "Light theme" : "Dark theme";
+}
+
+function openSidebar() {
+  elements.sidebar.classList.add("is-open");
+  elements.sidebarScrim.hidden = false;
+  elements.mobileMenu.setAttribute("aria-expanded", "true");
+}
+
+function closeSidebar() {
+  elements.sidebar.classList.remove("is-open");
+  elements.sidebarScrim.hidden = true;
+  elements.mobileMenu.setAttribute("aria-expanded", "false");
+}
+
+function setBusy(busy, label) {
+  state.busy = busy;
+  elements.sendButton.classList.toggle("is-stopping", busy);
+  elements.sendButton.setAttribute("aria-label", busy ? "Stop generation" : "Send message");
+  setStatus(label, busy ? "busy" : "ready");
+  updateComposerState();
+}
+
+function setStatus(label, status) {
+  elements.statusPill.querySelector("span").textContent = label;
+  elements.statusPill.classList.toggle("is-busy", status === "busy");
+  elements.statusPill.classList.toggle("is-error", status === "error");
+}
+
+function updateComposerState() {
+  const count = elements.prompt.value.length;
+  elements.characterCount.textContent = `${count.toLocaleString()} / 12,000`;
+  elements.characterCount.classList.toggle("is-visible", count > 9000);
+  elements.sendButton.disabled = !state.busy && elements.prompt.value.trim().length === 0;
+}
+
+function resizePrompt() {
+  elements.prompt.style.height = "auto";
+  elements.prompt.style.height = `${Math.min(elements.prompt.scrollHeight, 180)}px`;
+}
+
+function maybeFollowStream() {
+  const distance = elements.conversation.scrollHeight - elements.conversation.scrollTop - elements.conversation.clientHeight;
+  if (distance < 220) scrollToBottom("auto");
+}
+
+function scrollToBottom(behavior = "smooth") {
+  elements.conversation.scrollTo({ top: elements.conversation.scrollHeight, behavior });
+}
+
+function parseSse(buffer) {
+  const normalized = buffer.replace(/\r/g, "");
+  const chunks = normalized.split("\n\n");
+  const remainder = chunks.pop() || "";
+  const events = chunks
+    .map((chunk) => chunk.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n"))
+    .filter(Boolean);
+  return { events, remainder };
+}
+
+function extractDelta(value) {
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.delta === "string") return value.delta;
+  if (typeof value.response === "string") return value.response;
+  if (typeof value.content === "string") return value.content;
+  return value.choices?.[0]?.delta?.content || value.choices?.[0]?.message?.content || "";
+}
+
+function stripPrivateReasoning(value) {
+  return String(value)
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/gi, "")
+    .replace(/<\/think>/gi, "")
+    .trimStart();
+}
+
+async function readError(response) {
   try {
-    const res = await fetch("/api/stats");
-    const data = await res.json();
-    const countEl = document.getElementById("visitor-count");
-    if (countEl && data.count) {
-      countEl.textContent = data.count.toLocaleString();
-    }
-  } catch (e) {
-    console.warn("[Stats] Failed to fetch visitor count:", e);
+    const body = await response.json();
+    return body?.error?.message || body?.error || "The request could not be completed.";
+  } catch {
+    return "The request could not be completed.";
   }
 }
 
-// Initializations
-hljs.configure({ ignoreUnescapedHTML: true });
-scrollToBottom(true);
-switchMode("super-chat");
-updateVisitorCount();
+async function checkHealth() {
+  try {
+    const response = await fetch("/api/health", { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error();
+    setStatus("Ready", "ready");
+  } catch {
+    setStatus("Offline", "error");
+  }
+}
+
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast("Copied to clipboard");
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+    showToast("Copied to clipboard");
+  }
+}
+
+function previewImage(blob, prompt) {
+  const url = URL.createObjectURL(blob);
+  state.objectUrls.add(url);
+  elements.mediaPreview.src = url;
+  elements.mediaPreview.alt = prompt;
+  state.preview = { blob, name: `3aik-${Date.now()}.png` };
+  elements.mediaDialog.showModal();
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function revokeObjectUrls() {
+  state.objectUrls.forEach((url) => URL.revokeObjectURL(url));
+  state.objectUrls.clear();
+  state.preview = null;
+}
+
+let toastTimer;
+function showToast(message) {
+  clearTimeout(toastTimer);
+  elements.toast.textContent = message;
+  elements.toast.hidden = false;
+  toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 2400);
+}
+
+function createIcon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const paths = {
+    copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
+  };
+  svg.innerHTML = paths[name] || "";
+  return svg;
+}
+
+function updatePageTitle() {
+  const thread = getActiveThread();
+  document.title = thread ? `${thread.title} — 3aik` : `${MODES[state.mode].name} — 3aik`;
+}
+
+function getActiveThread() {
+  return state.threads.find((thread) => thread.id === state.activeThreadId) || null;
+}
+
+function makeTitle(prompt) {
+  const clean = prompt.replace(/\s+/g, " ").trim();
+  return clean.length > 48 ? `${clean.slice(0, 47).trim()}…` : clean;
+}
+
+function createId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatTime(timestamp) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp);
+}
+
+function formatRelativeTime(timestamp) {
+  const difference = Date.now() - timestamp;
+  if (difference < 60_000) return "now";
+  if (difference < 3_600_000) return `${Math.floor(difference / 60_000)}m`;
+  if (difference < 86_400_000) return `${Math.floor(difference / 3_600_000)}h`;
+  if (difference < 604_800_000) return `${Math.floor(difference / 86_400_000)}d`;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(timestamp);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+}
+
+function isValidThread(thread) {
+  return thread && typeof thread.id === "string" && typeof thread.title === "string" && MODES[thread.mode] && Array.isArray(thread.messages);
+}
+
+function loadPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || "null");
+    return { ...defaultPreferences, ...(saved && typeof saved === "object" ? saved : {}) };
+  } catch {
+    return { ...defaultPreferences };
+  }
+}
+
+function savePreferences() {
+  try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences)); } catch { /* Storage can be disabled. */ }
+}
+
+function loadHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "null");
+    return saved && typeof saved === "object" ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHistory() {
+  try {
+    if (!preferences.rememberHistory) {
+      localStorage.removeItem(HISTORY_KEY);
+      return;
+    }
+    localStorage.setItem(HISTORY_KEY, JSON.stringify({
+      version: 2,
+      mode: state.mode,
+      activeThreadId: state.activeThreadId,
+      threads: state.threads,
+    }));
+  } catch {
+    showToast("Local storage is full; this thread may not persist");
+  }
+}
+
+let mediaDatabase;
+function openMediaDatabase() {
+  if (mediaDatabase) return mediaDatabase;
+  mediaDatabase = new Promise((resolve, reject) => {
+    const request = indexedDB.open(MEDIA_DB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("media");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return mediaDatabase;
+}
+
+async function putMedia(id, blob) {
+  const database = await openMediaDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction("media", "readwrite");
+    transaction.objectStore("media").put(blob, id);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function getMedia(id) {
+  try {
+    const database = await openMediaDatabase();
+    return await new Promise((resolve, reject) => {
+      const request = database.transaction("media").objectStore("media").get(id);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function deleteMedia(id) {
+  try {
+    const database = await openMediaDatabase();
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction("media", "readwrite");
+      transaction.objectStore("media").delete(id);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } catch { /* The text thread can still be deleted. */ }
+}
+
+async function clearMedia() {
+  try {
+    const database = await openMediaDatabase();
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction("media", "readwrite");
+      transaction.objectStore("media").clear();
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } catch { /* IndexedDB may be unavailable in private browsing. */ }
+}

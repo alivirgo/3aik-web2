@@ -1,31 +1,19 @@
-/**
- * For more details on how to configure Wrangler, refer to:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
- */
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "3aik-web2",
-	"main": "src/index.ts",
-	"compatibility_date": "2025-10-08",
-	"compatibility_flags": [
-		"nodejs_compat",
-		"global_fetch_strictly_public"
-	],
-	"assets": {
-		"binding": "ASSETS",
-		"directory": "./public"
-	},
-	"observability": {
-		"enabled": true
-	},
-	"ai": {
-		"binding": "AI"
-	},
-	"kv_namespaces": [
-		{
-			"binding": "NUC7_STATS",
-			"id": "0dd27f8bcc504a51b5c8bfde19db00d9"
-		}
-	],
-	"upload_source_maps": true
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "3aik-web2",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./public",
+    "run_worker_first": true
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true
 }

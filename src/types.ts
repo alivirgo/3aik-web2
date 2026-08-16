@@ -1,48 +1,8 @@
-/**
- * Type definitions for the LLM chat application.
- */
-
 export interface Env {
-	/**
-	 * Binding for the Workers AI API.
-	 */
 	AI: Ai;
-
-	/**
-	/**
-	 * Binding for static assets.
-	 */
-	ASSETS: { fetch: (request: Request) => Promise<Response> };
-
-	/**
-	 * Binding for visitor statistics KV.
-	 */
-	NUC7_STATS: KVNamespace;
-
-	/**
-	 * Pollinations API Key from secrets.
-	 */
-	POLLINATIONS_API_KEY: string;
-
-	/**
-	 * OpenAI API Key from secrets for DALL-E 3.
-	 */
-	OPENAI_API_KEY: string;
-
-	/**
-	 * AI or Not API Key from secrets.
-	 */
-	AIORNOT_API_KEY: string;
-
-	/**
-	 * LTX API Key from secrets for video generation.
-	 */
-	LTX_API_KEY: string;
+	ASSETS: Fetcher;
 }
 
-/**
- * Represents a chat message.
- */
 export interface ChatMessage {
 	role: "system" | "user" | "assistant";
 	content: string;

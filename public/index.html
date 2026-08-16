@@ -1,379 +1,201 @@
 <!doctype html>
-<html lang="en">
-
+<html lang="en" data-theme="dark">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3aikGPT — Text & image AI — no login required</title>
-  <meta name="description"
-    content="3aikGPT - All-in-one free AI Studio for Text, Image, Video, and Code. Experience Llama 3.3, DeepSeek, Qwen 2.5, Flux-1, and more. No login required." />
-  <meta name="keywords"
-    content="3aikGPT, AI Studio, AI Video Generator, AI GIF Generator, AI Code Assistant, OpenAI, DeepSeek, Llama 3.3, Meta AI, Qwen, Flux, Free AI, No Login AI" />
-  <meta name="author" content="Ali" />
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
-    rel="stylesheet">
-
-  <link rel="stylesheet" href="style.css" />
-  <!-- Markdown & Highlighting -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d100f">
+  <meta name="color-scheme" content="dark light">
+  <title>3aik — Your private AI workspace</title>
+  <meta name="description" content="Think, code, and create images with a focused AI workspace. No account required; conversations stay on your device.">
+  <meta name="author" content="Ali">
+  <meta property="og:title" content="3aik — Your private AI workspace">
+  <meta property="og:description" content="A focused, no-login AI workspace for thinking, coding, and image creation.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://3aik.com/">
+  <link rel="canonical" href="https://3aik.com/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/chat.js" defer></script>
 </head>
-
 <body>
-  <div class="layout">
-    <!-- Sidebar -->
-    <aside class="sidebar glass-panel">
-      <div class="sidebar-header">
-        <div class="logo">
-          <div class="logo-info">
-            <div class="logo-icon">✨</div>
-            <div>
-              <div class="logo-text">3aikGPT</div>
-              <div class="logo-sub">Text & Image AI</div>
-            </div>
-          </div>
-          <button class="menu-toggle" id="menu-toggle">☰</button>
-        </div>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+
+  <div class="app-shell">
+    <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
+      <div class="brand-row">
+        <a class="brand" href="/" aria-label="3aik home">
+          <span class="brand-mark" aria-hidden="true">3</span>
+          <span class="brand-copy">
+            <strong>3aik</strong>
+            <small>AI workspace</small>
+          </span>
+        </a>
+        <button class="icon-button sidebar-close" id="sidebar-close" type="button" aria-label="Close navigation">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
       </div>
 
-      <nav class="nav-menu">
-        <button class="nav-btn super-btn" data-mode="super-chat" id="super-chat-btn">
-          <span class="icon">⚡</span>
-          <span>Super Chat</span>
+      <button class="new-thread-button" id="new-thread" type="button">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New thread</span>
+        <kbd>Ctrl ⇧ O</kbd>
+      </button>
+
+      <nav class="mode-nav" aria-label="Choose a workspace mode">
+        <p class="nav-label">Workspace</p>
+        <button class="mode-button" type="button" data-mode="chat" aria-pressed="true">
+          <span class="mode-glyph" aria-hidden="true">A</span>
+          <span><strong>Ask</strong><small>Everyday help</small></span>
         </button>
-        <button class="nav-btn" data-mode="chat">
-          <span class="icon">💬</span>
-          <span>Chat</span>
+        <button class="mode-button" type="button" data-mode="deep" aria-pressed="false">
+          <span class="mode-glyph" aria-hidden="true">D</span>
+          <span><strong>Deep</strong><small>Complex reasoning</small></span>
         </button>
-        <button class="nav-btn" data-mode="coding">
-          <span class="icon">💻</span>
-          <span>Coding</span>
+        <button class="mode-button" type="button" data-mode="code" aria-pressed="false">
+          <span class="mode-glyph" aria-hidden="true">&lt;/&gt;</span>
+          <span><strong>Code</strong><small>Build and debug</small></span>
         </button>
-        <button class="nav-btn" data-mode="image">
-          <span class="icon">🎨</span>
-          <span>Image</span>
-        </button>
-        <button class="nav-btn" data-mode="video">
-          <span class="icon">🎬</span>
-          <span>Video</span>
-        </button>
-        <button class="nav-btn" data-mode="gif">
-          <span class="icon">🎞️</span>
-          <span>GIF</span>
-        </button>
-        <button class="nav-btn" data-mode="games">
-          <span class="icon">🎮</span>
-          <span>Games</span>
+        <button class="mode-button" type="button" data-mode="image" aria-pressed="false">
+          <span class="mode-glyph" aria-hidden="true">I</span>
+          <span><strong>Image</strong><small>Create with FLUX</small></span>
         </button>
       </nav>
 
-      <div class="sidebar-section" id="text-model-section">
-        <div class="section-label">Text Model</div>
-        <select id="model-select" class="modern-select">
-          <option value="pollinations-chat" selected>GPT-5.4 Nano (Pollinations)</option>
-          <option value="pollinations-gpt5">GPT-5.4 Mini (Pollinations)</option>
-          <option value="pollinations-claude">Claude Sonnet 4.6 (Pollinations)</option>
-          <option value="pollinations-grok">Grok 4.3 (Pollinations)</option>
-          <option value="pollinations-deepseek">DeepSeek V4 Flash (Pollinations)</option>
-          <option value="pollinations-mistral">Mistral Small 4 (Pollinations)</option>
-          <option value="gemini-search">Live Search AI (Pollinations)</option>
-          <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B (Fast)</option>
-          <option value="@cf/deepseek-ai/deepseek-r1-distill-qwen-32b">DeepSeek R1 32B</option>
-          <option value="@cf/google/gemma-3-12b-it">Gemma 3 12B</option>
-          <option value="@cf/meta/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B</option>
-          <option value="@cf/openai/gpt-oss-120b">GPT OSS 120B</option>
-          <option value="@cf/meta/llama-3.1-8b-instruct">Llama 3.1 8B</option>
-          <option value="@cf/meta/llama-3.1-70b-instruct">Llama 3.1 70B</option>
-        </select>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="search-toggle-container">
-          <div class="section-label" style="margin-bottom: 0;">Live Search</div>
-          <label class="switch">
-            <input type="checkbox" id="search-toggle">
-            <span class="slider-round"></span>
-          </label>
+      <section class="thread-section" aria-labelledby="threads-label">
+        <div class="thread-heading">
+          <p class="nav-label" id="threads-label">Recent threads</p>
+          <button class="text-button" id="clear-threads" type="button">Clear</button>
         </div>
-      </div>
-
-      <div class="sidebar-section" id="coding-model-section" style="display: none;">
-        <div class="section-label">Coding Model</div>
-        <select id="coding-model-select" class="modern-select">
-          <option value="pollinations-code" selected>Qwen3 Coder 30B (Pollinations)</option>
-          <option value="@cf/qwen/qwen2.5-coder-32b-instruct">Qwen 2.5 Coder (32B)</option>
-          <option value="pollinations-claude">Claude Sonnet 4.6 (Pollinations)</option>
-          <option value="pollinations-deepseek">DeepSeek V4 Flash (Pollinations)</option>
-        </select>
-      </div>
-
-      <div class="sidebar-section" id="image-model-section" style="display: none;">
-        <div class="section-label">Image Model</div>
-        <select id="image-model-select" class="modern-select">
-          <option value="pollinations-flux">Flux Schnell (Pollinations)</option>
-          <option value="pollinations-kontext">FLUX Kontext — Edit & Generate</option>
-          <option value="pollinations-seedream">Seedream 4.0 — Photorealistic</option>
-          <option value="pollinations-gptimage">GPT Image 1 Mini (Pollinations)</option>
-          <option value="pollinations-klein">FLUX.2 Klein — Fast 4B</option>
-          <option value="pollinations-any">Z-Image Turbo (Alibaba)</option>
-          <option value="pollinations-dream">Seedream Art</option>
-          <option value="pollinations-turbo">Flux Turbo</option>
-          <option value="@cf/leonardoai/phoenix-1.0" selected>Phoenix 1.0</option>
-          <option value="@cf/bytedance/sdxl-lightning">SDXL Lightning</option>
-          <option value="@cf/black-forest-labs/flux-1-schnell">Flux-1 Schnell (CF)</option>
-          <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">Stable Diffusion XL</option>
-          <option value="gpt-image-2">GPT Image 2 (OpenAI)</option>
-        </select>
-      </div>
-
-      <div class="sidebar-section" id="video-model-section" style="display: none;">
-        <div class="section-label">Video Model</div>
-        <select id="video-model-select" class="modern-select">
-          <option value="video-seedance" selected>Seedance Pro-Fast</option>
-          <option value="video-seedance-2">Seedance 2.0 (Cinematic)</option>
-          <option value="video-veo">Google Veo 3.1 Fast</option>
-          <option value="video-grok-video">Grok Video Pro</option>
-          <option value="video-ltx">LTX-2.3 (Fast & Free)</option>
-        </select>
-      </div>
-
-      <div class="sidebar-section" id="gif-model-section" style="display: none;">
-        <div class="section-label">GIF Model</div>
-        <select id="gif-model-select" class="modern-select">
-          <option value="gif-animate" selected>Animate (Pollinations)</option>
-        </select>
-      </div>
-
-      <div id="media-size-section" class="sidebar-section" style="display: none;">
-        <div class="section-label">Media Size</div>
-        <select id="size-select" class="modern-select">
-          <option value="512x512">512×512</option>
-          <option value="768x768">768×768</option>
-          <option value="1024x1024" selected>1024×1024</option>
-          <option value="1280x720">1280×720 (16:9)</option>
-        </select>
-      </div>
-
-      <button id="clear-btn" class="btn-clear">
-        <span class="icon">🗑️</span> Clear History
-      </button>
+        <label class="thread-search">
+          <span class="sr-only">Search threads</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input id="thread-search" type="search" placeholder="Search threads" autocomplete="off">
+          <kbd>Ctrl K</kbd>
+        </label>
+        <div class="thread-list" id="thread-list"></div>
+        <p class="thread-empty" id="thread-empty">Your conversations will appear here.</p>
+      </section>
 
       <div class="sidebar-footer">
-        <div class="footer-text">© 2026 3aikGPT AI Studio • Built by Ali</div>
-        <div class="footer-seo">GPT-5.4 • Claude 4.6 • Qwen3 • Flux Schnell</div>
-        <div class="visitor-counter" id="visitor-counter">
-          <span class="icon">✨</span>
-          <span id="visitor-count">...</span> explorers have visited
+        <div class="privacy-note">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          <span><strong>Local by default</strong><small>No account. History stays here.</small></span>
         </div>
-        <div class="status-indicator">
-          <span class="status-dot"></span>
-          <span>Verified & Live</span>
-        </div>
+        <button class="footer-button" id="theme-toggle" type="button" aria-label="Switch color theme">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.5A7 7 0 0 1 12 3Z"/></svg>
+          <span id="theme-label">Light theme</span>
+        </button>
       </div>
     </aside>
 
-    <!-- Main Content -->
-    <main class="main-area glass-panel">
-      <!-- Header -->
-      <header class="header">
-        <div class="header-title">
-          <a href="./" class="logo-link">
-            <h1 id="mode-title">3aikGPT</h1>
-          </a>
-          <p id="mode-subtitle">Text & image AI — no login required.</p>
+    <main class="workspace" id="workspace">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="topbar-title">
+          <span class="eyebrow">Workspace / <span id="mode-breadcrumb">Ask</span></span>
+          <h1 id="thread-title">Untitled thread</h1>
         </div>
-        <div class="header-controls">
-          <select id="mobile-mode-select" class="mobile-selector mobile-only">
-            <option value="chat">Chat</option>
-            <option value="coding">Coding</option>
-            <option value="image">Image</option>
-            <option value="video">Video</option>
-            <option value="gif">GIF</option>
-            <option value="games">Games</option>
-            <option value="super-chat">Super Chat</option>
-          </select>
-          <select id="mobile-model-select" class="mobile-selector mobile-only">
-            <!-- Dynamic options -->
-          </select>
-          <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+        <div class="topbar-actions">
+          <span class="status-pill" id="status-pill"><i aria-hidden="true"></i><span>Ready</span></span>
+          <button class="icon-button" id="settings-button" type="button" aria-label="Open settings">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+          </button>
         </div>
       </header>
 
-      <!-- Chat Messages -->
-      <div class="messages-container">
-        <div id="messages" class="messages">
-          <!-- Initial welcome message -->
-          <div class="message assistant-msg">
-            <div class="msg-avatar">🤖</div>
-            <div class="msg-content">
-              <div class="msg-text">Welcome to 3aik — your unified AI Studio. I harness the combined power of Gemini, ChatGPT, and Claude to provide the most authentic and solid answers. No login. No limits. Just pure intelligence. How can I help you today?</div>
-              <div class="msg-subtext">3aik AI Studio • Multi-model Intelligence • No Login Required</div>
-            </div>
-          </div>
+      <section class="conversation" id="conversation" aria-label="Conversation">
+        <div class="empty-state" id="empty-state">
+          <span class="empty-kicker" id="empty-kicker">Llama 4 Scout · fast and versatile</span>
+          <h2 id="empty-title">What can we<br><em>figure out?</em></h2>
+          <p id="empty-description">Ask a question, untangle an idea, or turn a rough thought into something useful.</p>
+          <div class="suggestion-grid" id="suggestion-grid"></div>
         </div>
-        <div id="loading" class="loading-indicator" style="display: none;">
-          <div class="spinner"></div>
-          <span>Generating...</span>
+        <div class="messages" id="messages" aria-live="polite" aria-relevant="additions text"></div>
+      </section>
+
+      <button class="jump-button" id="jump-bottom" type="button" hidden>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        Latest
+      </button>
+
+      <section class="composer-area" aria-label="Message composer">
+        <div class="composer-meta">
+          <span class="model-chip"><i aria-hidden="true"></i><span id="active-model">Llama 4 Scout</span></span>
+          <span id="composer-context">Replies stream as they are written</span>
         </div>
-      </div>
-
-      <!-- Games Area -->
-      <div id="games-container" class="games-container" style="display: none;">
-        <div class="games-grid">
-          <!-- AI Chess -->
-          <div class="game-card">
-            <div class="game-icon">♟️</div>
-            <h3>AI Chess</h3>
-            <p>Play chess against a powerful AI.</p>
-            <a href="https://boredhumans.com/chess.php" target="_blank" class="btn-game">Play Now</a>
+        <form class="composer" id="composer-form">
+          <label class="sr-only" for="prompt-input">Message 3aik</label>
+          <textarea id="prompt-input" rows="1" maxlength="12000" placeholder="Message 3aik…" autocomplete="off"></textarea>
+          <div class="composer-actions">
+            <span class="character-count" id="character-count">0 / 12,000</span>
+            <button class="send-button" id="send-button" type="submit" aria-label="Send message">
+              <svg class="send-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+              <svg class="stop-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+            </button>
           </div>
+        </form>
+        <p class="composer-note">3aik can make mistakes. Verify important information.</p>
+      </section>
 
-          <!-- AI or Not -->
-          <div class="game-card wide-card">
-            <div class="game-icon">🕵️</div>
-            <h3>AI or Not</h3>
-            <p>Detect if an image or text was generated by AI.</p>
-            <div class="detector-interface">
-              <div class="detector-tabs">
-                <button class="det-tab-btn active" data-det-type="image">Image</button>
-                <button class="det-tab-btn" data-det-type="text">Text</button>
-              </div>
-              <div id="det-image-area" class="det-area">
-                <div class="drop-zone" id="drop-zone">
-                  <span>Drag & drop or click to upload</span>
-                  <input type="file" id="det-image-input" hidden accept="image/*">
-                </div>
-                <div id="det-preview-container" style="display: none; text-align: center; margin-top: 15px;">
-                  <img id="det-image-preview" src="" style="max-width: 100%; max-height: 250px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
-                </div>
-              </div>
-              <div id="det-text-area" class="det-area" style="display: none;">
-                <textarea id="det-text-input" class="modern-input" rows="5" placeholder="Paste text here to analyze (min 250 chars)..."></textarea>
-              </div>
-              <button id="det-check-btn" class="btn-primary" style="width: 100%; margin-top: 15px;">Analyze Content</button>
-              
-              <div id="det-result" style="display: none;">
-                <div id="det-main-result" class="det-result"></div>
-                <div id="det-breakdown" class="det-breakdown" style="display: none; margin-top: 15px; text-align: left; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
-                  <h4 style="margin: 0 0 10px 0; font-size: 0.9rem; color: #aaa;">Data Breakdown</h4>
-                  <div id="det-breakdown-list" style="font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px;"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Faces -->
-          <div class="game-card">
-            <div class="game-icon">👤</div>
-            <h3>AI Faces</h3>
-            <p>Generated portraits of people who don't exist.</p>
-            <button class="btn-game" data-url="https://thispersondoesnotexist.com">View Face</button>
-          </div>
-
-          <!-- Face Comparison -->
-          <div class="game-card">
-            <div class="game-icon">👥</div>
-            <h3>Face Battle</h3>
-            <p>Can you tell which face is real?</p>
-            <a href="https://whichfaceisreal.com/" target="_blank" class="btn-game">Start Challenge</a>
-          </div>
-
-          <!-- Anime -->
-          <div class="game-card">
-            <div class="game-icon">🎎</div>
-            <h3>AI Waifu</h3>
-            <p>Infinite anime characters from another dimension.</p>
-            <a href="https://ThisWaifuDoesNotExist.net" target="_blank" class="btn-game">Explore</a>
-          </div>
-
-          <!-- Real Estate -->
-          <div class="game-card">
-            <div class="game-icon">🏠</div>
-            <h3>AI Rentals</h3>
-            <p>Apartment listings that don't exist.</p>
-            <a href="https://ThisRentalDoesNotExist.com" target="_blank" class="btn-game">View Rentals</a>
-          </div>
-        </div>
-      </div>
-
-      <!-- Input Area -->
-      <div class="input-area">
-        <div class="input-wrapper">
-          <textarea id="prompt-input" rows="1" placeholder="Type your message or image prompt..."
-            autocomplete="off"></textarea>
-          <button id="send-btn" class="send-btn" title="Send (Enter)">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-          </button>
-        </div>
-        <div class="input-hint">
-          💡 Press <kbd>Enter</kbd> to send • <kbd>Shift+Enter</kbd> for new line
-        </div>
-      </div>
+      <nav class="mobile-mode-nav" aria-label="Workspace modes">
+        <button type="button" data-mode="chat" aria-pressed="true"><span>A</span>Ask</button>
+        <button type="button" data-mode="deep" aria-pressed="false"><span>D</span>Deep</button>
+        <button type="button" data-mode="code" aria-pressed="false"><span>&lt;/&gt;</span>Code</button>
+        <button type="button" data-mode="image" aria-pressed="false"><span>I</span>Image</button>
+      </nav>
     </main>
   </div>
 
-  <!-- Loading Overlay removed for smoother UI -->
-
-  <!-- Modal for Settings -->
-  <div id="settings-modal" class="modal" style="display: none;">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Advanced Settings</h2>
-        <button id="close-settings" class="close-btn">✕</button>
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <form method="dialog" id="settings-form">
+      <div class="dialog-header">
+        <div><span class="eyebrow">Preferences</span><h2 id="settings-title">Make 3aik yours</h2></div>
+        <button class="icon-button" value="cancel" aria-label="Close settings">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
       </div>
-      <div class="modal-body">
-        <div class="setting-item">
-          <label>Custom System Prompt</label>
-          <textarea id="system-prompt" class="modern-textarea" placeholder="Enter system instructions..."></textarea>
+      <div class="dialog-body">
+        <label class="field-label" for="system-prompt">Custom instructions <span>Optional</span></label>
+        <textarea class="field-control" id="system-prompt" rows="4" maxlength="2000" placeholder="How should 3aik respond to you?"></textarea>
+        <div class="field-row">
+          <label class="field-label" for="temperature">Creativity <output id="temperature-value">0.7</output></label>
+          <input class="range-control" id="temperature" type="range" min="0" max="1.2" step="0.1" value="0.7">
         </div>
-        <div class="setting-item">
-          <label>Temperature (<span id="temp-value">0.7</span>)</label>
-          <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.7" class="slider" />
+        <div class="field-row">
+          <label class="field-label" for="max-tokens">Response length <span>tokens</span></label>
+          <input class="field-control compact" id="max-tokens" type="number" min="256" max="4096" step="128" value="2048">
         </div>
-        <div class="setting-item">
-          <label>Max Tokens</label>
-          <input type="number" id="max-tokens" value="1024" min="100" max="4000" class="modern-input" />
-        </div>
+        <label class="toggle-row" for="remember-history">
+          <span><strong>Remember conversations</strong><small>Store thread text in this browser only.</small></span>
+          <input id="remember-history" type="checkbox" checked>
+          <i aria-hidden="true"></i>
+        </label>
       </div>
-      <div class="modal-footer">
-        <button id="save-settings-btn" class="btn-primary">Save Settings</button>
+      <div class="dialog-footer">
+        <button class="secondary-button" value="cancel">Cancel</button>
+        <button class="primary-button" id="save-settings" value="default">Save changes</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="media-dialog" id="media-dialog" aria-label="Generated image preview">
+    <div class="media-dialog-toolbar">
+      <span>Generated with FLUX.1 Schnell</span>
+      <div>
+        <button class="secondary-button" id="media-download" type="button">Download</button>
+        <button class="icon-button" id="media-close" type="button" aria-label="Close preview">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
       </div>
     </div>
-  </div>
+    <img id="media-preview" alt="Generated image preview">
+  </dialog>
 
-  <!-- Game Overlay -->
-  <div id="game-overlay" class="game-overlay" style="display: none;">
-    <div class="overlay-header">
-      <h2 id="overlay-title">Game Title</h2>
-      <div class="overlay-controls">
-        <button id="refresh-overlay" class="btn-refresh-overlay">🔄 Refresh</button>
-        <button id="close-overlay" class="btn-close-overlay">✕ Close</button>
-      </div>
-    </div>
-    <div class="overlay-body">
-      <iframe id="game-iframe" src="" frameborder="0"></iframe>
-    </div>
-  </div>
-
-  <!-- Lightbox Modal -->
-  <div id="lightbox-modal" class="lightbox" style="display: none;">
-    <button class="lightbox-close" id="close-lightbox">✕</button>
-    <div class="lightbox-content">
-      <img id="lightbox-img" src="" alt="Full view" style="display: none;">
-      <video id="lightbox-video" controls autoplay loop muted style="display: none;"></video>
-    </div>
-  </div>
-
-  <script src="chat.js"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 </body>
-
 </html>
