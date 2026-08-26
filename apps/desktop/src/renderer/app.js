@@ -2,7 +2,7 @@
 
 const api = window.desktopAPI;
 const state = {
-  activeView: 'chat',
+  activeView: 'agent',
   activeTaskId: null,
   terminalTaskIds: new Set(),
   approvalId: null,
@@ -12,7 +12,11 @@ const state = {
   adapter: null,
   releaseUrl: null,
   clearApiKeyRequested: false,
-  chatBoundsFrame: 0
+  chatBoundsFrame: 0,
+  editorPath: null,
+  editorOriginal: '',
+  editorDirty: false,
+  filesLoading: false
 };
 
 const $ = (id) => document.getElementById(id);
@@ -32,6 +36,15 @@ const elements = {
   projectPath: $('project-path'),
   chooseProjectTop: $('choose-project-top'),
   chooseProjectBanner: $('choose-project-banner'),
+  refreshFiles: $('refresh-files'),
+  filesHint: $('files-hint'),
+  filesList: $('files-list'),
+  fileEditor: $('file-editor'),
+  editorPath: $('editor-path'),
+  editorDirty: $('editor-dirty'),
+  editorContent: $('editor-content'),
+  saveFile: $('save-file'),
+  closeEditor: $('close-editor'),
   activityEmpty: $('activity-empty'),
   activityList: $('activity-list'),
   activitySubtitle: $('activity-subtitle'),
@@ -109,6 +122,120 @@ function readableError(error) {
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme || 'system';
+  void api.syncChatTheme(theme || 'system');
+}
+
+function setEditorDirty(dirty) {
+  state.editorDirty = Boolean(dirty);
+  elements.editorDirty.hidden = !state.editorDirty;
+  elements.saveFile.disabled =
+    !state.editorPath ||
+    !state.editorDirty ||
+    state.settings?.approvalMode === 'read-only';
+}
+
+function clearEditor() {
+  state.editorPath = null;
+  state.editorOriginal = '';
+  elements.fileEditor.hidden = true;
+  elements.editorPath.textContent = 'No file open';
+  elements.editorContent.value = '';
+  elements.editorContent.disabled = true;
+  setEditorDirty(false);
+  for (const row of elements.filesList.querySelectorAll('.file-row.is-active')) {
+    row.classList.remove('is-active');
+  }
+}
+
+async function refreshProjectFiles() {
+  if (!state.project) {
+    elements.filesList.replaceChildren();
+    elements.filesHint.hidden = false;
+    elements.filesHint.textContent = 'Choose a project to browse and edit source files.';
+    elements.refreshFiles.disabled = true;
+    clearEditor();
+    return;
+  }
+
+  elements.refreshFiles.disabled = true;
+  state.filesLoading = true;
+  elements.filesHint.hidden = false;
+  elements.filesHint.textContent = 'Loading project files…';
+  try {
+    const listed = await api.listProjectFiles();
+    elements.filesList.replaceChildren();
+    for (const filePath of listed.files || []) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'file-row';
+      button.setAttribute('role', 'listitem');
+      button.textContent = filePath;
+      button.title = filePath;
+      if (filePath === state.editorPath) button.classList.add('is-active');
+      button.addEventListener('click', () => void openProjectFile(filePath));
+      elements.filesList.append(button);
+    }
+    if (!(listed.files || []).length) {
+      elements.filesHint.textContent = 'No editable text files found in this project.';
+      elements.filesHint.hidden = false;
+    } else {
+      elements.filesHint.hidden = true;
+      if (listed.truncated) {
+        elements.filesHint.hidden = false;
+        elements.filesHint.textContent = 'Showing a bounded file list. Nested or generated folders may be omitted.';
+      }
+    }
+  } catch (error) {
+    elements.filesList.replaceChildren();
+    elements.filesHint.hidden = false;
+    elements.filesHint.textContent = readableError(error);
+  } finally {
+    state.filesLoading = false;
+    elements.refreshFiles.disabled = !state.project;
+  }
+}
+
+async function openProjectFile(filePath) {
+  if (!state.project) return;
+  if (state.editorDirty && state.editorPath && state.editorPath !== filePath) {
+    const proceed = window.confirm(`Discard unsaved changes to ${state.editorPath}?`);
+    if (!proceed) return;
+  }
+  try {
+    const file = await api.readProjectFile(filePath);
+    state.editorPath = file.path;
+    state.editorOriginal = file.content;
+    elements.fileEditor.hidden = false;
+    elements.editorPath.textContent = file.path;
+    elements.editorContent.disabled = state.settings?.approvalMode === 'read-only';
+    elements.editorContent.value = file.content;
+    setEditorDirty(false);
+    for (const row of elements.filesList.querySelectorAll('.file-row')) {
+      row.classList.toggle('is-active', row.textContent === file.path);
+    }
+    elements.editorContent.focus();
+  } catch (error) {
+    showToast(readableError(error), 'error');
+  }
+}
+
+async function saveOpenFile() {
+  if (!state.editorPath || !state.editorDirty) return;
+  elements.saveFile.disabled = true;
+  try {
+    await api.writeProjectFile(state.editorPath, elements.editorContent.value);
+    state.editorOriginal = elements.editorContent.value;
+    setEditorDirty(false);
+    showToast(`Saved ${state.editorPath}`);
+    addActivity({
+      title: 'File saved',
+      message: `Wrote ${state.editorPath} from the desktop editor.`,
+      tone: 'success'
+    });
+  } catch (error) {
+    showToast(readableError(error), 'error');
+    setEditorDirty(true);
+  }
 }
 
 function setTitleStatus(label, status = 'ready') {
@@ -172,6 +299,7 @@ function updateProject(project) {
     : '3aik only receives the folder you explicitly select.';
   elements.agentTask.disabled = !hasProject || Boolean(state.activeTaskId);
   updateRunButton();
+  void refreshProjectFiles();
 }
 
 function updateRunButton() {
@@ -506,6 +634,10 @@ function populateSettings(settings, credentials = state.credentials) {
   document.body.classList.toggle('compact-activity', settings.compactActivity);
   elements.approvalLabel.textContent =
     settings.approvalMode === 'read-only' ? 'Read-only' : 'Ask before changes';
+  if (state.editorPath) {
+    elements.editorContent.disabled = settings.approvalMode === 'read-only';
+    setEditorDirty(state.editorDirty);
+  }
   const providerLabel =
     settings.agentProvider === 'openai-compatible' ? `Local · ${settings.localModel}` : '3aik Cloud';
   elements.adapterLabel.textContent = `${providerLabel} · Agent Core`;
@@ -644,6 +776,24 @@ function bindEvents() {
   }
   elements.chooseProjectTop.addEventListener('click', chooseProject);
   elements.chooseProjectBanner.addEventListener('click', chooseProject);
+  elements.refreshFiles.addEventListener('click', () => void refreshProjectFiles());
+  elements.saveFile.addEventListener('click', () => void saveOpenFile());
+  elements.closeEditor.addEventListener('click', () => {
+    if (state.editorDirty) {
+      const proceed = window.confirm(`Discard unsaved changes to ${state.editorPath}?`);
+      if (!proceed) return;
+    }
+    clearEditor();
+  });
+  elements.editorContent.addEventListener('input', () => {
+    setEditorDirty(elements.editorContent.value !== state.editorOriginal);
+  });
+  elements.editorContent.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      void saveOpenFile();
+    }
+  });
   elements.projectMiniButton.addEventListener('click', () => void activateView('agent'));
   elements.agentTask.addEventListener('input', updateRunButton);
   elements.agentTask.addEventListener('keydown', (event) => {
@@ -723,7 +873,7 @@ async function initialize() {
     state.adapter = bootstrap.adapter;
     populateSettings(bootstrap.settings, bootstrap.credentials);
     updateProject(bootstrap.project);
-    await activateView(bootstrap.activeView || 'chat');
+    await activateView(bootstrap.activeView || 'agent');
   } catch (error) {
     showToast(readableError(error), 'error');
     setTitleStatus('Startup error', 'error');

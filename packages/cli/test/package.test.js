@@ -42,5 +42,5 @@ test("packed release installs into a fresh prefix and runs its Windows-compatibl
   });
   const executable = process.platform === "win32" ? path.join(prefix, "3aik.cmd") : path.join(prefix, "bin", "3aik");
   const result = await execAsync(`"${executable}" --version`, { windowsHide: true });
-  assert.equal(result.stdout.trim(), "3.0.0");
+  assert.equal(result.stdout.trim(), "3.0.1");
 });

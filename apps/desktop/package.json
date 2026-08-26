@@ -1,7 +1,7 @@
 {
   "name": "@3aik/desktop",
   "productName": "3aik",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "The secure Windows and Linux desktop workspace for 3aik chat and coding agents.",
   "license": "MIT",
   "private": true,
@@ -23,7 +23,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "lint": "node --check src/main/index.cjs && node --check src/main/security.cjs && node --check src/main/settings-store.cjs && node --check src/main/credential-store.cjs && node --check src/preload/index.cjs && node --check src/shared/contracts.cjs && node --check src/agent/core-adapter.cjs && node --check src/agent/model-client.cjs && node --check src/renderer/app.js",
+    "lint": "node --check src/main/index.cjs && node --check src/main/security.cjs && node --check src/main/settings-store.cjs && node --check src/main/credential-store.cjs && node --check src/main/project-files.cjs && node --check src/preload/index.cjs && node --check src/shared/contracts.cjs && node --check src/agent/core-adapter.cjs && node --check src/agent/model-client.cjs && node --check src/renderer/app.js",
     "test": "node --test",
     "check": "npm run lint && npm test",
     "pack:dir": "electron-builder --dir --publish never",

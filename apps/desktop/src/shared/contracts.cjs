@@ -6,6 +6,9 @@ const INVOKE_CHANNELS = Object.freeze({
   SET_CHAT_BOUNDS: 'desktop:set-chat-bounds',
   RELOAD_CHAT: 'desktop:reload-chat',
   SELECT_PROJECT: 'desktop:select-project',
+  LIST_PROJECT_FILES: 'desktop:list-project-files',
+  READ_PROJECT_FILE: 'desktop:read-project-file',
+  WRITE_PROJECT_FILE: 'desktop:write-project-file',
   RUN_AGENT_TASK: 'desktop:run-agent-task',
   CANCEL_AGENT_TASK: 'desktop:cancel-agent-task',
   RESOLVE_APPROVAL: 'desktop:resolve-approval',
@@ -14,7 +17,8 @@ const INVOKE_CHANNELS = Object.freeze({
   TEST_MODEL_CONNECTION: 'desktop:test-model-connection',
   GET_ABOUT: 'desktop:get-about',
   CHECK_FOR_UPDATES: 'desktop:check-for-updates',
-  OPEN_EXTERNAL: 'desktop:open-external'
+  OPEN_EXTERNAL: 'desktop:open-external',
+  SYNC_CHAT_THEME: 'desktop:sync-chat-theme'
 });
 
 const EVENT_CHANNELS = Object.freeze({

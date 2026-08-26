@@ -34,11 +34,18 @@ const {
 } = require('./security.cjs');
 const { createSettingsStore } = require('./settings-store.cjs');
 const { createCredentialStore } = require('./credential-store.cjs');
+const { createProjectFiles } = require('./project-files.cjs');
 
 const APP_ID = 'com.3aik.desktop';
 const RELEASES_URL = 'https://github.com/alivirgo/3aik-web2/releases';
 const RELEASE_API_URL = 'https://api.github.com/repos/alivirgo/3aik-web2/releases?per_page=20';
 const RENDERER_ROOT = path.join(__dirname, '..', 'renderer');
+const CHAT_BG_DARK = '#0d100f';
+const CHAT_BG_LIGHT = '#f2f2eb';
+const SHELL_BG_DARK = '#0d100f';
+const SHELL_BG_LIGHT = '#f2f2eb';
+const TITLE_SYMBOL_DARK = '#f2f5ef';
+const TITLE_SYMBOL_LIGHT = '#171b18';
 const CSP = [
   "default-src 'none'",
   "script-src 'self'",
@@ -74,11 +81,12 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow = null;
 let chatView = null;
 let chatAttached = false;
-let activeView = 'chat';
+let activeView = 'agent';
 let selectedProject = null;
 let activeTaskId = null;
 let settingsStore = null;
 let credentialStore = null;
+let projectFiles = null;
 let agentAdapter = null;
 let agentAdapterInfo = null;
 let modelClient = null;
@@ -88,13 +96,53 @@ function sendToShell(channel, payload) {
   mainWindow.webContents.send(channel, payload);
 }
 
+function resolvedTheme(theme = settingsStore?.get()?.theme || 'system') {
+  if (theme === 'light') return 'light';
+  if (theme === 'dark') return 'dark';
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+}
+
+function shellBackgroundColor(theme = resolvedTheme()) {
+  return theme === 'light' ? SHELL_BG_LIGHT : SHELL_BG_DARK;
+}
+
+function chatBackgroundColor(theme = resolvedTheme()) {
+  return theme === 'light' ? CHAT_BG_LIGHT : CHAT_BG_DARK;
+}
+
 function updateTitleBarColors() {
   if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
+  const theme = resolvedTheme();
   mainWindow.setTitleBarOverlay({
-    color: nativeTheme.shouldUseDarkColors ? '#0b1020' : '#eef1f7',
-    symbolColor: nativeTheme.shouldUseDarkColors ? '#d8def4' : '#26304a',
+    color: shellBackgroundColor(theme),
+    symbolColor: theme === 'light' ? TITLE_SYMBOL_LIGHT : TITLE_SYMBOL_DARK,
     height: 48
   });
+}
+
+async function syncChatTheme(themeInput) {
+  if (!chatView || chatView.webContents.isDestroyed()) return false;
+  const theme = resolvedTheme(themeInput || settingsStore?.get()?.theme || 'system');
+  chatView.setBackgroundColor(chatBackgroundColor(theme));
+  const script = `(() => {
+    try {
+      const key = '3aik:preferences:v2';
+      const current = JSON.parse(localStorage.getItem(key) || '{}') || {};
+      current.theme = ${JSON.stringify(theme)};
+      localStorage.setItem(key, JSON.stringify(current));
+      document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.content = ${JSON.stringify(theme === 'dark' ? '#0d100f' : '#f2f2eb')};
+      const label = document.querySelector('#theme-label');
+      if (label) label.textContent = ${JSON.stringify(theme === 'dark' ? 'Light theme' : 'Dark theme')};
+    } catch (_) {}
+  })();`;
+  try {
+    await chatView.webContents.executeJavaScript(script, true);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function registerAppProtocol() {
@@ -176,12 +224,13 @@ function createChatView() {
   });
   configureChatSession(view.webContents.session);
   configureNavigation(view.webContents, 'chat');
-  view.setBackgroundColor('#0b1020');
+  view.setBackgroundColor(chatBackgroundColor());
   view.webContents.on('did-start-loading', () => {
     sendToShell(EVENT_CHANNELS.CHAT_STATUS, { state: 'loading' });
   });
   view.webContents.on('did-stop-loading', () => {
     sendToShell(EVENT_CHANNELS.CHAT_STATUS, { state: 'ready' });
+    void syncChatTheme();
   });
   view.webContents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return;
@@ -305,6 +354,18 @@ function registerIpcHandlers() {
 
   registerHandler(INVOKE_CHANNELS.SELECT_PROJECT, chooseProject);
 
+  registerHandler(INVOKE_CHANNELS.LIST_PROJECT_FILES, async () => projectFiles.listFiles());
+
+  registerHandler(INVOKE_CHANNELS.READ_PROJECT_FILE, async (request) => {
+    if (!request || typeof request !== 'object') throw new Error('File path is required.');
+    return projectFiles.readFile(request.path);
+  });
+
+  registerHandler(INVOKE_CHANNELS.WRITE_PROJECT_FILE, async (request) => {
+    if (!request || typeof request !== 'object') throw new Error('File write payload is required.');
+    return projectFiles.writeFile(request.path, request.content);
+  });
+
   registerHandler(INVOKE_CHANNELS.RUN_AGENT_TASK, async (request) => {
     if (!selectedProject) throw new Error('Choose a project folder first.');
     if (activeTaskId) throw new Error('Finish or stop the current task first.');
@@ -375,6 +436,10 @@ function registerIpcHandlers() {
     const updated = settingsStore.update(safePatch);
     nativeTheme.themeSource = updated.theme;
     updateTitleBarColors();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(shellBackgroundColor(resolvedTheme(updated.theme)));
+    }
+    void syncChatTheme(updated.theme);
     if (updated.openLastProject === false) settingsStore.setLastProject(null);
     else if (selectedProject) settingsStore.setLastProject(selectedProject);
     return {
@@ -386,6 +451,8 @@ function registerIpcHandlers() {
       }
     };
   });
+
+  registerHandler(INVOKE_CHANNELS.SYNC_CHAT_THEME, async (theme) => syncChatTheme(theme));
 
   registerHandler(INVOKE_CHANNELS.TEST_MODEL_CONNECTION, async (candidate) => {
     if (!candidate || typeof candidate !== 'object') throw new Error('Provider settings are required.');
@@ -497,8 +564,8 @@ function buildApplicationMenu() {
     {
       label: 'Navigate',
       submenu: [
-        { label: 'Chat', accelerator: 'CmdOrCtrl+1', click: () => navigateShell('chat') },
-        { label: 'Coding Agent', accelerator: 'CmdOrCtrl+2', click: () => navigateShell('agent') },
+        { label: 'Coding Agent', accelerator: 'CmdOrCtrl+1', click: () => navigateShell('agent') },
+        { label: 'Chat', accelerator: 'CmdOrCtrl+2', click: () => navigateShell('chat') },
         { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => navigateShell('settings') }
       ]
     },
@@ -550,13 +617,17 @@ async function createMainWindow() {
     minWidth: 1040,
     minHeight: 680,
     show: false,
-    backgroundColor: '#0b1020',
+    backgroundColor: shellBackgroundColor(),
     title: '3aik',
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'win32' ? 'hidden' : 'default',
     titleBarOverlay:
       process.platform === 'win32'
-        ? { color: '#0b1020', symbolColor: '#d8def4', height: 48 }
+        ? {
+            color: shellBackgroundColor(),
+            symbolColor: resolvedTheme() === 'light' ? TITLE_SYMBOL_LIGHT : TITLE_SYMBOL_DARK,
+            height: 48
+          }
         : undefined,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.cjs'),
@@ -577,7 +648,7 @@ async function createMainWindow() {
 
   configureNavigation(mainWindow.webContents, 'shell');
   chatView = createChatView();
-  setChatAttached(true);
+  setChatAttached(activeView === 'chat');
 
   mainWindow.on('closed', () => {
     if (chatView && !chatView.webContents.isDestroyed()) chatView.webContents.close();
@@ -619,7 +690,14 @@ if (!hasSingleInstanceLock) {
       safeStorage
     );
     nativeTheme.themeSource = settingsStore.get().theme;
-    nativeTheme.on('updated', updateTitleBarColors);
+    nativeTheme.on('updated', () => {
+      updateTitleBarColors();
+      void syncChatTheme();
+    });
+    projectFiles = createProjectFiles({
+      getProjectRoot: () => selectedProject,
+      getReadOnly: () => settingsStore.get().approvalMode === 'read-only'
+    });
     modelClient = createModelClient({ fetchImplementation: (url, options) => net.fetch(url, options) });
     agentAdapter = await createCoreAgentAdapter({
       fetchImplementation: (url, options) => net.fetch(url, options)

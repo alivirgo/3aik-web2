@@ -41,7 +41,7 @@ test("help and version do not require configuration or network", async () => {
   assert.match(helpUi.lines.join("\n"), /not an OS sandbox/);
   const versionUi = new FakeUI();
   assert.equal(await main(["--version"], { ui: versionUi }), 0);
-  assert.equal(versionUi.lines[0], "3.0.0");
+  assert.equal(versionUi.lines[0], "3.0.1");
   const packageVersion = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
   assert.equal(VERSION, packageVersion);
 });

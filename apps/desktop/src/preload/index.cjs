@@ -10,6 +10,9 @@ const INVOKE_CHANNELS = Object.freeze({
   SET_CHAT_BOUNDS: 'desktop:set-chat-bounds',
   RELOAD_CHAT: 'desktop:reload-chat',
   SELECT_PROJECT: 'desktop:select-project',
+  LIST_PROJECT_FILES: 'desktop:list-project-files',
+  READ_PROJECT_FILE: 'desktop:read-project-file',
+  WRITE_PROJECT_FILE: 'desktop:write-project-file',
   RUN_AGENT_TASK: 'desktop:run-agent-task',
   CANCEL_AGENT_TASK: 'desktop:cancel-agent-task',
   RESOLVE_APPROVAL: 'desktop:resolve-approval',
@@ -18,7 +21,8 @@ const INVOKE_CHANNELS = Object.freeze({
   TEST_MODEL_CONNECTION: 'desktop:test-model-connection',
   GET_ABOUT: 'desktop:get-about',
   CHECK_FOR_UPDATES: 'desktop:check-for-updates',
-  OPEN_EXTERNAL: 'desktop:open-external'
+  OPEN_EXTERNAL: 'desktop:open-external',
+  SYNC_CHAT_THEME: 'desktop:sync-chat-theme'
 });
 const EVENT_CHANNELS = Object.freeze({
   AGENT_EVENT: 'desktop:agent-event',
@@ -40,6 +44,10 @@ const desktopAPI = Object.freeze({
   setChatBounds: (bounds) => ipcRenderer.invoke(INVOKE_CHANNELS.SET_CHAT_BOUNDS, { ...bounds }),
   reloadChat: () => ipcRenderer.invoke(INVOKE_CHANNELS.RELOAD_CHAT),
   selectProject: () => ipcRenderer.invoke(INVOKE_CHANNELS.SELECT_PROJECT),
+  listProjectFiles: () => ipcRenderer.invoke(INVOKE_CHANNELS.LIST_PROJECT_FILES),
+  readProjectFile: (filePath) => ipcRenderer.invoke(INVOKE_CHANNELS.READ_PROJECT_FILE, { path: filePath }),
+  writeProjectFile: (filePath, content) =>
+    ipcRenderer.invoke(INVOKE_CHANNELS.WRITE_PROJECT_FILE, { path: filePath, content }),
   runAgentTask: (prompt) => ipcRenderer.invoke(INVOKE_CHANNELS.RUN_AGENT_TASK, { prompt }),
   cancelAgentTask: (taskId) => ipcRenderer.invoke(INVOKE_CHANNELS.CANCEL_AGENT_TASK, taskId),
   resolveApproval: (approvalId, approved) =>
@@ -51,6 +59,7 @@ const desktopAPI = Object.freeze({
   getAbout: () => ipcRenderer.invoke(INVOKE_CHANNELS.GET_ABOUT),
   checkForUpdates: () => ipcRenderer.invoke(INVOKE_CHANNELS.CHECK_FOR_UPDATES),
   openExternal: (url) => ipcRenderer.invoke(INVOKE_CHANNELS.OPEN_EXTERNAL, url),
+  syncChatTheme: (theme) => ipcRenderer.invoke(INVOKE_CHANNELS.SYNC_CHAT_THEME, theme),
   onAgentEvent: (listener) => subscribe(EVENT_CHANNELS.AGENT_EVENT, listener),
   onChatStatus: (listener) => subscribe(EVENT_CHANNELS.CHAT_STATUS, listener),
   onNavigate: (listener) => subscribe(EVENT_CHANNELS.NAVIGATE, listener)

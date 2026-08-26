@@ -1,6 +1,6 @@
 {
   "name": "@3aik/agent-core",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Safe, reusable local coding-agent engine for 3aik",
   "type": "module",
   "main": "./src/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@3aik/cli",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "3aik coding agent for PowerShell, Command Prompt, and POSIX shells",
   "type": "module",
   "bin": {

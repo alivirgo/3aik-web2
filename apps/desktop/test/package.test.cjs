@@ -9,7 +9,7 @@ const desktopRoot = path.join(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'));
 
 test('Windows packaging is branded, licensed, and aligned to v3', () => {
-  assert.equal(manifest.version, '3.0.0');
+  assert.equal(manifest.version, '3.0.1');
   assert.equal(manifest.productName, '3aik');
   assert.equal(manifest.license, 'MIT');
   assert.equal(manifest.build.appId, 'com.3aik.desktop');

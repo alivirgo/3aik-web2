@@ -1,6 +1,6 @@
 {
   "name": "3aik-web2",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "A local-first AI workspace with web, CLI, desktop, cloud, and local model support",
   "private": true,
   "type": "module",

@@ -29,20 +29,21 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="Primary navigation">
         <nav class="primary-nav">
-          <button class="nav-item is-active" type="button" data-view="chat" aria-current="page">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 18.5 3.5 21l1-4A8 8 0 1 1 7 18.5Z"></path>
-              <path d="M8 10h8M8 14h5"></path>
-            </svg>
-            <span>Chat</span>
-            <kbd>1</kbd>
-          </button>
-          <button class="nav-item" type="button" data-view="agent">
+          <button class="nav-item is-active" type="button" data-view="agent" aria-current="page">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"></path>
             </svg>
             <span>Coding Agent</span>
             <span class="nav-badge">Local</span>
+            <kbd>1</kbd>
+          </button>
+          <button class="nav-item" type="button" data-view="chat">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 18.5 3.5 21l1-4A8 8 0 1 1 7 18.5Z"></path>
+              <path d="M8 10h8M8 14h5"></path>
+            </svg>
+            <span>Chat</span>
+            <kbd>2</kbd>
           </button>
         </nav>
 
@@ -82,7 +83,7 @@
       </aside>
 
       <main class="workspace" id="workspace" tabindex="-1">
-        <section class="view chat-view is-active" id="view-chat" data-view-panel="chat" aria-labelledby="chat-title">
+        <section class="view chat-view" id="view-chat" data-view-panel="chat" aria-labelledby="chat-title" hidden>
           <header class="workspace-bar chat-bar">
             <div>
               <div class="workspace-heading-row">
@@ -106,7 +107,7 @@
           </div>
         </section>
 
-        <section class="view agent-view" id="view-agent" data-view-panel="agent" aria-labelledby="agent-title" hidden>
+        <section class="view agent-view is-active" id="view-agent" data-view-panel="agent" aria-labelledby="agent-title">
           <header class="workspace-bar agent-bar">
             <div>
               <div class="workspace-heading-row">
@@ -116,7 +117,7 @@
                   Approval gated
                 </span>
               </div>
-              <p>Plan work locally, review every action, and keep tools outside the renderer.</p>
+              <p>Open a project, edit files locally, and let the agent apply reviewed changes.</p>
             </div>
             <button class="button button-secondary" id="choose-project-top" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v9.5H3Z"></path></svg>
@@ -125,6 +126,20 @@
           </header>
 
           <div class="agent-canvas">
+            <aside class="files-panel" aria-label="Project files">
+              <div class="files-panel-heading">
+                <div>
+                  <span class="eyebrow">Project files</span>
+                  <h2>Workspace</h2>
+                </div>
+                <button class="icon-button" id="refresh-files" type="button" aria-label="Refresh files" title="Refresh files" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"></path></svg>
+                </button>
+              </div>
+              <p class="files-hint" id="files-hint">Choose a project to browse and edit source files.</p>
+              <div class="files-list" id="files-list" role="list"></div>
+            </aside>
+
             <div class="agent-main-column">
               <section class="project-banner" id="project-banner">
                 <div class="project-empty-icon" aria-hidden="true">
@@ -136,6 +151,22 @@
                   <span id="project-path">3aik only receives the folder you explicitly select.</span>
                 </div>
                 <button class="button button-quiet" id="choose-project-banner" type="button">Browse…</button>
+              </section>
+
+              <section class="file-editor" id="file-editor" hidden>
+                <div class="file-editor-toolbar">
+                  <div class="file-editor-meta">
+                    <span class="eyebrow">Editor</span>
+                    <strong id="editor-path">No file open</strong>
+                    <span id="editor-dirty" class="editor-dirty" hidden>Unsaved</span>
+                  </div>
+                  <div class="file-editor-actions">
+                    <button class="button button-quiet" id="close-editor" type="button">Close</button>
+                    <button class="button button-primary" id="save-file" type="button" disabled>Save file</button>
+                  </div>
+                </div>
+                <label class="sr-only" for="editor-content">File contents</label>
+                <textarea id="editor-content" spellcheck="false" wrap="off" disabled></textarea>
               </section>
 
               <section class="activity-panel" aria-labelledby="activity-title">
@@ -153,7 +184,7 @@
                     <img src="./assets/mark.svg" alt="" width="42" height="42">
                   </div>
                   <h3>Ready when you are</h3>
-                  <p>Ask for a code review, feature plan, bug investigation, or a carefully approved change.</p>
+                  <p>Ask for a code review, feature plan, bug investigation, or a carefully approved change. You can also open files on the left and save edits yourself.</p>
                   <div class="prompt-suggestions" aria-label="Suggested tasks">
                     <button type="button" data-prompt="Review this project and identify its highest-impact reliability risks.">Review reliability</button>
                     <button type="button" data-prompt="Explain the architecture of this project and its key data flows.">Explain architecture</button>
@@ -237,7 +268,8 @@
                 <ul>
                   <li>Tools run only in the trusted main process</li>
                   <li>The renderer has no Node.js access</li>
-                  <li>Every write, patch, and command requires approval</li>
+                  <li>Agent writes, patches, and commands require approval</li>
+                  <li>Manual editor saves stay inside the selected project</li>
                 </ul>
               </section>
             </aside>
