@@ -2,7 +2,7 @@
   "name": "@3aik/desktop",
   "productName": "3aik",
   "version": "3.0.0",
-  "description": "The secure Windows-first desktop workspace for 3aik chat and coding agents.",
+  "description": "The secure Windows and Linux desktop workspace for 3aik chat and coding agents.",
   "license": "MIT",
   "private": true,
   "homepage": "https://3aik.com",
@@ -27,7 +27,8 @@
     "test": "node --test",
     "check": "npm run lint && npm test",
     "pack:dir": "electron-builder --dir --publish never",
-    "pack:win": "electron-builder --win nsis portable --x64 --publish never"
+    "pack:win": "electron-builder --win nsis portable --x64 --publish never",
+    "pack:linux": "electron-builder --linux AppImage deb --x64 --publish never"
   },
   "dependencies": {
     "@3aik/agent-core": "file:../../packages/agent-core"
@@ -90,6 +91,32 @@
     },
     "portable": {
       "artifactName": "3aik-Portable-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "build-resources/icon.svg",
+      "category": "Development",
+      "maintainer": "3aik <alivirgo123@live.com>",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "appImage": {
+      "artifactName": "3aik-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "artifactName": "3aik_${version}_${arch}.${ext}",
+      "packageCategory": "devel"
     },
     "publish": {
       "provider": "github",

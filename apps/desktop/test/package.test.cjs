@@ -20,6 +20,15 @@ test('Windows packaging is branded, licensed, and aligned to v3', () => {
   assert.equal(Object.hasOwn(manifest.dependencies || {}, 'electron-updater'), false);
 });
 
+test('Linux packaging ships AppImage and deb with publish disabled', () => {
+  assert.equal(manifest.build.linux.icon, 'build-resources/icon.svg');
+  assert.equal(manifest.build.linux.category, 'Development');
+  assert.deepEqual(manifest.build.linux.target.map((entry) => entry.target), ['AppImage', 'deb']);
+  assert.match(manifest.scripts['pack:linux'], /--publish never/);
+  assert.equal(manifest.build.appImage.artifactName, '3aik-${version}-${arch}.${ext}');
+  assert.equal(manifest.build.deb.artifactName, '3aik_${version}_${arch}.${ext}');
+});
+
 test('packaged MIT license matches the repository license', () => {
   const packagedLicense = fs.readFileSync(path.join(desktopRoot, 'build-resources', 'license.txt'), 'utf8').trim();
   const repositoryLicense = fs.readFileSync(path.join(desktopRoot, '..', '..', 'LICENSE'), 'utf8').trim();

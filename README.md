@@ -12,7 +12,7 @@ Releases: [github.com/alivirgo/3aik-web2/releases](https://github.com/alivirgo/3
 | --- | --- |
 | Web/PWA | Ask, Deep, Code, and Image modes; streamed responses; image and text attachments; edit-and-branch, regenerate, rename, search, Markdown export, and lossless workspace backup/import. |
 | CLI | Cross-platform chat and a bounded coding-agent loop for PowerShell, Command Prompt, and POSIX shells. |
-| Desktop | Windows-first chat and coding workspaces with a sandboxed renderer, selected-folder access, approvals, live activity, and Git diff review. |
+| Desktop | Windows and Linux chat/coding workspaces with a sandboxed renderer, selected-folder access, approvals, live activity, and Git diff review. |
 | Android | `3aikGPT: AI, On Your Terms`, a hardened Android 8.0+ client for the production web workspace with private document-picker import/export and native local-data controls. |
 | Local models | Exclusive local routing for Ollama, LM Studio, llama.cpp, or a private OpenAI-compatible endpoint. Local mode never silently falls back to 3aik Cloud. |
 
@@ -62,9 +62,9 @@ The built-in defaults are:
 
 Custom OpenAI-compatible endpoints are also supported. Provider selection is exclusive: local prompts and tool-result turns return only to the configured local endpoint. Model quality and tool-calling reliability depend on the selected model.
 
-## Windows desktop
+## Windows and Linux desktop
 
-GitHub Releases contain an assisted installer and a portable x64 build. The current public binaries are unsigned, so Windows SmartScreen may warn until code signing is configured. The app checks releases only when the user asks; it does not silently download or install updates.
+GitHub Releases contain a Windows assisted installer, a Windows portable x64 build, plus Linux AppImage and `.deb` packages. The current public binaries are unsigned, so Windows SmartScreen (and some Linux desktop environments) may warn until code signing is configured. The app checks releases only when the user asks; it does not silently download or install updates.
 
 The desktop renderer has no Node.js, shell, filesystem, credential, or generic IPC access. Coding tools live behind a narrow main-process boundary, operate on a user-selected folder, and request approval before writes, patches, or commands. Local provider credentials use Electron `safeStorage` when available and otherwise remain memory-only.
 
@@ -135,9 +135,9 @@ npm run smoke:production -- https://3aik.com
 
 ## Release
 
-Tags matching `v*` run the release workflow. It verifies that every package version matches the tag; verifies the Android package, app label, `versionName`, and calculated `versionCode`; installs the packed CLI into a clean directory; builds Windows and Android artifacts; creates SHA-256 checksums; and publishes a GitHub Release. Cloudflare deployment remains connected to the `main` branch.
+Tags matching `v*` run the release workflow. It verifies that every package version matches the tag; verifies the Android package, app label, `versionName`, and calculated `versionCode`; installs the packed CLI into a clean directory; builds Windows, Linux, and Android artifacts; creates SHA-256 checksums; and publishes a GitHub Release. Cloudflare deployment remains connected to the `main` branch.
 
-Local desktop builds use `--publish never`. Release binaries remain unsigned until CI is supplied with an Authenticode certificate.
+Local desktop builds use `--publish never`. Release binaries remain unsigned until CI is supplied with an Authenticode certificate. Android packaging is best-effort in the release workflow so CLI and desktop assets can still publish if the Android job fails.
 
 Android signing uses the protected `android-release` GitHub Environment. Configure all five environment secrets together: `THREEAIK_UPLOAD_KEYSTORE_BASE64`, `THREEAIK_UPLOAD_KEY_ALIAS`, `THREEAIK_UPLOAD_STORE_PASSWORD`, `THREEAIK_UPLOAD_KEY_PASSWORD`, and `THREEAIK_UPLOAD_CERT_SHA256`. The last value is the upload certificate's 64-hex-digit SHA-256 fingerprint, with optional colons. Partial configuration fails the release. With no signing secrets, the workflow succeeds only with a conspicuously named `UNSIGNED-NOT-FOR-PLAY.aab`; it never presents that fallback as Play-ready. The release also includes the R8 mapping, Android-specific hashes, and a certificate/status report. See [apps/android/RELEASE.md](apps/android/RELEASE.md) before any Play upload.
 

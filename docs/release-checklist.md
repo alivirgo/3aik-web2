@@ -5,7 +5,7 @@
 - Run the Worker typecheck, browser syntax check, unit/DOM tests, and Wrangler dry run.
 - Run agent-core, CLI, and desktop checks from clean installs.
 - Install the packed CLI into a fresh temporary npm prefix and run `3aik --version`, `3aik doctor --json`, and mocked cloud/local provider tests.
-- Build both Windows NSIS and portable desktop artifacts on `windows-latest`.
+- Build Windows NSIS/portable and Linux AppImage/deb desktop artifacts.
 - On JDK 17 with Android API 36/build-tools 36.0.0, run Android unit tests, fatal release lint, the debug APK build, and `bundleRelease`.
 - Confirm ordinary CI's AAB has no `META-INF/*.RSA`, `*.DSA`, or `*.EC` signature block and is named `CI-UNSIGNED-NOT-FOR-PLAY`.
 - Confirm denied approvals produce no filesystem change and path/symlink escape fixtures fail closed.

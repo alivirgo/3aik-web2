@@ -1,6 +1,6 @@
 # 3aik Desktop
 
-3aik Desktop is a Windows-first Electron application with two deliberately separate workspaces:
+3aik Desktop is a Windows and Linux Electron application with two deliberately separate workspaces:
 
 - **Chat** embeds the production `https://3aik.com` experience in its own sandboxed, persistent Electron session.
 - **Coding Agent** runs `@3aik/agent-core` in the trusted main process. It can inspect, search, edit, patch, run approved commands/tests, and show the live Git diff for a user-selected project.
@@ -93,19 +93,32 @@ Artifacts are written to `release/` as:
 - `3aik-Setup-<version>-x64.exe`
 - `3aik-Portable-<version>-x64.exe`
 
-[`build-resources/icon.svg`](build-resources/icon.svg) is the vector master; electron-builder converts it for the Windows executable and installer. Packaging is configured with `--publish never`, so a local build cannot publish by accident.
+## Linux packaging
 
-The assisted installer displays the repository’s MIT license, and the same license is copied into the installed resources. Generated artifacts are **unsigned** until a release pipeline is given an Authenticode certificate. The app performs a user-initiated release check only; it has no automatic downloader or updater.
+On Linux, build an AppImage and Debian package:
 
-Before a public release, configure an Authenticode certificate in CI and sign both artifacts. Windows SmartScreen reputation is materially better for consistently signed releases. The current update screen checks GitHub Releases and asks the user before opening a release; it never downloads or installs code silently.
+```bash
+npm run pack:linux
+```
+
+Artifacts are written to `release/` as:
+
+- `3aik-<version>-x64.AppImage`
+- `3aik_<version>_amd64.deb`
+
+[`build-resources/icon.svg`](build-resources/icon.svg) is the vector master; electron-builder converts it for the Windows and Linux packages. Packaging is configured with `--publish never`, so a local build cannot publish by accident.
+
+The assisted Windows installer displays the repository’s MIT license, and the same license is copied into the installed resources. Generated artifacts are **unsigned** until a release pipeline is given a code-signing certificate. The app performs a user-initiated release check only; it has no automatic downloader or updater.
+
+Before a public release, configure signing in CI and sign the published artifacts. Windows SmartScreen reputation is materially better for consistently signed releases. The current update screen checks GitHub Releases and asks the user before opening a release; it never downloads or installs code silently.
 
 ## Release checklist
 
 1. Run `npm run check` in this directory and the Agent Core checks in `packages/agent-core`.
 2. Confirm the production `/api/health` and `/api/agent` routes.
 3. Exercise an approved and a declined task against a disposable Git repository.
-4. Build with `npm run pack:win` on Windows.
-5. Sign the installer and portable executable, scan them, and test on a clean Windows VM.
-6. Publish the two artifacts to the matching GitHub Release.
+4. Build with `npm run pack:win` on Windows and `npm run pack:linux` on Linux.
+5. Sign the installer/portable/AppImage/deb artifacts, scan them, and smoke-test on clean machines.
+6. Publish the artifacts to the matching GitHub Release.
 
 No binaries were built or downloaded as part of this scaffold.
