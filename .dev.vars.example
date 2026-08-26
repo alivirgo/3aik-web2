@@ -1,0 +1,8 @@
+# Local Wrangler secrets for 3aik development.
+# Copy to `.dev.vars` (gitignored) and fill in only what you need.
+# Never commit real values.
+
+POLLINATIONS_API_KEY=
+OPENAI_API_KEY=
+AIORNOT_API_KEY=
+LTX_API_KEY=

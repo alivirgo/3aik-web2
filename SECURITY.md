@@ -11,11 +11,14 @@ The hosted `/api/agent` endpoint only chooses between text and tool calls. It ca
 ## Secrets
 
 - Do not place API keys, credentials, private keys, `.env` contents, or unrelated personal files in prompts.
+- Never commit `.env`, `.dev.vars`, keystores, or private keys. Use `.dev.vars.example` / `.env.example` with empty placeholders only.
+- Provider keys for local Worker development belong in gitignored `.dev.vars` or Cloudflare Workers secrets—not in source.
 - Local-model API keys are optional. The desktop client uses operating-system encryption when available and otherwise keeps the key in memory only.
 - A 3aik device ID is a random rate-limit identifier, not an authentication secret.
 - Local provider mode does not send model prompts to `3aik.com`.
+- CI runs Gitleaks on pushes and pull requests to `main`. If a secret is ever committed, rotate it at the provider immediately and scrub history before treating the repo as clean.
 
-## Android boundary
+## Reporting a vulnerability
 
 The Android client is a constrained WebView for the exact production HTTPS origin. It rejects TLS errors and cleartext traffic, denies web camera/microphone/location requests, disables WebView file/content access, and uses a narrowly scoped message channel only for a user-initiated bounded `blob:` export. It does not expose a general JavaScript-to-native interface. External links leave the app only after confirmation.
 
