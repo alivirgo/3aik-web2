@@ -40,6 +40,7 @@
   "build": {
     "appId": "com.3aik.desktop",
     "productName": "3aik",
+    "executableName": "3aik",
     "copyright": "Copyright © 2026 3aik",
     "asar": true,
     "compression": "maximum",

@@ -21,6 +21,7 @@ test('Windows packaging is branded, licensed, and aligned to v3', () => {
 });
 
 test('Linux packaging ships AppImage and deb with publish disabled', () => {
+  assert.equal(manifest.build.executableName, '3aik');
   assert.equal(manifest.build.linux.icon, 'build-resources/icon.svg');
   assert.equal(manifest.build.linux.category, 'Development');
   assert.deepEqual(manifest.build.linux.target.map((entry) => entry.target), ['AppImage', 'deb']);
