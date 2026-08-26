@@ -135,9 +135,9 @@ npm run smoke:production -- https://3aik.com
 
 ## Release
 
-Tags matching `v*` run the release workflow. It verifies that every package version matches the tag; verifies the Android package, app label, `versionName`, and calculated `versionCode`; installs the packed CLI into a clean directory; builds Windows, Linux, and Android artifacts; creates SHA-256 checksums; and publishes a GitHub Release. Cloudflare deployment remains connected to the `main` branch.
+Tags matching `v*` run the release workflow. It verifies that package versions match the tag, installs the packed CLI into a clean directory, builds Windows and Linux desktop artifacts, creates SHA-256 checksums, and publishes a GitHub Release. Android packaging is deferred and is not part of this release pipeline. Cloudflare deployment remains connected to the `main` branch.
 
-Local desktop builds use `--publish never`. Release binaries remain unsigned until CI is supplied with an Authenticode certificate. Android packaging is best-effort in the release workflow so CLI and desktop assets can still publish if the Android job fails.
+Local desktop builds use `--publish never`. Release binaries remain unsigned until CI is supplied with an Authenticode certificate.
 
 Android signing uses the protected `android-release` GitHub Environment. Configure all five environment secrets together: `THREEAIK_UPLOAD_KEYSTORE_BASE64`, `THREEAIK_UPLOAD_KEY_ALIAS`, `THREEAIK_UPLOAD_STORE_PASSWORD`, `THREEAIK_UPLOAD_KEY_PASSWORD`, and `THREEAIK_UPLOAD_CERT_SHA256`. The last value is the upload certificate's 64-hex-digit SHA-256 fingerprint, with optional colons. Partial configuration fails the release. With no signing secrets, the workflow succeeds only with a conspicuously named `UNSIGNED-NOT-FOR-PLAY.aab`; it never presents that fallback as Play-ready. The release also includes the R8 mapping, Android-specific hashes, and a certificate/status report. See [apps/android/RELEASE.md](apps/android/RELEASE.md) before any Play upload.
 

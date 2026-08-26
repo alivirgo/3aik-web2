@@ -6,8 +6,7 @@
 - Run agent-core, CLI, and desktop checks from clean installs.
 - Install the packed CLI into a fresh temporary npm prefix and run `3aik --version`, `3aik doctor --json`, and mocked cloud/local provider tests.
 - Build Windows NSIS/portable and Linux AppImage/deb desktop artifacts.
-- On JDK 17 with Android API 36/build-tools 36.0.0, run Android unit tests, fatal release lint, the debug APK build, and `bundleRelease`.
-- Confirm ordinary CI's AAB has no `META-INF/*.RSA`, `*.DSA`, or `*.EC` signature block and is named `CI-UNSIGNED-NOT-FOR-PLAY`.
+- Android packaging is deferred; do not block CLI/desktop releases on the Android job.
 - Confirm denied approvals produce no filesystem change and path/symlink escape fixtures fail closed.
 - Scan distributable dependency trees with `npm audit --omit=dev --audit-level=high`.
 - Review `docs/operations.md`, confirm Workers Paid model entitlements, and configure usage notifications before enabling public traffic.
