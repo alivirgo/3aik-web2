@@ -1,3 +1,5 @@
+[![Hits](https://hits.sh/github.com/alivirgo/3aik-web2.svg)](https://hits.sh/github.com/alivirgo/3aik-web2/)
+
 # 3aik v3
 
 3aik is a no-login AI workspace for the web, terminal, Windows desktop, and Android. The web app provides streamed chat, deeper reasoning, coding help, image generation, multimodal attachments, branching, and portable local history. The downloadable coding agent can inspect and change a selected project with explicit local approvals.
