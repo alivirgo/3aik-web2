@@ -245,7 +245,11 @@ export async function handleStatsRequest(request: Request, env: Env): Promise<Re
 			const raw = await env.NUC7_STATS.get(key);
 			const current = raw ? parseInt(raw, 10) : 0;
 			count = Number.isSafeInteger(current) && current >= 0 ? current + 1 : 1;
-			await env.NUC7_STATS.put(key, count.toString());
+			try {
+				await env.NUC7_STATS.put(key, count.toString());
+			} catch (putError) {
+				console.warn("[Stats] KV put limit reached or write failed; serving count", putError);
+			}
 		} else {
 			count = 1;
 		}
