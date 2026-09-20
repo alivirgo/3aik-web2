@@ -39,6 +39,9 @@ export const MODELS = {
 		candidates: [
 			{ id: "@cf/moonshotai/kimi-k2.6", label: "Kimi K2.6" },
 			{ id: "@cf/meta/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout" },
+			{ id: "@cf/google/gemma-4-26b-a4b-it", label: "Gemma 4 26B" },
+			{ id: "@cf/qwen/qwen3-30b-a3b-fp8", label: "Qwen 3 30B" },
+			{ id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", label: "Llama 3.3 70B" },
 		] satisfies ModelCandidate[],
 		systemPrompt:
 			"You are 3aik, a rigorous and practical AI collaborator. Solve the user's actual task, ask only when a missing choice materially changes the outcome, and state uncertainty clearly. Be concise by default, but provide enough detail to be genuinely useful. Use clean Markdown when structure helps. Never claim to have searched, opened a file, executed code, or taken an external action unless the conversation includes evidence that it happened.",
@@ -48,8 +51,13 @@ export const MODELS = {
 		label: "3aik Reasoning",
 		description: "Deliberate analysis with an automatic frontier-model cascade",
 		candidates: [
-			{ id: "@cf/zai-org/glm-5.2", label: "GLM 5.2" },
+			{ id: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", label: "DeepSeek R1" },
+			{ id: "@cf/qwen/qwq-32b", label: "QwQ 32B" },
 			{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B" },
+			{ id: "@cf/nvidia/nemotron-3-120b-a12b", label: "Nemotron 3 120B" },
+			{ id: "@cf/zai-org/glm-5.2", label: "GLM 5.2" },
+			{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash" },
+			{ id: "@cf/openai/gpt-oss-20b", label: "GPT OSS 20B" },
 		] satisfies ModelCandidate[],
 		systemPrompt:
 			"You are 3aik in deep reasoning mode. Analyze difficult questions carefully, check assumptions, distinguish facts from inference, explore meaningful alternatives, and then give a clear answer with a concise rationale. Never reveal hidden chain-of-thought or private scratch work; provide useful conclusions and verifiable reasoning instead.",
@@ -60,9 +68,11 @@ export const MODELS = {
 		description: "Current coding models for implementation, debugging, and review",
 		candidates: [
 			{ id: "@cf/moonshotai/kimi-k2.7-code", label: "Kimi K2.7 Code" },
-			{ id: "@cf/zai-org/glm-5.2", label: "GLM 5.2" },
-			{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash" },
 			{ id: "@cf/qwen/qwen2.5-coder-32b-instruct", label: "Qwen 2.5 Coder 32B" },
+			{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash" },
+			{ id: "@cf/meta/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout" },
+			{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B" },
+			{ id: "@cf/zai-org/glm-5.2", label: "GLM 5.2" },
 		] satisfies ModelCandidate[],
 		systemPrompt:
 			"You are 3aik in coding mode, a meticulous senior software engineer. Prefer correct, secure, maintainable solutions grounded in the supplied code and constraints. Diagnose root causes, preserve unrelated behavior, call out important tradeoffs, and include complete runnable code when requested. Use fenced Markdown code blocks with a language label.",
@@ -72,14 +82,17 @@ export const MODELS = {
 
 const AGENT_MODELS: ModelCandidate[] = [
 	{ id: "@cf/moonshotai/kimi-k2.7-code", label: "Kimi K2.7 Code" },
-	{ id: "@cf/zai-org/glm-5.2", label: "GLM 5.2" },
+	{ id: "@cf/qwen/qwen2.5-coder-32b-instruct", label: "Qwen 2.5 Coder 32B" },
 	{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash" },
 	{ id: "@cf/meta/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout" },
+	{ id: "@cf/zai-org/glm-5.2", label: "GLM 5.2" },
 ];
 
 const IMAGE_MODELS = [
 	{ id: "@cf/black-forest-labs/flux-2-klein-9b", label: "FLUX.2 Klein 9B", multipart: true },
 	{ id: "@cf/black-forest-labs/flux-1-schnell", label: "FLUX.1 Schnell", multipart: false },
+	{ id: "@cf/black-forest-labs/flux-2-dev", label: "FLUX.2 Dev", multipart: true },
+	{ id: "@cf/leonardo/phoenix-1.0", label: "Phoenix 1.0", multipart: false },
 ] as const;
 
 const AGENT_SYSTEM_PROMPT = `You are 3aik Agent, a careful coding agent operating through tools executed on the user's own computer.
@@ -169,6 +182,11 @@ export default {
 				return await handleDownloadCount();
 			}
 
+			if (url.pathname === "/api/stats") {
+				if (request.method !== "GET") return methodNotAllowed(["GET"]);
+				return await handleStatsRequest(request, env);
+			}
+
 			if (url.pathname === "/api/agent") {
 				if (request.method !== "POST") return methodNotAllowed(["POST"]);
 				const limited = await enforceRateLimit(request, env.AGENT_RATE_LIMITER);
@@ -216,6 +234,25 @@ async function handleDownloadCount(): Promise<Response> {
 	} catch (error) {
 		console.error("[Downloads] GitHub release count failed", error);
 		return problem(502, "download_count_unavailable", "The verified download count is temporarily unavailable.");
+	}
+}
+
+export async function handleStatsRequest(request: Request, env: Env): Promise<Response> {
+	try {
+		const key = "visitor_count";
+		let count = 0;
+		if (env.NUC7_STATS) {
+			const raw = await env.NUC7_STATS.get(key);
+			const current = raw ? parseInt(raw, 10) : 0;
+			count = Number.isSafeInteger(current) && current >= 0 ? current + 1 : 1;
+			await env.NUC7_STATS.put(key, count.toString());
+		} else {
+			count = 1;
+		}
+		return apiJson({ count });
+	} catch (error) {
+		console.error("[Stats] Failed to record or fetch visitor count", error);
+		return apiJson({ count: 0, error: "Stats unavailable" });
 	}
 }
 

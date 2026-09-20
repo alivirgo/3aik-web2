@@ -330,6 +330,45 @@ kbd {
 
 .thread-empty { margin: 14px 10px; color: var(--text-muted); font-size: 11px; }
 .sidebar-footer { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.visitor-counter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  margin: 0 4px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-soft);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.visitor-counter:hover {
+  background: color-mix(in srgb, var(--accent-soft) 120%, transparent);
+  border-color: var(--accent);
+}
+.visitor-counter .visitor-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.visitor-counter strong {
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+.footer-models {
+  margin: 0 6px 10px;
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
 .privacy-note { gap: 10px; padding: 7px 9px 12px; }
 .privacy-note svg { width: 18px; color: var(--accent); }
 .privacy-note span { display: flex; flex-direction: column; }

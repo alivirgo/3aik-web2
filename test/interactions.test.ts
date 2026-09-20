@@ -32,6 +32,11 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       headers: { "content-type": "application/json" },
     });
   }
+  if (url.endsWith("/api/stats")) {
+    return new Response(JSON.stringify({ count: 42 }), {
+      headers: { "content-type": "application/json" },
+    });
+  }
   if (url.endsWith("/api/chat")) {
     return new Response('data: {"response":"Hello **world**, *fresh emphasis*, and ~~old text~~.\\n\\n| A | B |\\n| --- | ---: |\\n| one | two |\\n\\n- [x] Safe task\\n\\n---\\n\\n<img src=x onerror=alert(1)>"}\n\n', {
       headers: { "content-type": "text/event-stream", "x-3aik-model": "@cf/meta/llama-4-scout-17b-16e-instruct" },

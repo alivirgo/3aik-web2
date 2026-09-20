@@ -59,6 +59,7 @@ beforeAll(async () => {
     const url = String(input);
     if (url.endsWith("/api/health")) return new Response(JSON.stringify({ status: "ready" }), { headers: { "content-type": "application/json" } });
     if (url.endsWith("/api/downloads")) return new Response(JSON.stringify({ total: 0, source: "github_releases" }), { headers: { "content-type": "application/json" } });
+    if (url.endsWith("/api/stats")) return new Response(JSON.stringify({ count: 42 }), { headers: { "content-type": "application/json" } });
     throw new Error(`Unexpected fetch: ${url}`);
   }));
   Object.defineProperty(window, "confirm", { value: vi.fn(() => true), configurable: true });

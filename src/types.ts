@@ -4,6 +4,7 @@ export interface Env {
 	CHAT_RATE_LIMITER?: RateLimit;
 	IMAGE_RATE_LIMITER?: RateLimit;
 	AGENT_RATE_LIMITER?: RateLimit;
+	NUC7_STATS?: KVNamespace;
 }
 
 export interface TextContentPart {

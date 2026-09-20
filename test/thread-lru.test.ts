@@ -34,6 +34,7 @@ beforeAll(async () => {
     const url = String(input);
     if (url.endsWith("/api/health")) return Response.json({ status: "ready" });
     if (url.endsWith("/api/downloads")) return Response.json({ total: 0, source: "github_releases" });
+    if (url.endsWith("/api/stats")) return Response.json({ count: 42 });
     if (url.endsWith("/api/chat")) {
       return new Response('data: {"response":"answer"}\n\n', { headers: { "content-type": "text/event-stream" } });
     }

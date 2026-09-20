@@ -50,8 +50,9 @@ beforeAll(async () => {
   }));
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const url = String(input);
-    if (url.endsWith("/api/health")) return Response.json({ status: "ready" });
-    if (url.endsWith("/api/downloads")) return Response.json({ total: 0, source: "github_releases" });
+    if (url.endsWith("/api/health")) return new Response(JSON.stringify({ status: "ready" }), { headers: { "content-type": "application/json" } });
+    if (url.endsWith("/api/downloads")) return new Response(JSON.stringify({ total: 0, source: "github_releases" }), { headers: { "content-type": "application/json" } });
+    if (url.endsWith("/api/stats")) return new Response(JSON.stringify({ count: 42 }), { headers: { "content-type": "application/json" } });
     if (url.endsWith("/api/chat")) {
       const request = JSON.parse(String(options?.body || "{}"));
       const prompt = request.messages?.at(-1)?.content;

@@ -161,4 +161,40 @@ describe("worker API", () => {
     expect(response.status).toBe(413);
     expect(await response.json()).toMatchObject({ error: { code: "payload_too_large" } });
   });
+
+  it("increments and reports real-time visitor count using NUC7_STATS KV", async () => {
+    let stored = "41";
+    const kv = {
+      get: vi.fn(async (key: string) => (key === "visitor_count" ? stored : null)),
+      put: vi.fn(async (key: string, value: string) => {
+        if (key === "visitor_count") stored = value;
+      }),
+    };
+    const env = {
+      ...environment(() => ({})),
+      NUC7_STATS: kv,
+    } as never;
+
+    const response = await worker.fetch(new Request("https://3aik.test/api/stats", { method: "GET" }), env);
+    expect(response.status).toBe(200);
+    const data = await response.json() as { count: number };
+    expect(data.count).toBe(42);
+    expect(kv.get).toHaveBeenCalledWith("visitor_count");
+    expect(kv.put).toHaveBeenCalledWith("visitor_count", "42");
+  });
+
+  it("gracefully falls back when NUC7_STATS KV is unavailable", async () => {
+    const env = environment(() => ({}));
+    const response = await worker.fetch(new Request("https://3aik.test/api/stats", { method: "GET" }), env);
+    expect(response.status).toBe(200);
+    const data = await response.json() as { count: number };
+    expect(data.count).toBe(1);
+  });
+
+  it("rejects non-GET requests to /api/stats with 405 Method Not Allowed", async () => {
+    const env = environment(() => ({}));
+    const response = await worker.fetch(new Request("https://3aik.test/api/stats", { method: "POST" }), env);
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET");
+  });
 });

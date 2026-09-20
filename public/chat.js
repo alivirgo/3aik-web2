@@ -153,6 +153,8 @@ const elements = {
   copyCliCommand: document.querySelector("#copy-cli-command"),
   downloadCount: document.querySelector("#download-count"),
   sidebarDownloadCount: document.querySelector("#sidebar-download-count"),
+  visitorCounter: document.querySelector("#visitor-counter"),
+  visitorCount: document.querySelector("#visitor-count"),
   mediaDialog: document.querySelector("#media-dialog"),
   mediaModel: document.querySelector("#media-model"),
   mediaPreview: document.querySelector("#media-preview"),
@@ -214,6 +216,7 @@ function initialize() {
   updateComposerState();
   checkHealth();
   checkDownloads();
+  updateVisitorCount();
   hydrateHistoryFromDatabase();
 }
 
@@ -1748,6 +1751,20 @@ async function checkDownloads() {
     elements.downloadCount.title = "GitHub download count is temporarily unavailable";
     elements.sidebarDownloadCount.textContent = "Verified download count unavailable";
     elements.sidebarDownloadCount.title = elements.downloadCount.title;
+  }
+}
+
+async function updateVisitorCount() {
+  try {
+    const response = await fetch("/api/stats", { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    if (elements.visitorCount && Number.isSafeInteger(data.count) && data.count > 0) {
+      elements.visitorCount.textContent = new Intl.NumberFormat().format(data.count);
+      elements.visitorCount.title = `${data.count} total verified human visitors recorded`;
+    }
+  } catch (error) {
+    console.warn("[Stats] Visitor counter unavailable:", error);
   }
 }
 
