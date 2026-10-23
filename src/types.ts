@@ -5,6 +5,12 @@ export interface Env {
 	IMAGE_RATE_LIMITER?: RateLimit;
 	AGENT_RATE_LIMITER?: RateLimit;
 	NUC7_STATS?: KVNamespace;
+	AI_NEWS_DB?: D1Database;
+	AI_NEWS_IMAGES?: R2Bucket;
+	AI_NEWS_ARTICLES_PER_HOUR?: string;
+	AI_NEWS_PUBLISHING?: string;
+	AI_NEWS_SITE_ORIGIN?: string;
+	INDEXNOW_KEY?: string;
 }
 
 export interface TextContentPart {

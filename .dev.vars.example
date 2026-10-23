@@ -2,6 +2,10 @@
 # Copy to `.dev.vars` (gitignored) and fill in only what you need.
 # Never commit real values.
 
+# Optional hex key (8 to 128 letters, numbers, or hyphens) for IndexNow pings.
+# Leave blank to publish without pings. The worker serves https://3aik.com/<key>.txt itself.
+INDEXNOW_KEY=
+
 POLLINATIONS_API_KEY=
 OPENAI_API_KEY=
 AIORNOT_API_KEY=

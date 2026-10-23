@@ -1,3 +1,4 @@
+import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -134,6 +135,11 @@ export default {
 		const url = new URL(request.url);
 
 		try {
+			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
+				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+				return handleNewsRequest(request, env);
+			}
+
 			if (url.pathname === "/privacy" || url.pathname === "/privacy/") {
 				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
 				const privacyAsset = new URL("/privacy/index.html", request.url);
@@ -208,6 +214,11 @@ export default {
 			console.error("[Worker] Unexpected request failure", error);
 			return problem(500, "internal_error", "Something went wrong. Please try again.");
 		}
+	},
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+		const job = publishScheduled(env, controller);
+		ctx.waitUntil(job);
+		await job;
 	},
 } satisfies ExportedHandler<Env>;
 
