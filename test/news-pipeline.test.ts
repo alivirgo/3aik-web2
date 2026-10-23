@@ -290,6 +290,53 @@ describe("publish cycle", () => {
 		})).toHaveLength(1);
 	});
 
+	it("keeps publishing when an article mentions 3036", async () => {
+		const { deps, repo, writeDraft } = harness({ rate: "4" });
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== feed!.url) return new Response("no", { status: 404 });
+			const items = ["one", "two"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+			return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+				status: 200,
+				headers: { "content-type": "application/rss+xml" },
+			});
+		});
+		let call = 0;
+		writeDraft.mockImplementation(async () => {
+			call += 1;
+			const body = draft();
+			if (call > 1) {
+				body.title = "Harbor lights, retold without adding prices or dates";
+				body.description = "The outlet reported a harbor note. This brief stays inside that note and does not add names, prices, or a scoreboard.";
+				body.paragraphs = body.paragraphs.map((paragraph) => paragraph
+					.replaceAll("product", "harbor")
+					.replaceAll("excerpt", "harbor text")
+					.replaceAll("limit", "boundary")
+					.replaceAll("names", "labels")
+					.replaceAll("price", "cost")
+					.replaceAll("date", "day")
+					.replaceAll("rollout", "launch")
+					.replaceAll("blanks", "gaps")
+					.replaceAll("figure", "amount")
+					.replaceAll("link", "source")
+					.replaceAll("retelling", "rewrite")
+					.replaceAll("pass", "round"));
+				body.keyPoints = body.keyPoints.map((point) => point.replaceAll("product", "harbor").replaceAll("names", "labels").replaceAll("price", "cost"));
+			}
+			body.paragraphs[0] = `${body.paragraphs[0]} Code 3036 stays a number in the note.`;
+			return { text: JSON.stringify(body), model: "dry-run" };
+		});
+		const report = await runPublishCycle(deps);
+		expect(report.published).toHaveLength(2);
+		expect(writeDraft).toHaveBeenCalledTimes(2);
+		expect(repo.articles.every((article) => article.bodyText.includes("3036"))).toBe(true);
+	});
+
 	it("stops the tick on the daily neuron cap without rejecting the source", async () => {
 		const { deps, repo, writeDraft } = harness();
 		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {

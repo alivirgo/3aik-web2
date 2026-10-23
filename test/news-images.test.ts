@@ -185,7 +185,12 @@ describe("GitHub image storage", () => {
 		expect(image.contentType).toBe("image/jpeg");
 		expect(ai.run).toHaveBeenCalledTimes(2);
 		expect(ai.run.mock.calls[0]?.[0]).toBe("@cf/black-forest-labs/flux-1-schnell");
+		expect(ai.run.mock.calls[0]?.[1]).toEqual({
+			prompt: expect.stringContaining("stacked paper shapes"),
+			steps: 4,
+		});
 		expect(ai.run.mock.calls[1]?.[0]).toBe("@cf/black-forest-labs/flux-2-klein-9b");
+		expect(ai.run.mock.calls[1]?.[1]).toHaveProperty("multipart");
 	});
 
 	it("stops on Workers AI error 3036 instead of calling the next image model", async () => {

@@ -140,8 +140,8 @@ Text, in order, via the existing `AI` binding. These models are available on the
 
 Image, cheapest first on the Free plan:
 
-1. `@cf/black-forest-labs/flux-1-schnell` (about 58 neurons, 1024 square)
-2. `@cf/black-forest-labs/flux-2-klein-9b` (about 1,364 neurons, multipart prompt, 1024 square)
+1. `@cf/black-forest-labs/flux-1-schnell` (about 58 neurons). The call sends `prompt` and `steps` only.
+2. `@cf/black-forest-labs/flux-2-klein-9b` (about 1,364 neurons, multipart prompt, width and height 1024)
 
 Workers AI error 3036 means the daily free neuron allocation is used up. That error stops the tick. The desk does not call the next model and does not start another story. Checked against the Workers AI catalog (gpt-oss-120b, GLM 4.7 Flash, Gemma 4 26B A4B, FLUX.1 Schnell, FLUX.2 Klein 9B). Illustrations are abstract. Prompts are rejected if they ask for a person, a face, or a logo. No extra API key is required for Workers AI.
 

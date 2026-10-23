@@ -36,29 +36,41 @@ function describeUnknown(error: unknown): string {
 	if (error instanceof Error) return error.message;
 	if (error && typeof error === "object") {
 		const record = error as Record<string, unknown>;
-		if (typeof record.message === "string") return record.message;
-		try {
-			return JSON.stringify(error);
-		} catch {
-			return String(error);
-		}
+		if (typeof record.message === "string") return record.message.slice(0, 500);
+		const code = record.code ?? record.error_code ?? record.internalCode ?? record.errorCode;
+		if (typeof code === "string" || typeof code === "number") return String(code);
 	}
 	return String(error);
 }
 
-/** Workers AI 3036: the account has used its daily free neuron allocation. */
+const NEURON_CAP_MESSAGE = /\b3036\b|daily free allocation of 10,000 neurons/i;
+
+function neuronCapCode(value: unknown): boolean {
+	return value === 3036 || value === "3036";
+}
+
+/**
+ * Workers AI 3036 is the daily free neuron cap. Only error-shaped values are
+ * inspected. A successful article or image body that happens to contain 3036
+ * is not a cap, and it is not serialized.
+ */
 export function isNeuronCap(error: unknown): boolean {
-	if (error instanceof Error && error.message === "neuron_cap") return true;
-	if (error && typeof error === "object") {
-		const record = error as Record<string, unknown>;
-		for (const key of ["code", "error_code", "internalCode", "errorCode"]) {
-			const code = record[key];
-			if (code === 3036 || code === "3036") return true;
-		}
-		if (record.error && record.error !== error && isNeuronCap(record.error)) return true;
+	if (typeof error === "string") return error === "neuron_cap";
+	if (error instanceof Error) {
+		if (error.message === "neuron_cap" || NEURON_CAP_MESSAGE.test(error.message)) return true;
+		const coded = error as Error & Record<string, unknown>;
+		return ["code", "error_code", "internalCode", "errorCode"].some((key) => neuronCapCode(coded[key]));
 	}
-	const message = describeUnknown(error);
-	return /\b3036\b/.test(message) || /daily free allocation of 10,000 neurons/i.test(message);
+	if (!error || typeof error !== "object") return false;
+	const record = error as Record<string, unknown>;
+	const errorShaped = record.success === false
+		|| Array.isArray(record.errors)
+		|| ["code", "error_code", "internalCode", "errorCode"].some((key) => key in record);
+	if (!errorShaped) return false;
+	if (["code", "error_code", "internalCode", "errorCode"].some((key) => neuronCapCode(record[key]))) return true;
+	if (typeof record.message === "string" && (record.message === "neuron_cap" || NEURON_CAP_MESSAGE.test(record.message))) return true;
+	if (Array.isArray(record.errors) && record.errors.some((item) => item !== error && isNeuronCap(item))) return true;
+	return record.error !== undefined && record.error !== error && isNeuronCap(record.error);
 }
 
 function runAi(ai: Ai, model: string, inputs: unknown): Promise<unknown> {
@@ -469,8 +481,6 @@ export async function generateIllustration(
 				result = await withTimeout(runAi(ai, model.id, {
 					prompt: safePrompt,
 					steps: 4,
-					width: 1024,
-					height: 1024,
 				}), budget.imageTimeoutMs);
 			}
 			const bytes = await imageBytes(result);

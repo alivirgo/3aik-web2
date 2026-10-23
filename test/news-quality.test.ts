@@ -3,7 +3,7 @@ import { AUTHORS, authorsIn, pickAuthor, pickCategory } from "../src/news/author
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, MIN_LOCK_TTL_MS, TEXT_MAX_TOKENS, TEXT_MODELS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
-import { buildArticlePrompt, extractModelText, generateDraftText, parseArticleDraft, rejectionRepair, withTimeout } from "../src/news/model";
+import { buildArticlePrompt, extractModelText, generateDraftText, isNeuronCap, parseArticleDraft, rejectionRepair, withTimeout } from "../src/news/model";
 import { assessDraft, copiedFromSource, slopHits } from "../src/news/quality";
 import type { ArticleDraft, Category, QualityCorpusItem, SourceRef } from "../src/news/types";
 import { TINY_PNG, casedTokens, escapeMarkdown, forbiddenDash, imageLimitReason, normalizeSourceUrl, stripEditorialDashes, words } from "../src/news/text";
@@ -408,6 +408,25 @@ describe("schedule math and model parsing", () => {
 		})).rejects.toThrow("neuron_cap");
 		expect(ai.run).toHaveBeenCalledTimes(1);
 		expect(ai.run.mock.calls[0]?.[0]).toBe("@cf/openai/gpt-oss-120b");
+	});
+
+	it("does not treat 3036 inside a successful article or image as the neuron cap", async () => {
+		const article = "The desk kept code 3036 in the sentence and did not stop.";
+		const image = `${"A".repeat(80_000)}3036${"B".repeat(80_000)}`;
+		expect(isNeuronCap({ response: article, image })).toBe(false);
+		expect(isNeuronCap({ success: false, errors: [{ code: 3036, message: "Account limited" }] })).toBe(true);
+		expect(isNeuronCap({ success: false, message: "You have used up your daily free allocation of 10,000 neurons." })).toBe(true);
+		const ai = {
+			run: vi.fn(async () => ({ response: article, image })),
+		};
+		const written = await generateDraftText(ai as never, "Be brief.", "Write the bulletin.", {
+			takeText: () => true,
+			takeImage: () => false,
+			textTimeoutMs: 1_000,
+			imageTimeoutMs: 1_000,
+		});
+		expect(written.text).toContain("3036");
+		expect(ai.run).toHaveBeenCalledTimes(1);
 	});
 
 	it("rejects an oversized illustration and times out a stalled call", async () => {
