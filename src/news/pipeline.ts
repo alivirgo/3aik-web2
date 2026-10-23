@@ -30,7 +30,7 @@ import {
 	githubImagePath,
 	isGitHubImagePath,
 } from "./github-images";
-import { buildArticlePrompt, generateDraftText, generateIllustration, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
+import { buildArticlePrompt, generateDraftText, generateIllustration, isNeuronCap, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
 import { assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
 import type { ArticleDraft, AuthorPersona, Category, RelatedLink, SourceRef, StoredArticle, StoryItem } from "./types";
@@ -167,10 +167,12 @@ async function draftStory(
 			model = written.model;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			if (message === "text_budget" || message === "ai_timeout" || budget.expired()) budget.stop = true;
-			if (message !== "text_budget") tried = true;
+			const neuronCap = message === "neuron_cap" || isNeuronCap(error);
+			if (message === "text_budget" || message === "ai_timeout" || neuronCap || budget.expired()) budget.stop = true;
+			if (neuronCap) tried = false;
+			else if (message !== "text_budget") tried = true;
 			console.error(JSON.stringify({ message: "ai-news draft failed", error: message }));
-			const reason = message === "text_budget" ? "budget" : message === "ai_timeout" ? "timeout" : "model";
+			const reason = neuronCap ? "neuron_cap" : message === "text_budget" ? "budget" : message === "ai_timeout" ? "timeout" : "model";
 			return stop(reason, false);
 		}
 		const parsed = parseArticleDraft(text);
@@ -236,9 +238,11 @@ async function storeIllustration(
 			image = await generateIllustration(deps.env.AI as Ai, prompt, budget);
 		}
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message === "neuron_cap" || isNeuronCap(error)) budget.stop = true;
 		console.error(JSON.stringify({
 			message: "ai-news image failed",
-			error: error instanceof Error ? error.message : String(error),
+			error: message,
 		}));
 		return EMPTY_PICTURE;
 	}

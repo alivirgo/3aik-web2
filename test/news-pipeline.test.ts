@@ -290,6 +290,60 @@ describe("publish cycle", () => {
 		})).toHaveLength(1);
 	});
 
+	it("stops the tick on the daily neuron cap without rejecting the source", async () => {
+		const { deps, repo, writeDraft } = harness();
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== feed!.url) return new Response("no", { status: 404 });
+			const items = ["one", "two"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+			return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+				status: 200,
+				headers: { "content-type": "application/rss+xml" },
+			});
+		});
+		writeDraft.mockRejectedValue(new Error("neuron_cap"));
+		const report = await runPublishCycle(deps);
+		expect(report.published).toEqual([]);
+		expect(writeDraft).toHaveBeenCalledTimes(1);
+		expect(await repo.isRejected("https://example.com/one", now.toISOString())).toBe(false);
+		expect(await repo.isRejected("https://example.com/two", now.toISOString())).toBe(false);
+	});
+
+	it("publishes the current article with no image and does not start another story after error 3036", async () => {
+		const { deps, repo, writeDraft, paint } = harness({ rate: "4", token: "ghp-test" });
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === feed!.url) {
+				const items = ["one", "two"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+				return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+					status: 200,
+					headers: { "content-type": "application/rss+xml" },
+				});
+			}
+			if (url.startsWith("https://api.github.com/")) {
+				return new Response("{}", { status: 500, headers: { "x-ratelimit-remaining": "4000" } });
+			}
+			return new Response("no", { status: init ? 404 : 404 });
+		});
+		paint.mockRejectedValue(new Error("3036: You have used up your daily free allocation of 10,000 neurons."));
+		const report = await runPublishCycle(deps);
+		expect(report.published).toHaveLength(1);
+		expect(writeDraft).toHaveBeenCalledTimes(1);
+		expect(paint).toHaveBeenCalledTimes(1);
+		expect((await repo.getBySlug(report.published[0] ?? ""))?.imageKey).toBe("");
+		expect(await repo.isRejected("https://example.com/two", now.toISOString())).toBe(false);
+	});
+
 	it("stops when the wall clock is exhausted", async () => {
 		const { deps, writeDraft } = harness();
 		deps.env.AI_NEWS_WALL_MS = "45000";

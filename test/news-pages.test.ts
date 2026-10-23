@@ -59,7 +59,10 @@ describe("news pages", () => {
 		expect(html).not.toMatch(/<script[^>]+src=/i);
 
 		const about = await handleNewsRequest(new Request("https://3aik.test/ai-news/about"), env, { repo: null });
-		expect(await about.text()).toContain("not real people");
+		const aboutHtml = await about.text();
+		expect(aboutHtml).toContain("not real people");
+		expect(aboutHtml).toContain("automatically checked against source and quality rules");
+		expect(aboutHtml).not.toContain("editorially checked");
 		const disclaimer = await handleNewsRequest(new Request("https://3aik.test/ai-news/disclaimer"), env, { repo: null });
 		expect(await disclaimer.text()).toContain(ACCURACY_DISCLAIMER);
 	});
@@ -89,6 +92,8 @@ describe("news pages", () => {
 		expect(html).toContain("TL;DR");
 		expect(html).toContain("https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model");
 		expect(html).toContain("Mira Ellison is an editorial persona, not a real person.");
+		expect(html).toContain("automatically checked against source and quality rules before publishing");
+		expect(html).not.toContain("editorially checked");
 		expect(html).toContain(ACCURACY_DISCLAIMER);
 		expect(html).toContain("AI-generated");
 		expect(html).toContain('"@type":"Organization"');

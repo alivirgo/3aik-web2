@@ -80,7 +80,7 @@ Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `AI_NEWS_TEXT_CALLS_PER_ARTICLE` | 6 | Text `AI.run` calls per article slot this tick. A 3-model cascade counts one call per model. |
-| `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 2 | Image calls per slot. The budget is at least the two configured image models, so the FLUX.1 Schnell fallback still runs when the hourly rate is 1. |
+| `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 2 | Image calls per slot. The budget is at least the two configured image models, so the FLUX.2 Klein 9B fallback still runs when the hourly rate is 1. Schnell is first (about 58 neurons). Klein is about 1,364. |
 | `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
 | `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, and timeout failures block it for 1 hour. A missing image, a failed image model, or a failed GitHub commit does not block the source: the article publishes with no picture. |
 | `AI_NEWS_WALL_MS` | 300000 | Stop starting new work after this much wall time. Values above 900000 are clamped. A scheduled handler may run for 15 minutes. |
@@ -92,7 +92,7 @@ The run budget is the per-article number times the slots for that tick, clamped 
 
 Each `AI.run` passes `{ rejectIfBusy: true }`, so a busy model fails instead of waiting in a capacity queue. The desk also stops waiting after the per-call timeout. That timer does not cancel inference that has already started, so a timed-out call may still be billed.
 
-The publish lock is taken before retention pruning and is still held when the model clock starts. It lasts longer than pruning (five GitHub deletes, two timed requests each, plus the pause between them), longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
+The publish lock is taken before retention pruning and is still held when the model clock starts. It lasts at least 900 seconds, the scheduled-handler limit. It is also longer than pruning (five GitHub deletes, two timed requests each, plus the pause between them), longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds, when that sum is greater.
 
 Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20. The D1 row is deleted first, then the GitHub file, so a failed image delete cannot leave a story that points at a missing file. Lifetime author counters stay, so rotation does not restart. To clean by hand:
 
@@ -102,7 +102,7 @@ DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
 DELETE FROM source_rejections WHERE expires_at <= datetime('now');
 ```
 
-Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. A PNG from an image model is not stored: the desk tries the next image model inside the same image budget. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
+Delete the matching `images/YYYY/MM/<slug>-<8-char-id>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. A PNG from an image model is not stored: the desk tries the next image model inside the same image budget. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
 
 A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image. A network error during that lookup is caught inside the upload, so the draft is kept and the article still publishes with no image.
 
@@ -138,12 +138,12 @@ Text, in order, via the existing `AI` binding. These models are available on the
 
 `@cf/moonshotai/kimi-k2.6` is not in the chain. On the Workers Free plan it returns error 5035 and never writes a draft. Streaming is not used: the desk needs the whole JSON object before it can publish, so a stream would not shorten the wait.
 
-Image:
+Image, cheapest first on the Free plan:
 
-1. `@cf/black-forest-labs/flux-2-klein-9b` (multipart prompt, 1024 square)
-2. `@cf/black-forest-labs/flux-1-schnell`
+1. `@cf/black-forest-labs/flux-1-schnell` (about 58 neurons, 1024 square)
+2. `@cf/black-forest-labs/flux-2-klein-9b` (about 1,364 neurons, multipart prompt, 1024 square)
 
-Checked against the Workers AI catalog (gpt-oss-120b, GLM 4.7 Flash, Gemma 4 26B A4B, FLUX.2 Klein 9B, FLUX.1 Schnell). Illustrations are abstract. Prompts are rejected if they ask for a person, a face, or a logo. No extra API key is required for Workers AI.
+Workers AI error 3036 means the daily free neuron allocation is used up. That error stops the tick. The desk does not call the next model and does not start another story. Checked against the Workers AI catalog (gpt-oss-120b, GLM 4.7 Flash, Gemma 4 26B A4B, FLUX.1 Schnell, FLUX.2 Klein 9B). Illustrations are abstract. Prompts are rejected if they ask for a person, a face, or a logo. No extra API key is required for Workers AI.
 
 ## Sources and the quality gate
 
@@ -154,12 +154,12 @@ Before a row is inserted the draft must:
 - contain no em dash (U+2014), no en dash used as a clause break, no figure dash, minus sign, or two-em dash (U+2012, U+2212, U+FE58, U+FE31, U+2E3A), and no `---` or spaced `--`
 - avoid the slop list in `src/news/quality.ts` (`delve`, `in today's fast-paced`, `game-changer`, `it's worth noting`, `tapestry`, `landscape`, `in conclusion`, and the rest of that list)
 - be 400 to 1100 words, with at least eight sentences, one of 12 words or fewer, one of 25 words or more, and an uneven rhythm
-- not copy an 8-word sequence from the source title or excerpt. A window that is only a list of proper nouns, such as brand names, is not treated as a copy. A sentence that uses those names, and any other 8-word sequence, still fails.
+- not copy an 8-word sequence from the source title or excerpt. A window is ignored only when it is a comma-separated list of proper nouns, such as brand names. Title Case headlines, ALL CAPS headlines, and any other 8-word sequence still fail.
 - not repeat a title or a source URL, and not be too similar to a recent article
 - name the outlet in the body
 - for fashion and showbiz, attribute disputes in the same sentence as the claim
 
-Failures are logged as JSON. The next attempt is told the exact reason codes and what to change (word count, attribution, description length, FAQ length, banned wording, and any copied sequence), up to three times per story. A bad image response stops that tick so the desk does not burn a string of text calls.
+Failures are logged as JSON. The next attempt is told the exact reason codes and what to change (word count, attribution, description length, FAQ length, banned wording, and that a sequence was copied), up to three times per story. The copied words themselves are quoted only inside the untrusted source block. Workers AI error 3036, the daily neuron cap, stops the tick instead of calling another model.
 
 New articles can link up to two older stories in the same category. The link is added in that persona's own sentence if the draft did not include it.
 

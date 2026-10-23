@@ -32,8 +32,46 @@ export function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 
 const AI_RUN_OPTIONS = { rejectIfBusy: true } as AiOptions;
 
+function describeUnknown(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (error && typeof error === "object") {
+		const record = error as Record<string, unknown>;
+		if (typeof record.message === "string") return record.message;
+		try {
+			return JSON.stringify(error);
+		} catch {
+			return String(error);
+		}
+	}
+	return String(error);
+}
+
+/** Workers AI 3036: the account has used its daily free neuron allocation. */
+export function isNeuronCap(error: unknown): boolean {
+	if (error instanceof Error && error.message === "neuron_cap") return true;
+	if (error && typeof error === "object") {
+		const record = error as Record<string, unknown>;
+		for (const key of ["code", "error_code", "internalCode", "errorCode"]) {
+			const code = record[key];
+			if (code === 3036 || code === "3036") return true;
+		}
+		if (record.error && record.error !== error && isNeuronCap(record.error)) return true;
+	}
+	const message = describeUnknown(error);
+	return /\b3036\b/.test(message) || /daily free allocation of 10,000 neurons/i.test(message);
+}
+
 function runAi(ai: Ai, model: string, inputs: unknown): Promise<unknown> {
-	return ai.run(model as keyof AiModels, inputs as never, AI_RUN_OPTIONS);
+	return ai.run(model as keyof AiModels, inputs as never, AI_RUN_OPTIONS).then(
+		(value) => {
+			if (isNeuronCap(value)) throw new Error("neuron_cap");
+			return value;
+		},
+		(error: unknown) => {
+			if (isNeuronCap(error)) throw new Error("neuron_cap");
+			throw error instanceof Error ? error : new Error(describeUnknown(error));
+		},
+	);
 }
 
 const SYSTEM_PROMPT = `You write original news for 3aik News as an editorial persona. You are not a human, and you must not claim interviews, eyewitness knowledge, or credentials.
@@ -106,8 +144,7 @@ function repairLine(reason: string): string {
 		return `Delete the banned wording "${phrase}". It must not appear anywhere in the JSON.`;
 	}
 	if (reason.startsWith("copied_sequence:")) {
-		const phrase = reason.slice("copied_sequence:".length);
-		return `This word sequence is copied from the source: "${phrase}". Rewrite that idea in a different order. Do not reuse those words in a row.`;
+		return "An 8-word sequence was copied from the source. Rewrite that passage in a different order. Do not reuse those words in a row. The copied words are quoted only inside the untrusted-source block.";
 	}
 	if (reason.startsWith("missing_outlet:")) {
 		return `Name ${reason.slice("missing_outlet:".length)} in the body paragraphs.`;
@@ -191,8 +228,17 @@ export function buildArticlePrompt(input: {
 	const sensitive = input.story.category === "fashion" || input.story.category === "showbiz"
 		? "This is a fashion or showbiz story. Attribute claims, especially any dispute, to the outlet. Do not add allegations about a real person."
 		: "Stay inside the excerpt.";
+	const copiedPhrases = (input.failure ?? "")
+		.split(", ")
+		.filter((part) => part.startsWith("copied_sequence:"))
+		.map((part) => untrusted(part.slice("copied_sequence:".length)))
+		.filter(Boolean);
+	const trustedFailure = (input.failure ?? "")
+		.split(", ")
+		.map((part) => (part.startsWith("copied_sequence:") ? "copied_sequence" : part))
+		.join(", ");
 	const retry = input.failure
-		? `The previous draft was rejected: ${input.failure}.
+		? `The previous draft was rejected: ${trustedFailure}.
 Repair every reason below. Do not repeat copied wording.
 ${rejectionRepair(input.failure)}`
 		: "";
@@ -217,6 +263,7 @@ outlet: ${untrusted(input.story.outlet)}
 title: ${untrusted(input.story.title)}
 url: ${untrusted(input.story.url)}
 excerpt: ${untrusted(input.story.excerpt)}
+${copiedPhrases.length ? `copied-sequence: ${copiedPhrases.join(" | ")}` : ""}
 </untrusted-source>
 
 Related desk stories you may link with markdown, and no other URLs:
@@ -339,6 +386,7 @@ export async function generateDraftText(
 			if (!text) throw new Error("empty");
 			return { text, model: candidate.label };
 		} catch (error) {
+			if (isNeuronCap(error)) throw new Error("neuron_cap");
 			failures.push(candidate.label);
 			console.warn(JSON.stringify({
 				message: "ai-news text model failed",
@@ -434,6 +482,7 @@ export async function generateIllustration(
 			}
 			return { bytes, contentType: detected.mime, model: model.label };
 		} catch (error) {
+			if (isNeuronCap(error)) throw new Error("neuron_cap");
 			lastError = error;
 			console.warn(JSON.stringify({
 				message: "ai-news image model failed",

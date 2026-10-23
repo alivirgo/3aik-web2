@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AUTHORS, authorsIn, pickAuthor, pickCategory } from "../src/news/authors";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, TEXT_MAX_TOKENS, TEXT_MODELS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
+import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, MIN_LOCK_TTL_MS, TEXT_MAX_TOKENS, TEXT_MODELS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
 import { buildArticlePrompt, extractModelText, generateDraftText, parseArticleDraft, rejectionRepair, withTimeout } from "../src/news/model";
 import { assessDraft, copiedFromSource, slopHits } from "../src/news/quality";
 import type { ArticleDraft, Category, QualityCorpusItem, SourceRef } from "../src/news/types";
@@ -121,7 +121,7 @@ describe("quality gate", () => {
 		const brands = "Aritzia, Ralph Lauren, Aerie, Urban Outfitters, Gap brand";
 		const bare = "Aritzia Ralph Lauren Aerie Urban Outfitters Gap brand";
 		expect(copiedFromSource(brands, `The note named ${brands} and then stopped.`)).toBeNull();
-		expect(copiedFromSource(bare, `The note named ${bare} and then stopped.`)).toBeNull();
+		expect(copiedFromSource(bare, `The note named ${bare} and then stopped.`)).toBeTruthy();
 		expect(casedTokens(brands).map((token) => token.norm).join(" ")).toBe(words(brands).join(" "));
 
 		const stolen = "vendor posted a short bulletin about a routine";
@@ -130,8 +130,10 @@ describe("quality gate", () => {
 
 		const mixed = "Shoppers compared Aritzia and Ralph Lauren with Aerie during the holiday sale.";
 		expect(copiedFromSource(mixed, mixed)).toBeTruthy();
-		const headline = "Vendor Posts Short Bulletin About Routine Maintenance Today";
+		const headline = "Nvidia Stock Slides As Investors Weigh China Export Rules For Blackwell Chips";
 		expect(copiedFromSource(headline, headline)).toBeTruthy();
+		expect(copiedFromSource(headline.toUpperCase(), headline.toUpperCase())).toBeTruthy();
+		expect(copiedFromSource("Vendor Posts Short Bulletin About Routine Maintenance Today", "Vendor Posts Short Bulletin About Routine Maintenance Today")).toBeTruthy();
 
 		const draft = passingDraft();
 		draft.paragraphs[0] = `${draft.paragraphs[0]} The note named ${brands}.`;
@@ -280,14 +282,20 @@ describe("authors and prompts", () => {
 			related: [],
 			failure,
 		});
-		expect(prompt.user).toContain(failure);
+		expect(prompt.user).toContain("too_short:277");
+		expect(prompt.user).toContain("copied_sequence");
+		const trusted = prompt.user.slice(0, prompt.user.indexOf("<untrusted-source>"));
+		const fenced = prompt.user.slice(prompt.user.indexOf("<untrusted-source>"), prompt.user.indexOf("</untrusted-source>"));
+		expect(trusted).not.toContain("aritzia ralph lauren");
+		expect(fenced).toContain("aritzia ralph lauren aerie urban outfitters gap brand");
 		const repair = rejectionRepair(failure);
 		expect(repair).toContain("277");
 		expect(repair).toContain("at least 450 words");
 		expect(repair).toContain("synergy");
 		expect(repair).toContain("underscore");
 		expect(repair).toContain("100 and 160 characters");
-		expect(repair).toContain("aritzia ralph lauren aerie urban outfitters gap brand");
+		expect(repair).not.toContain("aritzia");
+		expect(repair).toContain("8-word sequence was copied");
 		expect(repair).toContain("12 words or fewer");
 		expect(repair).toContain("according to");
 		expect(repair).toContain("landscape");
@@ -350,7 +358,10 @@ describe("schedule math and model parsing", () => {
 		const env = { AI_NEWS_ARTICLES_PER_HOUR: "1" };
 		const slots = 1;
 		const worst = textCallBudget(env, slots) * textTimeoutMs(env) + imageCallBudget(env, slots) * imageTimeoutMs(env);
-		expect(lockTtlMs(env)).toBe(Math.max(worst, wallBudgetMs(env)) + pruneBudgetMs() + 60_000);
+		expect(lockTtlMs(env)).toBe(Math.max(MIN_LOCK_TTL_MS, Math.max(worst, wallBudgetMs(env)) + pruneBudgetMs() + 60_000));
+		expect(lockTtlMs(env)).toBeGreaterThanOrEqual(900_000);
+		expect(IMAGE_MODELS[0]?.id).toBe("@cf/black-forest-labs/flux-1-schnell");
+		expect(IMAGE_MODELS[1]?.id).toBe("@cf/black-forest-labs/flux-2-klein-9b");
 		expect(pruneBudgetMs()).toBeGreaterThan(0);
 		expect(imageCallBudget({ AI_NEWS_ARTICLES_PER_HOUR: "1", AI_NEWS_IMAGE_CALLS_PER_ARTICLE: "1" }, slotsThisRun(1, 0))).toBeGreaterThanOrEqual(IMAGE_MODELS.length);
 	});
@@ -381,6 +392,22 @@ describe("schedule math and model parsing", () => {
 		expect(first?.[1]).not.toHaveProperty("messages");
 		expect(ai.run.mock.calls[1]?.[0]).toBe("@cf/zai-org/glm-4.7-flash");
 		expect(ai.run.mock.calls[1]?.[1]).toMatchObject({ max_tokens: TEXT_MAX_TOKENS });
+	});
+
+	it("stops the text chain when Workers AI returns the daily neuron cap", async () => {
+		const ai = {
+			run: vi.fn(async () => {
+				throw Object.assign(new Error("Account limited"), { code: 3036 });
+			}),
+		};
+		await expect(generateDraftText(ai as never, "Be brief.", "Write the bulletin.", {
+			takeText: () => true,
+			takeImage: () => false,
+			textTimeoutMs: 1_000,
+			imageTimeoutMs: 1_000,
+		})).rejects.toThrow("neuron_cap");
+		expect(ai.run).toHaveBeenCalledTimes(1);
+		expect(ai.run.mock.calls[0]?.[0]).toBe("@cf/openai/gpt-oss-120b");
 	});
 
 	it("rejects an oversized illustration and times out a stalled call", async () => {

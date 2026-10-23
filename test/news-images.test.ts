@@ -184,5 +184,23 @@ describe("GitHub image storage", () => {
 		expect(image.bytes).toEqual(TINY_JPEG);
 		expect(image.contentType).toBe("image/jpeg");
 		expect(ai.run).toHaveBeenCalledTimes(2);
+		expect(ai.run.mock.calls[0]?.[0]).toBe("@cf/black-forest-labs/flux-1-schnell");
+		expect(ai.run.mock.calls[1]?.[0]).toBe("@cf/black-forest-labs/flux-2-klein-9b");
+	});
+
+	it("stops on Workers AI error 3036 instead of calling the next image model", async () => {
+		const ai = {
+			run: vi.fn(async () => {
+				throw new Error("3036: You have used up your daily free allocation of 10,000 neurons.");
+			}),
+		};
+		await expect(generateIllustration(ai as never, "stacked paper shapes", {
+			takeText: () => false,
+			takeImage: () => true,
+			textTimeoutMs: 1000,
+			imageTimeoutMs: 1000,
+		})).rejects.toThrow("neuron_cap");
+		expect(ai.run).toHaveBeenCalledTimes(1);
+		expect(ai.run.mock.calls[0]?.[0]).toBe("@cf/black-forest-labs/flux-1-schnell");
 	});
 });

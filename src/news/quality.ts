@@ -97,9 +97,9 @@ const COMMON_WORDS = new Set(
 );
 
 /**
- * A copied window is ignored only when the source span is a list of proper nouns
- * (brand names and similar), not a sentence. Lowercase prose, title-case headlines,
- * and any span that contains a verb still count as copies.
+ * A copied window is ignored only when the source span is a comma-separated list
+ * of proper nouns (brand names and similar). Title Case and ALL CAPS headlines
+ * have no commas, so they still count as copies. A verb in the span does too.
  */
 function isProperNounList(tokens: CasedToken[]): boolean {
 	if (tokens.length < COPY_WINDOW) return false;
@@ -117,7 +117,6 @@ function isProperNounList(tokens: CasedToken[]): boolean {
 		else content += 1;
 	}
 	if (content > 0) return false;
-	if (proper >= 6) return true;
 	return commas >= 2 && proper >= 4;
 }
 
