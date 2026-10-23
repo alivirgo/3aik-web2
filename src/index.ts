@@ -215,10 +215,8 @@ export default {
 			return problem(500, "internal_error", "Something went wrong. Please try again.");
 		}
 	},
-	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-		const job = publishScheduled(env, controller);
-		ctx.waitUntil(job);
-		await job;
+	async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+		await publishScheduled(env, controller);
 	},
 } satisfies ExportedHandler<Env>;
 

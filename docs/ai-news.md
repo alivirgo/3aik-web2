@@ -74,19 +74,21 @@ Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `AI_NEWS_TEXT_CALLS_PER_ARTICLE` | 6 | Text `AI.run` calls per article slot this tick. A 3-model cascade counts one call per model. |
-| `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 1 | Image calls per slot. Set `2` to allow the FLUX.1 Schnell fallback. |
+| `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 2 | Image calls per slot. The budget is at least the two configured image models, so the FLUX.1 Schnell fallback still runs when the hourly rate is 1. |
 | `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
-| `AI_NEWS_REJECT_TTL_HOURS` | 24 | A rejected or failed source URL is stored and skipped until this TTL ends. |
+| `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, timeout, and image-only failures block it for 1 hour. |
 | `AI_NEWS_WALL_MS` | 45000 | Stop starting new work after this much wall time. |
 | `AI_NEWS_TEXT_TIMEOUT_MS` | 15000 | Per text call. |
 | `AI_NEWS_IMAGE_TIMEOUT_MS` | 20000 | Per image call. |
 | `AI_NEWS_RETENTION_DAYS` | 180 | Delete articles older than this during a publish tick. `0` disables cleanup. |
 
-The run budget is the per-article number times the slots for that tick, clamped (24 text calls, 8 image calls). Text output is capped at 2048 tokens.
+The run budget is the per-article number times the slots for that tick, clamped (24 text calls, 8 image calls). Each image slot still gets at least one try per configured image model. Text output is capped at 2048 tokens.
+
+Each `AI.run` passes `{ rejectIfBusy: true }`, so a busy model fails instead of waiting in a capacity queue. The desk also stops waiting after the per-call timeout. That timer does not cancel inference that has already started, so a timed-out call may still be billed.
 
 The publish lock lasts longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
 
-Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20, and their R2 objects are deleted in the same tick. Lifetime author counters stay, so rotation does not restart. To clean by hand:
+Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20. The D1 row is deleted first, then the R2 object, so a failed image delete cannot leave a story that points at a missing file. Lifetime author counters stay, so rotation does not restart. To clean by hand:
 
 ```sql
 DELETE FROM article_sources WHERE article_id IN (SELECT id FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z');
@@ -98,7 +100,7 @@ Delete the matching `articles/<id>.*` objects from the R2 bucket as well.
 
 ## Feeds
 
-Each fetch follows at most three redirects, and only to `https` on the same hostname. The response must be `xml`, `rss`, or `atom` (`text/xml`, `application/xml`, `application/rss+xml`, `application/atom+xml`, `application/rdf+xml`, `text/rss`). The body is streamed and dropped above 2 MB. An item with no publication date is stale and is not used.
+Each fetch follows at most three redirects, and only to `https` on the same site. A `www` host and its apex count as the same site. Any other hostname does not. The response must be `xml`, `rss`, or `atom` (`text/xml`, `application/xml`, `application/rss+xml`, `application/atom+xml`, `application/rdf+xml`, `text/rss`). The body is streamed and dropped above 2 MB. An item with no publication date is stale and is not used.
 
 ## Models
 

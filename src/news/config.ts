@@ -5,10 +5,10 @@ export const DEFAULT_ARTICLES_PER_HOUR = 1;
 export const MAX_ARTICLES_PER_HOUR = 8;
 
 /**
- * Two ticks per hour. `slotsThisRun` spreads `AI_NEWS_ARTICLES_PER_HOUR`
- * across these expressions. Keep the Wrangler `triggers.crons` list in sync.
+ * How many cron ticks run per hour. The expressions themselves live only in
+ * `triggers.crons` in wrangler.jsonc. A test checks that list has this many entries.
  */
-export const NEWS_CRONS = ["7 * * * *", "37 * * * *"] as const;
+export const CRON_TICKS_PER_HOUR = 2;
 
 export const STORY_MAX_AGE_HOURS = 96;
 export const MIN_WORDS = 400;
@@ -26,7 +26,9 @@ export const MAX_FEED_BYTES = 2 * 1024 * 1024;
 export const MAX_IMAGE_EDGE = 1024;
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const DEFAULT_TEXT_CALLS_PER_ARTICLE = 6;
-export const DEFAULT_IMAGE_CALLS_PER_ARTICLE = 1;
+export const DEFAULT_IMAGE_CALLS_PER_ARTICLE = 2;
+/** Operational failures cool down for an hour. Quality and content failures use `AI_NEWS_REJECT_TTL_HOURS`. */
+export const SHORT_REJECT_TTL_MS = 60 * 60 * 1000;
 export const DEFAULT_MAX_FAILURES = 2;
 export const DEFAULT_REJECT_TTL_HOURS = 24;
 export const DEFAULT_WALL_MS = 45_000;
@@ -219,7 +221,8 @@ export function textCallBudget(env: NewsEnv, slots: number): number {
 }
 
 export function imageCallBudget(env: NewsEnv, slots: number): number {
-	return Math.min(8, imageCallsPerArticle(env) * Math.max(1, slots));
+	const perSlot = Math.max(imageCallsPerArticle(env), IMAGE_MODELS.length);
+	return Math.min(8, perSlot * Math.max(1, slots));
 }
 
 /**
@@ -236,7 +239,7 @@ export function slotsThisRun(rate: number, publishedThisHour: number): number {
 	if (rate <= 0) return 0;
 	const remaining = rate - publishedThisHour;
 	if (remaining <= 0) return 0;
-	const cap = Math.max(1, Math.ceil(rate / NEWS_CRONS.length));
+	const cap = Math.max(1, Math.ceil(rate / CRON_TICKS_PER_HOUR));
 	return Math.min(remaining, cap);
 }
 

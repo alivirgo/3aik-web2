@@ -81,6 +81,14 @@ export async function readBodyCapped(response: Response, limit = MAX_FEED_BYTES)
 	return new TextDecoder().decode(merged);
 }
 
+/** www and the apex are the same site. Any other hostname is not. */
+export function sameSiteHost(left: string, right: string): boolean {
+	const bare = (host: string) => host.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+	const a = bare(left);
+	const b = bare(right);
+	return a.length > 0 && a === b;
+}
+
 async function fetchFeedDocument(fetchImpl: typeof fetch, feedUrl: string): Promise<string | null> {
 	let current = feedUrl;
 	let originalHost: string;
@@ -109,7 +117,7 @@ async function fetchFeedDocument(fetchImpl: typeof fetch, feedUrl: string): Prom
 			} catch {
 				return null;
 			}
-			if (next.protocol !== "https:" || next.hostname.toLowerCase() !== originalHost) return null;
+			if (next.protocol !== "https:" || !sameSiteHost(next.hostname, originalHost)) return null;
 			current = next.toString();
 			continue;
 		}

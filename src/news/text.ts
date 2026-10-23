@@ -58,7 +58,7 @@ export function xmlEscape(value: string): string {
 		.replace(/'/g, "&apos;");
 }
 
-const OTHER_DASH = /[\u2012\u2212\u2E3A\uFE31\uFE58]/;
+const OTHER_DASH = /[\u2012\u2212\u2E3A\uFE31\uFE58]/g;
 
 /** Turn clause dashes into commas. Numeric ranges become hyphens. */
 export function stripEditorialDashes(input: string): string {
@@ -73,7 +73,7 @@ export function stripEditorialDashes(input: string): string {
 		.replace(/(\d)\s*[\u2012\u2013\u2014\u2015\u2212]\s*(\d)/g, "$1-$2")
 		.replace(/[\u2014\u2015]/g, ", ")
 		.replace(/\u2013/g, ", ")
-		.replace(OTHER_DASH, ", ")
+		.replace(new RegExp(OTHER_DASH.source, "g"), ", ")
 		.replace(/\s+([,.;:!?])/g, "$1")
 		.replace(/[ ]{2,}/g, " ")
 		.replace(/\s+,/g, ",");
@@ -89,7 +89,7 @@ export function forbiddenDash(input: string): "em_dash" | "en_dash_clause" | "da
 		.replace(/&#65073;|&#xfe31;/gi, "\uFE31")
 		.replace(/&#11834;|&#x2e3a;/gi, "\u2E3A");
 	if (/[\u2014\u2015]/.test(decoded)) return "em_dash";
-	if (OTHER_DASH.test(decoded)) return "other_dash";
+	if (new RegExp(OTHER_DASH.source).test(decoded)) return "other_dash";
 	if (/---/.test(decoded) || /\s--\s/.test(decoded)) return "dash_substitute";
 	const withoutRanges = decoded.replace(/\d\u2013\d/g, "");
 	if (/\u2013/.test(withoutRanges)) return "en_dash_clause";

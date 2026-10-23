@@ -72,12 +72,20 @@ function edgeCache(): Cache | null {
 	return store?.default ?? null;
 }
 
+/** Query strings must not split the cache. Tracking params would otherwise store a copy per click. */
+export function newsCacheRequest(request: Request): Request {
+	const url = new URL(request.url);
+	url.search = "";
+	url.hash = "";
+	return new Request(url.toString(), { method: "GET" });
+}
+
 async function matchEdge(request: Request): Promise<Response | null> {
 	if (request.method !== "GET") return null;
 	const cache = edgeCache();
 	if (!cache) return null;
 	try {
-		const hit = await cache.match(new Request(request.url, { method: "GET" }));
+		const hit = await cache.match(newsCacheRequest(request));
 		return hit ?? null;
 	} catch {
 		return null;
@@ -90,7 +98,7 @@ async function putEdge(request: Request, response: Response, ctx?: ExecutionCont
 	if (!control.includes("public") || control.includes("no-store")) return;
 	const cache = edgeCache();
 	if (!cache) return;
-	const put = cache.put(new Request(request.url, { method: "GET" }), response.clone()).catch(() => undefined);
+	const put = cache.put(newsCacheRequest(request), response.clone()).catch(() => undefined);
 	if (ctx) ctx.waitUntil(put);
 	else await put;
 }

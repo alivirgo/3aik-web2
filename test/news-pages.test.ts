@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { ACCURACY_DISCLAIMER, DESK_DISCLOSURE } from "../src/news/config";
-import { handleNewsRequest } from "../src/news/routes";
+import { handleNewsRequest, newsCacheRequest } from "../src/news/routes";
 import { MemoryImageStore, MemoryNewsRepository } from "../src/news/repository";
 import type { StoredArticle } from "../src/news/types";
 import { TINY_PNG } from "../src/news/text";
@@ -147,9 +147,7 @@ describe("existing routes stay in place", () => {
 
 	it("does not call Workers AI when the scheduled bindings are missing", async () => {
 		const env = { AI: { run: vi.fn() }, ASSETS: { fetch: vi.fn() }, AI_NEWS_PUBLISHING: "on" } as never;
-		const waitUntil = vi.fn();
-		await worker.scheduled({ scheduledTime: Date.now(), cron: "7 * * * *" } as never, env, { waitUntil } as never);
-		expect(waitUntil).toHaveBeenCalled();
+		await worker.scheduled({ scheduledTime: Date.now(), cron: "7 * * * *" } as never, env, { waitUntil: vi.fn() } as never);
 		expect((env as { AI: { run: ReturnType<typeof vi.fn> } }).AI.run).not.toHaveBeenCalled();
 	});
 
@@ -178,6 +176,13 @@ describe("existing routes stay in place", () => {
 		expect(missing.status).toBe(404);
 		const llms = await handleNewsRequest(new Request("https://3aik.test/llms.txt"), env);
 		expect((await llms.text()).startsWith("# 3aik News")).toBe(true);
+	});
+
+	it("ignores the query string in the edge cache key", () => {
+		const first = newsCacheRequest(new Request("https://3aik.com/ai-news/article/demo?utm_source=rss"));
+		const second = newsCacheRequest(new Request("https://3aik.com/ai-news/article/demo?fbclid=abc"));
+		expect(first.url).toBe(second.url);
+		expect(first.url).toBe("https://3aik.com/ai-news/article/demo");
 	});
 });
 

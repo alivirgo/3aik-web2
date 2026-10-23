@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FEEDS, MAX_FEED_BYTES } from "../src/news/config";
-import { feedsForTick, fetchStories, isFeedContentType, parseFeed, readBodyCapped } from "../src/news/feeds";
+import { feedsForTick, fetchStories, isFeedContentType, parseFeed, readBodyCapped, sameSiteHost } from "../src/news/feeds";
 
 const now = new Date("2026-10-23T12:00:00.000Z");
 const feed = FEEDS[0];
@@ -104,6 +104,27 @@ describe("feed parser", () => {
 			headers: { location: "https://evil.example/rss.xml" },
 		}), [feed]);
 		expect(stories).toEqual([]);
+		expect(sameSiteHost("www.example.com", "example.com")).toBe(true);
+		expect(sameSiteHost("example.com", "www.example.com")).toBe(true);
+		expect(sameSiteHost("news.example.com", "example.com")).toBe(false);
+
+		const xml = `<?xml version="1.0"?><rss><channel><item>
+<title>Redirected bulletin about a maintenance window</title>
+<link>https://example.com/redirected</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>This description is long enough to clear the minimum excerpt length after a same-site redirect.</description>
+</item></channel></rss>`;
+		const followed = await fetchStories(now, async (input) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === "https://www.example.com/rss.xml") {
+				return new Response(null, { status: 302, headers: { location: "https://example.com/rss.xml" } });
+			}
+			if (url === "https://example.com/rss.xml") {
+				return new Response(xml, { status: 200, headers: { "content-type": "application/rss+xml" } });
+			}
+			return new Response("no", { status: 404 });
+		}, [{ url: "https://www.example.com/rss.xml", outlet: "Example", category: "ai" }]);
+		expect(followed.map((story) => story.url)).toEqual(["https://example.com/redirected"]);
 
 		const tooBig = await readBodyCapped(new Response(new Uint8Array(64), {
 			headers: { "content-type": "application/rss+xml" },

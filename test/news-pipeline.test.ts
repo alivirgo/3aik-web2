@@ -104,7 +104,8 @@ describe("publish cycle", () => {
 		const article = await repo.getBySlug(report.published[0] ?? "");
 		expect(article?.authorId).toBe("adele-okonkwo");
 		expect(article?.sources[0]?.url).toBe("https://example.com/fresh-bulletin");
-		expect(article?.bodyHtml).toContain("The Verge");
+		expect(article?.bodyText).toContain("The Verge");
+		expect(article?.bodyHtml).toBe("");
 		expect(images.objects.size).toBe(1);
 	});
 
@@ -147,6 +148,7 @@ describe("publish cycle", () => {
 		expect(first.published).toEqual([]);
 		expect(writeDraft).toHaveBeenCalledTimes(1);
 		expect(await repo.isRejected("https://example.com/fresh-bulletin", now.toISOString())).toBe(true);
+		expect(await repo.isRejected("https://example.com/fresh-bulletin", new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString())).toBe(true);
 
 		writeDraft.mockClear();
 		const second = await runPublishCycle(deps);
@@ -176,6 +178,15 @@ describe("publish cycle", () => {
 		expect(await repo.isRejected("https://example.com/one", now.toISOString())).toBe(true);
 		expect(await repo.isRejected("https://example.com/two", now.toISOString())).toBe(true);
 		expect(await repo.isRejected("https://example.com/three", now.toISOString())).toBe(false);
+	});
+
+	it("keeps an image failure for an hour, not a day", async () => {
+		const { deps, repo, paint } = harness();
+		paint.mockRejectedValue(new Error("image down"));
+		await runPublishCycle(deps);
+		const url = "https://example.com/fresh-bulletin";
+		expect(await repo.isRejected(url, new Date(now.getTime() + 30 * 60 * 1000).toISOString())).toBe(true);
+		expect(await repo.isRejected(url, new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString())).toBe(false);
 	});
 
 	it("stops when the wall clock is exhausted", async () => {
