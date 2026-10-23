@@ -6,6 +6,10 @@
 # Leave blank to publish without pings. The worker serves https://3aik.com/<key>.txt itself.
 INDEXNOW_KEY=
 
+# Fine-grained GitHub token with contents:write on alivirgo/3aik-ai-news-images only.
+# Leave blank to publish articles without images. Never commit a real token.
+GITHUB_IMAGES_TOKEN=
+
 POLLINATIONS_API_KEY=
 OPENAI_API_KEY=
 AIORNOT_API_KEY=

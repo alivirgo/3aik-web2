@@ -1,6 +1,6 @@
 # 3aik News
 
-`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or R2 while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story or image, not a 500. The D1 id in `wrangler.jsonc` is still a placeholder. Create the database and bucket, replace that id, apply both migrations, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
+`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or GitHub while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Apply both migrations, create the public image repo and the fine-grained token, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
 
 ## What readers are told
 
@@ -16,17 +16,21 @@ The same point is on [/ai-news/disclaimer](https://3aik.com/ai-news/disclaimer).
 
 From the repo root, with Wrangler logged into the 3aik account:
 
-```sh
-npx wrangler d1 create 3aik-ai-news
-```
-
-Copy the `database_id` from that command into `wrangler.jsonc`, replacing the placeholder `11111111-1111-4111-8111-111111111111` on the `AI_NEWS_DB` binding. The binding name and `database_name` stay as they are.
+The D1 database already exists. Binding name `AI_NEWS_DB`, database name `3aik-ai-news`, id `87a550eb-1752-4cec-8c20-dd6b839099e2`.
 
 ```sh
 npx wrangler d1 migrations apply 3aik-ai-news --remote
-npx wrangler r2 bucket create 3aik-ai-news-images
-# then set AI_NEWS_PUBLISHING to "on" in wrangler.jsonc
 ```
+
+Images are files in the public repo [alivirgo/3aik-ai-news-images](https://github.com/alivirgo/3aik-ai-news-images). Create that repo (empty, default branch `main`) and a fine-grained personal access token with **contents: write** on that repo only. Grant the token no other repository. Keep the token out of git.
+
+```sh
+npx wrangler secret put GITHUB_IMAGES_TOKEN
+```
+
+Paste the token when prompted. For local dev, put the same name in `.dev.vars` (gitignored). See `.dev.vars.example`. If the secret is missing, or a commit fails, the article is still published with no image.
+
+Then set `AI_NEWS_PUBLISHING` to `on` in `wrangler.jsonc` when you want the cron to write.
 
 Local equivalents:
 
@@ -52,10 +56,10 @@ Bindings added to `wrangler.jsonc`:
 | Binding | Kind | Name |
 | --- | --- | --- |
 | `AI_NEWS_DB` | D1 | `3aik-ai-news` |
-| `AI_NEWS_IMAGES` | R2 | `3aik-ai-news-images` |
 | `AI` | Workers AI | already on the worker |
+| `GITHUB_IMAGES_TOKEN` | Secret | contents:write on `alivirgo/3aik-ai-news-images` only |
 
-Images are stored in R2. Article rows, source URLs, and rotation counters are in D1. Migration: `migrations/0001_ai_news_init.sql`.
+Article rows, source URLs, and rotation counters are in D1. Migration: `migrations/0001_ai_news_init.sql`. Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>.webp` (JPEG uses `.jpg`) through the GitHub Contents API.
 
 ## Rate, schedule, and pause
 
@@ -65,7 +69,7 @@ Cron ticks are `7 * * * *` and `37 * * * *` (minute 7 and minute 37, UTC). Each 
 
 Publishing is off unless `AI_NEWS_PUBLISHING` is `on`, `true`, `yes`, or `1`. A missing value is off. `false`, `paused`, and `0` also pause. Prefer the config file. A dashboard-only edit can be overwritten by the next `wrangler deploy`.
 
-While paused, the cron does not take the publish lock and does not read or write D1 or R2. `/ai-news` still serves pages, feeds, and sitemaps from D1 when the database exists. If the database is missing, lists and feeds are empty and a story URL returns 404.
+While paused, the cron does not take the publish lock and does not read or write D1 or GitHub. `/ai-news` still serves pages, feeds, and sitemaps from D1 when the database exists. If the database is missing, lists and feeds are empty and a story URL returns 404.
 
 ## Spend, time, and retention
 
@@ -76,7 +80,7 @@ Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`
 | `AI_NEWS_TEXT_CALLS_PER_ARTICLE` | 6 | Text `AI.run` calls per article slot this tick. A 3-model cascade counts one call per model. |
 | `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 2 | Image calls per slot. The budget is at least the two configured image models, so the FLUX.1 Schnell fallback still runs when the hourly rate is 1. |
 | `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
-| `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, timeout, and image-only failures block it for 1 hour. |
+| `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, and timeout failures block it for 1 hour. A missing image, a failed image model, or a failed GitHub commit does not block the source: the article publishes with no picture. |
 | `AI_NEWS_WALL_MS` | 45000 | Stop starting new work after this much wall time. |
 | `AI_NEWS_TEXT_TIMEOUT_MS` | 15000 | Per text call. |
 | `AI_NEWS_IMAGE_TIMEOUT_MS` | 20000 | Per image call. |
@@ -88,7 +92,7 @@ Each `AI.run` passes `{ rejectIfBusy: true }`, so a busy model fails instead of 
 
 The publish lock lasts longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
 
-Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20. The D1 row is deleted first, then the R2 object, so a failed image delete cannot leave a story that points at a missing file. Lifetime author counters stay, so rotation does not restart. To clean by hand:
+Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20. The D1 row is deleted first, then the GitHub file, so a failed image delete cannot leave a story that points at a missing file. Lifetime author counters stay, so rotation does not restart. To clean by hand:
 
 ```sql
 DELETE FROM article_sources WHERE article_id IN (SELECT id FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z');
@@ -96,7 +100,9 @@ DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
 DELETE FROM source_rejections WHERE expires_at <= datetime('now');
 ```
 
-Delete the matching `articles/<id>.*` objects from the R2 bucket as well.
+Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. The desk makes at most one sha retry, does not retry a rate-limit response, and stops further image commits in that tick when fewer than 20 requests remain on the token. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
+
+Readers load `/ai-news/media/images/YYYY/MM/<slug>.webp`. The Worker fetches that one path from jsDelivr (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo), checks the magic bytes, and answers with `cache-control: public, max-age=31536000, immutable`. The write token is not sent on that read. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
 
 ## Feeds
 
@@ -153,7 +159,7 @@ Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technol
 | `/ai-news/<category>/feed.xml` and `atom.xml` | Section feeds |
 | `/ai-news/sitemap.xml` | News section sitemap |
 | `/ai-news/news-sitemap.xml` | Google News sitemap (stories from the last 48 hours) |
-| `/ai-news/image/<id>` | Generated illustration |
+| `/ai-news/media/images/YYYY/MM/<slug>.webp` | Illustration, proxied from the public image repo |
 | `/llms.txt` | Notes for answer engines, including `/ai-news` |
 
 `public/robots.txt` still allows all crawlers at `/` and still lists `https://3aik.com/sitemap.xml`. It also names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers, and adds the two news sitemaps. `public/sitemap.xml` still lists the home page and adds the news section URLs.
@@ -177,7 +183,7 @@ IndexNow docs: [indexnow.org/documentation](https://www.indexnow.org/documentati
 
 ## Samples
 
-`docs/samples/` holds four dry-run articles, one per section, based on public RSS items from 22 and 23 October 2026. They were written to the same gate the model must pass (`npm test` runs that check). This environment cannot call Workers AI, so the sample illustrations are prompts and alt text only. Production stores one FLUX image per article in R2.
+`docs/samples/` holds four dry-run articles, one per section, based on public RSS items from 22 and 23 October 2026. They were written to the same gate the model must pass (`npm test` runs that check). This environment cannot call Workers AI, so the sample illustrations are prompts and alt text only. Production commits one WebP or JPEG per article to `alivirgo/3aik-ai-news-images` when the token is set.
 
 ## Code map
 

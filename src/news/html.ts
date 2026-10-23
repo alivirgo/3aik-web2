@@ -8,6 +8,7 @@ import {
 	SITE_NAME,
 	personaFooter,
 } from "./config";
+import { readerImageUrl } from "./github-images";
 import type { Category, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
 import { escapeHtml, formatDate, jsonForScript, stripEditorialDashes } from "./text";
@@ -168,8 +169,12 @@ function crumbs(origin: string, items: Array<{ href?: string; label: string }>):
 function articleCard(origin: string, article: StoredArticle): string {
 	const author = authorById(article.authorId);
 	const name = author?.name ?? article.authorId;
+	const image = readerImageUrl(origin, article.imageKey);
+	const media = image
+		? `<a class="card-media" href="${articleHref(origin, article.slug)}"><img src="${escapeHtml(image)}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"></a>`
+		: "";
 	return `<article class="card">
-<a class="card-media" href="${articleHref(origin, article.slug)}"><img src="${origin}/ai-news/image/${escapeHtml(article.id)}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"></a>
+${media}
 <p class="meta"><a href="${categoryHref(origin, article.category)}">${CATEGORY_LABEL[article.category]}</a> · <time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time></p>
 <h2><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></h2>
 <p>${escapeHtml(stripEditorialDashes(article.description))}</p>
@@ -272,7 +277,7 @@ export function renderArticle(origin: string, article: StoredArticle): string {
 	const author = authorById(article.authorId);
 	const name = author?.name ?? "Desk persona";
 	const canonical = articleHref(origin, article.slug);
-	const image = `${origin}/ai-news/image/${article.id}`;
+	const image = readerImageUrl(origin, article.imageKey);
 	const trail = crumbs(origin, [
 		{ href: `${origin}/`, label: "3aik" },
 		{ href: `${origin}/ai-news`, label: "News" },
@@ -302,7 +307,7 @@ export function renderArticle(origin: string, article: StoredArticle): string {
 <p class="meta"><a href="${categoryHref(origin, article.category)}">${CATEGORY_LABEL[article.category]}</a> · <time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time></p>
 <h1>${escapeHtml(title)}</h1>
 <p class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a>, editorial persona <span class="ai-label">AI-generated</span></p>
-<figure><img src="${image}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"><figcaption>${escapeHtml(article.imageAlt)}</figcaption></figure>
+${image ? `<figure><img src="${escapeHtml(image)}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"><figcaption>${escapeHtml(article.imageAlt)}</figcaption></figure>` : ""}
 <section class="tldr" aria-labelledby="tldr"><h2 id="tldr">TL;DR</h2><ul>${points}</ul></section>
 <div class="prose">${prose}</div>
 <section class="faq" aria-labelledby="faq"><h2 id="faq">Questions</h2>${faqs}</section>
@@ -315,7 +320,7 @@ ${related}
 		"@type": "NewsArticle",
 		headline: title,
 		description: article.description,
-		image: [image],
+		...(image ? { image: [image] } : {}),
 		datePublished: article.publishedAt,
 		dateModified: article.updatedAt,
 		articleSection: CATEGORY_LABEL[article.category],
@@ -356,7 +361,7 @@ ${related}
 		canonical,
 		body,
 		ogType: "article",
-		image,
+		image: image ?? undefined,
 		imageAlt: article.imageAlt,
 		publishedAt: article.publishedAt,
 		section: CATEGORY_LABEL[article.category],

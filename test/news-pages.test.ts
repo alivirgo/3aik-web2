@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { ACCURACY_DISCLAIMER, DESK_DISCLOSURE } from "../src/news/config";
 import { handleNewsRequest, newsCacheRequest } from "../src/news/routes";
-import { MemoryImageStore, MemoryNewsRepository } from "../src/news/repository";
+import { MemoryNewsRepository } from "../src/news/repository";
 import type { StoredArticle } from "../src/news/types";
-import { TINY_PNG } from "../src/news/text";
+import { TINY_JPEG } from "../src/news/text";
 
 const root = resolve(import.meta.dirname, "..");
 const publishedAt = "2026-10-23T12:07:00.000Z";
@@ -30,9 +30,9 @@ function article(): StoredArticle {
 			outlet: "The Verge",
 		}],
 		related: [],
-		imageKey: "articles/22222222-2222-4222-8222-222222222222.png",
+		imageKey: "images/2026/10/short-bulletin.jpg",
 		imageAlt: "Abstract stack of paper rectangles in sand and ink blue on a warm gray field.",
-		imageType: "image/png",
+		imageType: "image/jpeg",
 		publishedAt,
 		updatedAt: publishedAt,
 	};
@@ -40,16 +40,14 @@ function article(): StoredArticle {
 
 function desk() {
 	const repo = new MemoryNewsRepository();
-	const images = new MemoryImageStore();
 	repo.articles.push(article());
-	images.objects.set(article().imageKey, { bytes: TINY_PNG, contentType: "image/png" });
-	return { repo, images };
+	return { repo };
 }
 
 describe("news pages", () => {
 	it("serves the section, about, and disclaimer without a database", async () => {
 		const env = { AI_NEWS_SITE_ORIGIN: "https://3aik.com" };
-		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news/"), env, { repo: null, images: null });
+		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news/"), env, { repo: null });
 		const html = await index.text();
 		expect(index.status).toBe(200);
 		expect(html).toContain(DESK_DISCLOSURE);
@@ -57,21 +55,25 @@ describe("news pages", () => {
 		expect(html).toContain('href="/ai-news.css"');
 		expect(html).not.toMatch(/<script[^>]+src=/i);
 
-		const about = await handleNewsRequest(new Request("https://3aik.test/ai-news/about"), env, { repo: null, images: null });
+		const about = await handleNewsRequest(new Request("https://3aik.test/ai-news/about"), env, { repo: null });
 		expect(await about.text()).toContain("not real people");
-		const disclaimer = await handleNewsRequest(new Request("https://3aik.test/ai-news/disclaimer"), env, { repo: null, images: null });
+		const disclaimer = await handleNewsRequest(new Request("https://3aik.test/ai-news/disclaimer"), env, { repo: null });
 		expect(await disclaimer.text()).toContain(ACCURACY_DISCLAIMER);
 	});
 
 	it("renders article metadata, structured data, and the persona footer", async () => {
-		const { repo, images } = desk();
+		const { repo } = desk();
 		const response = await handleNewsRequest(
 			new Request("https://3aik.test/ai-news/article/short-bulletin"),
 			{ AI_NEWS_SITE_ORIGIN: "https://3aik.com" },
-			{ repo, images },
+			{ repo },
 		);
 		const html = await response.text();
 		expect(response.headers.get("content-security-policy")).toContain("script-src 'none'");
+		expect(response.headers.get("content-security-policy")).toContain("img-src 'self'");
+		expect(response.headers.get("content-security-policy")).not.toContain("jsdelivr");
+		expect(html).toContain("https://3aik.com/ai-news/media/images/2026/10/short-bulletin.jpg");
+		expect(html).not.toContain("cdn.jsdelivr.net");
 		expect(html).toContain("<title>A short bulletin, retold with the blanks left blank | 3aik News</title>");
 		expect(html).toContain('name="description"');
 		expect(html).toContain('rel="canonical" href="https://3aik.com/ai-news/article/short-bulletin"');
@@ -95,31 +97,51 @@ describe("news pages", () => {
 	});
 
 	it("serves the image, feeds, sitemaps, llms.txt, and the IndexNow key", async () => {
-		const { repo, images } = desk();
+		const { repo } = desk();
 		const env = { AI_NEWS_SITE_ORIGIN: "https://3aik.com", INDEXNOW_KEY: "index-key" };
-		const image = await handleNewsRequest(new Request("https://3aik.test/ai-news/image/22222222-2222-4222-8222-222222222222"), env, { repo, images });
-		expect(image.headers.get("content-type")).toBe("image/png");
-		expect(new Uint8Array(await image.arrayBuffer())).toEqual(TINY_PNG);
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === "https://cdn.jsdelivr.net/gh/alivirgo/3aik-ai-news-images@main/images/2026/10/short-bulletin.jpg") {
+				return new Response(TINY_JPEG, { status: 200, headers: { "content-type": "image/jpeg" } });
+			}
+			return new Response("no", { status: 404 });
+		});
+		const image = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/media/images/2026/10/short-bulletin.jpg"),
+			env,
+			{ repo, fetchImpl: fetchImpl as typeof fetch },
+		);
+		expect(image.headers.get("content-type")).toBe("image/jpeg");
+		expect(image.headers.get("cache-control")).toContain("immutable");
+		expect(image.headers.get("content-security-policy")).toContain("default-src 'none'");
+		expect(new Uint8Array(await image.arrayBuffer())).toEqual(TINY_JPEG);
+		const blocked = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/media/images/2026/10/../secret.jpg"),
+			env,
+			{ repo, fetchImpl: fetchImpl as typeof fetch },
+		);
+		expect(blocked.status).toBe(404);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
 
-		const rss = await handleNewsRequest(new Request("https://3aik.test/ai-news/feed.xml"), env, { repo, images });
+		const rss = await handleNewsRequest(new Request("https://3aik.test/ai-news/feed.xml"), env, { repo });
 		expect(rss.headers.get("content-type")).toContain("application/rss+xml");
 		expect(await rss.text()).toContain("short-bulletin");
-		const category = await handleNewsRequest(new Request("https://3aik.test/ai-news/ai/atom.xml"), env, { repo, images });
+		const category = await handleNewsRequest(new Request("https://3aik.test/ai-news/ai/atom.xml"), env, { repo });
 		expect(await category.text()).toContain("short-bulletin");
 
-		const sitemap = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap.xml"), env, { repo, images });
+		const sitemap = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap.xml"), env, { repo });
 		expect(await sitemap.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
-		const news = await handleNewsRequest(new Request("https://3aik.test/ai-news/news-sitemap.xml"), env, { repo, images });
+		const news = await handleNewsRequest(new Request("https://3aik.test/ai-news/news-sitemap.xml"), env, { repo });
 		expect(await news.text()).toContain("news:news");
 
-		const llms = await handleNewsRequest(new Request("https://3aik.test/llms.txt"), env, { repo, images });
+		const llms = await handleNewsRequest(new Request("https://3aik.test/llms.txt"), env, { repo });
 		expect(await llms.text()).toContain("https://3aik.com/ai-news");
-		const key = await handleNewsRequest(new Request("https://3aik.test/index-key.txt"), env, { repo, images });
+		const key = await handleNewsRequest(new Request("https://3aik.test/index-key.txt"), env, { repo });
 		expect(await key.text()).toBe("index-key");
 
-		const author = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/mira-ellison"), env, { repo, images });
+		const author = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/mira-ellison"), env, { repo });
 		expect(await author.text()).toContain("not a real person");
-		const missing = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/not-a-persona"), env, { repo, images });
+		const missing = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/not-a-persona"), env, { repo });
 		expect(missing.status).toBe(404);
 	});
 });
@@ -151,13 +173,13 @@ describe("existing routes stay in place", () => {
 		expect((env as { AI: { run: ReturnType<typeof vi.fn> } }).AI.run).not.toHaveBeenCalled();
 	});
 
-	it("does not open D1 or R2 while publishing is off", async () => {
+	it("does not open D1 while publishing is off", async () => {
 		const env = {
 			AI: { run: vi.fn() },
 			ASSETS: { fetch: vi.fn() },
 			AI_NEWS_PUBLISHING: "off",
 			AI_NEWS_DB: { prepare: () => { throw new Error("touched d1"); } },
-			AI_NEWS_IMAGES: { get: () => { throw new Error("touched r2"); }, put: () => { throw new Error("touched r2"); } },
+			GITHUB_IMAGES_TOKEN: "ghp-test",
 		} as never;
 		const waitUntil = vi.fn();
 		await worker.scheduled({ scheduledTime: Date.now(), cron: "7 * * * *" } as never, env, { waitUntil } as never);

@@ -20,9 +20,17 @@ import {
 	type NewsEnv,
 } from "./config";
 import { fetchStories } from "./feeds";
+import {
+	GITHUB_IMAGE_MAX_BYTES,
+	commitImageFile,
+	deleteImageFile,
+	extensionForMime,
+	githubImagePath,
+	isGitHubImagePath,
+} from "./github-images";
 import { buildArticlePrompt, generateDraftText, generateIllustration, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
 import { assessDraft } from "./quality";
-import type { ImageStore, NewsRepository } from "./repository";
+import type { NewsRepository } from "./repository";
 import type { ArticleDraft, AuthorPersona, Category, RelatedLink, SourceRef, StoredArticle, StoryItem } from "./types";
 import { detectImageType, imageLimitReason, slugify, stripEditorialDashes, tokenJaccard } from "./text";
 
@@ -31,7 +39,6 @@ const ATTEMPTS = 3;
 export interface PublishDependencies {
 	env: NewsEnv & { AI?: Ai };
 	repo: NewsRepository;
-	images: ImageStore;
 	now: Date;
 	fetchImpl?: typeof fetch;
 	writeDraft?: (prompt: { system: string; user: string }) => Promise<{ text: string; model: string }>;
@@ -110,10 +117,11 @@ function makeBudget(env: NewsEnv, slots: number, startedAt: number, clock: () =>
 			return true;
 		},
 		takeImage: () => {
-			if (budget.expired() || imageCalls >= imageLimit) {
+			if (budget.expired()) {
 				budget.stop = true;
 				return false;
 			}
+			if (imageCalls >= imageLimit) return false;
 			imageCalls += 1;
 			return true;
 		},
@@ -183,6 +191,61 @@ async function draftStory(
 	return { ok: false, tried, reason: sawContentFailure ? "quality" : "content" };
 }
 
+interface StoredPicture {
+	imageKey: string;
+	imageType: string;
+	model: string;
+	pauseWrites: boolean;
+}
+
+const EMPTY_PICTURE: StoredPicture = { imageKey: "", imageType: "", model: "", pauseWrites: false };
+
+/**
+ * A missing token, a failed model, a file that is not a small WebP or JPEG, or a
+ * failed GitHub commit all publish the article with no image. The source URL is
+ * not rejected for that.
+ */
+async function storeIllustration(
+	deps: PublishDependencies,
+	prompt: string,
+	slug: string,
+	publishedAt: string,
+	budget: RunBudget,
+	writesPaused: boolean,
+): Promise<StoredPicture> {
+	const token = deps.env.GITHUB_IMAGES_TOKEN?.trim() ?? "";
+	if (budget.expired()) {
+		budget.stop = true;
+		return EMPTY_PICTURE;
+	}
+	if (!token || writesPaused) return EMPTY_PICTURE;
+	let image: { bytes: Uint8Array; contentType: string; model: string };
+	try {
+		if (deps.paint) {
+			if (!budget.takeImage()) return EMPTY_PICTURE;
+			image = await withTimeout(deps.paint(prompt), budget.imageTimeoutMs);
+		} else {
+			image = await generateIllustration(deps.env.AI as Ai, prompt, budget);
+		}
+	} catch (error) {
+		console.error(JSON.stringify({
+			message: "ai-news image failed",
+			error: error instanceof Error ? error.message : String(error),
+		}));
+		return EMPTY_PICTURE;
+	}
+	const detected = detectImageType(image.bytes);
+	const extension = detected ? extensionForMime(detected.mime) : null;
+	const path = extension ? githubImagePath(publishedAt, slug, extension) : null;
+	if (!detected || !path || imageLimitReason(image.bytes) || image.bytes.byteLength > GITHUB_IMAGE_MAX_BYTES) {
+		console.error(JSON.stringify({ message: "ai-news image skipped", reason: "type-or-size", model: image.model }));
+		return { ...EMPTY_PICTURE, model: image.model };
+	}
+	const committed = await commitImageFile(token, path, image.bytes, deps.fetchImpl ?? fetch);
+	if (!committed.ok) return { ...EMPTY_PICTURE, model: image.model, pauseWrites: committed.pause };
+	return { imageKey: path, imageType: detected.mime, model: image.model, pauseWrites: committed.pause };
+}
+
 function rejectionTtlMs(env: NewsEnv, reason: string): number {
 	if (reason === "quality" || reason === "content") return rejectTtlHours(env) * 60 * 60 * 1000;
 	return SHORT_REJECT_TTL_MS;
@@ -199,9 +262,12 @@ async function pruneDesk(deps: PublishDependencies, nowIso: string): Promise<voi
 	if (days <= 0) return;
 	const cutoff = new Date(deps.now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 	const expired = await deps.repo.expiredArticles(cutoff, RETENTION_BATCH);
+	const token = deps.env.GITHUB_IMAGES_TOKEN?.trim() ?? "";
 	for (const row of expired) {
 		await deps.repo.deleteArticle(row.id);
-		await deps.images.delete(row.imageKey);
+		if (token && isGitHubImagePath(row.imageKey)) {
+			await deleteImageFile(token, row.imageKey, deps.fetchImpl ?? fetch);
+		}
 	}
 	if (expired.length) {
 		console.log(JSON.stringify({ message: "ai-news retention", deleted: expired.length, cutoff }));
@@ -274,6 +340,7 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 		const budget = makeBudget(deps.env, slots, clock(), clock);
 		const failureCap = maxFailuresPerRun(deps.env);
 		let consecutiveFailures = 0;
+		let githubWritesPaused = false;
 		while (published.length < slots && fresh.length && !budget.stop && consecutiveFailures < failureCap) {
 			const stats = await deps.repo.stats();
 			const available = [...new Set(fresh.map((story) => story.category))];
@@ -301,42 +368,11 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				}
 				continue;
 			}
-			let image: { bytes: Uint8Array; contentType: string; model: string };
-			try {
-				if (budget.expired()) {
-					budget.stop = true;
-					throw new Error("wall_budget");
-				}
-				image = deps.paint
-					? await (budget.takeImage()
-						? withTimeout(deps.paint(drafted.draft.imagePrompt), budget.imageTimeoutMs)
-						: Promise.reject(new Error("image_budget")))
-					: await generateIllustration(deps.env.AI as Ai, drafted.draft.imagePrompt, budget);
-			} catch (error) {
-				budget.stop = true;
-				failures.push(story.url);
-				consecutiveFailures += 1;
-				const message = error instanceof Error ? error.message : String(error);
-				const reason = message === "image_budget" ? "budget" : message === "wall_budget" ? "wall" : message === "ai_timeout" ? "timeout" : "image";
-				await rememberFailure(deps.repo, deps.env, story.url, reason, deps.now);
-				console.error(JSON.stringify({
-					message: "ai-news image failed",
-					error: error instanceof Error ? error.message : String(error),
-				}));
-				break;
-			}
-			const detected = detectImageType(image.bytes);
-			const limited = imageLimitReason(image.bytes);
-			if (!detected || limited) {
-				budget.stop = true;
-				failures.push(story.url);
-				consecutiveFailures += 1;
-				await rememberFailure(deps.repo, deps.env, story.url, limited ?? "image-type", deps.now);
-				break;
-			}
 			const id = crypto.randomUUID();
 			let slug = slugify(drafted.draft.title);
 			if (await deps.repo.hasSlug(slug)) slug = `${slug}-${id.slice(0, 8)}`;
+			const picture = await storeIllustration(deps, drafted.draft.imagePrompt, slug, nowIso, budget, githubWritesPaused);
+			if (picture.pauseWrites) githubWritesPaused = true;
 			const article: StoredArticle = {
 				id,
 				slug,
@@ -351,17 +387,16 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				faq: drafted.draft.faq,
 				sources: sources.map(({ url, title, outlet }) => ({ url, title, outlet })),
 				related: related.map(({ slug: relatedSlug, title }) => ({ slug: relatedSlug, title })),
-				imageKey: `articles/${id}.${detected.extension}`,
-				imageAlt: drafted.draft.imageAlt,
-				imageType: detected.mime,
+				imageKey: picture.imageKey,
+				imageAlt: picture.imageKey ? drafted.draft.imageAlt : "",
+				imageType: picture.imageType,
 				publishedAt: nowIso,
 				updatedAt: nowIso,
 			};
-			await deps.images.put(article.imageKey, image.bytes, detected.mime);
 			try {
 				await deps.repo.insert(article);
 			} catch (error) {
-				await deps.images.delete(article.imageKey);
+				if (picture.imageKey) await deleteImageFile(deps.env.GITHUB_IMAGES_TOKEN?.trim() ?? "", picture.imageKey, deps.fetchImpl ?? fetch);
 				failures.push(story.url);
 				consecutiveFailures += 1;
 				await rememberFailure(deps.repo, deps.env, story.url, "insert", deps.now);
@@ -381,7 +416,7 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				authorId: author.id,
 				sourceHost: new URL(story.url).host,
 				textModel: drafted.model,
-				imageModel: image.model,
+				imageModel: picture.model,
 			}));
 		}
 

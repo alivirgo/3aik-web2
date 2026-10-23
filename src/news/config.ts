@@ -161,6 +161,8 @@ export interface NewsEnv {
 	AI_NEWS_IMAGE_TIMEOUT_MS?: string;
 	AI_NEWS_RETENTION_DAYS?: string;
 	INDEXNOW_KEY?: string;
+	/** Fine-grained token with contents:write on alivirgo/3aik-ai-news-images. Never commit it. */
+	GITHUB_IMAGES_TOKEN?: string;
 }
 
 export function articlesPerHour(env: NewsEnv): number {

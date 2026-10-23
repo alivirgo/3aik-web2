@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { FEEDS } from "../src/news/config";
 import { pingIndexNow, runPublishCycle } from "../src/news/pipeline";
-import { MemoryImageStore, MemoryNewsRepository } from "../src/news/repository";
+import { MemoryNewsRepository } from "../src/news/repository";
 import type { ArticleDraft, StoredArticle } from "../src/news/types";
-import { TINY_PNG } from "../src/news/text";
+import { TINY_JPEG, TINY_PNG } from "../src/news/text";
 
 const now = new Date("2026-10-23T12:07:00.000Z");
 const feed = FEEDS.find((entry) => entry.category === "ai");
@@ -56,33 +56,49 @@ function rss() {
 </item></channel></rss>`;
 }
 
-function harness(options: { publishing?: string; rate?: string; indexNow?: string } = {}) {
+function harness(options: { publishing?: string; rate?: string; indexNow?: string; token?: string; githubStatus?: number } = {}) {
 	const repo = new MemoryNewsRepository();
-	const images = new MemoryImageStore();
 	const writeDraft = vi.fn(async () => ({ text: JSON.stringify(draft()), model: "dry-run" }));
-	const paint = vi.fn(async () => ({ bytes: TINY_PNG, contentType: "image/png", model: "dry-run" }));
+	const paint = vi.fn(async () => ({ bytes: TINY_JPEG, contentType: "image/jpeg", model: "dry-run" }));
 	const ping = vi.fn(async () => undefined);
-	const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+	const githubCalls: Array<{ url: string; method: string; authorization: string; body: string }> = [];
+	const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 		if (url === feed!.url) return new Response(rss(), { status: 200, headers: { "content-type": "application/rss+xml" } });
+		if (url.startsWith("https://api.github.com/")) {
+			const headers = new Headers(init?.headers);
+			githubCalls.push({
+				url,
+				method: init?.method ?? "GET",
+				authorization: headers.get("authorization") ?? "",
+				body: typeof init?.body === "string" ? init.body : "",
+			});
+			if (init?.method === "GET" || !init?.method) {
+				return new Response(JSON.stringify({ sha: "abc123" }), { status: 200, headers: { "x-ratelimit-remaining": "4000" } });
+			}
+			return new Response("{}", {
+				status: options.githubStatus ?? (init?.method === "DELETE" ? 200 : 201),
+				headers: { "x-ratelimit-remaining": "4000" },
+			});
+		}
 		return new Response("no", { status: 404 });
 	});
 	return {
 		repo,
-		images,
 		writeDraft,
 		paint,
 		ping,
 		fetchImpl,
+		githubCalls,
 		deps: {
 			env: {
 				AI_NEWS_PUBLISHING: options.publishing ?? "on",
 				AI_NEWS_ARTICLES_PER_HOUR: options.rate ?? "1",
 				AI_NEWS_SITE_ORIGIN: "https://3aik.com",
 				INDEXNOW_KEY: options.indexNow,
+				GITHUB_IMAGES_TOKEN: options.token,
 			},
 			repo,
-			images,
 			now,
 			fetchImpl: fetchImpl as typeof fetch,
 			writeDraft,
@@ -93,8 +109,8 @@ function harness(options: { publishing?: string; rate?: string; indexNow?: strin
 }
 
 describe("publish cycle", () => {
-	it("publishes one gated article and stores the image", async () => {
-		const { deps, repo, images, writeDraft, paint, ping } = harness();
+	it("publishes one gated article and commits a jpeg to GitHub", async () => {
+		const { deps, repo, writeDraft, paint, ping, githubCalls } = harness({ token: "ghp-test" });
 		const report = await runPublishCycle(deps);
 		expect(report.skipped).toBe("published");
 		expect(report.published).toHaveLength(1);
@@ -106,7 +122,41 @@ describe("publish cycle", () => {
 		expect(article?.sources[0]?.url).toBe("https://example.com/fresh-bulletin");
 		expect(article?.bodyText).toContain("The Verge");
 		expect(article?.bodyHtml).toBe("");
-		expect(images.objects.size).toBe(1);
+		expect(article?.imageKey).toMatch(/^images\/2026\/10\/[a-z0-9-]+\.jpg$/);
+		expect(githubCalls).toHaveLength(1);
+		expect(githubCalls[0]?.method).toBe("PUT");
+		expect(githubCalls[0]?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
+		expect(githubCalls[0]?.authorization).toBe("Bearer ghp-test");
+		expect(githubCalls[0]?.url).not.toContain("ghp-test");
+		expect(JSON.parse(githubCalls[0]?.body ?? "{}").content).toBe(Buffer.from(TINY_JPEG).toString("base64"));
+	});
+
+	it("publishes with no image when the token is missing, the painter throws, or GitHub rejects the commit", async () => {
+		const missing = harness();
+		const missingReport = await runPublishCycle(missing.deps);
+		expect(missingReport.published).toHaveLength(1);
+		expect(missing.paint).not.toHaveBeenCalled();
+		expect((await missing.repo.getBySlug(missingReport.published[0] ?? ""))?.imageKey).toBe("");
+		expect(await missing.repo.isRejected("https://example.com/fresh-bulletin", now.toISOString())).toBe(false);
+
+		const painted = harness({ token: "ghp-test" });
+		painted.paint.mockRejectedValue(new Error("image down"));
+		const paintedReport = await runPublishCycle(painted.deps);
+		expect(paintedReport.published).toHaveLength(1);
+		expect((await painted.repo.getBySlug(paintedReport.published[0] ?? ""))?.imageKey).toBe("");
+		expect(await painted.repo.isRejected("https://example.com/fresh-bulletin", now.toISOString())).toBe(false);
+
+		const rejected = harness({ token: "ghp-test", githubStatus: 500 });
+		const rejectedReport = await runPublishCycle(rejected.deps);
+		expect(rejectedReport.published).toHaveLength(1);
+		expect((await rejected.repo.getBySlug(rejectedReport.published[0] ?? ""))?.imageKey).toBe("");
+		expect(rejected.githubCalls[0]?.method).toBe("PUT");
+
+		const png = harness({ token: "ghp-test" });
+		png.paint.mockResolvedValue({ bytes: TINY_PNG, contentType: "image/png", model: "dry-run" });
+		const pngReport = await runPublishCycle(png.deps);
+		expect((await png.repo.getBySlug(pngReport.published[0] ?? ""))?.imageKey).toBe("");
+		expect(png.githubCalls).toHaveLength(0);
 	});
 
 	it("retries after a slop rejection and publishes the clean draft once", async () => {
@@ -180,13 +230,18 @@ describe("publish cycle", () => {
 		expect(await repo.isRejected("https://example.com/three", now.toISOString())).toBe(false);
 	});
 
-	it("keeps an image failure for an hour, not a day", async () => {
-		const { deps, repo, paint } = harness();
-		paint.mockRejectedValue(new Error("image down"));
+	it("deletes the D1 row before the GitHub file, and still drops the row if GitHub fails", async () => {
+		const { deps, repo, githubCalls } = harness({ token: "ghp-test", githubStatus: 500 });
+		deps.env.AI_NEWS_RETENTION_DAYS = "1";
+		const old = existing("https://example.com/aged", "2026-01-01T00:00:00.000Z");
+		old.imageKey = "images/2026/01/already-published.jpg";
+		old.imageType = "image/jpeg";
+		repo.articles.push(old);
 		await runPublishCycle(deps);
-		const url = "https://example.com/fresh-bulletin";
-		expect(await repo.isRejected(url, new Date(now.getTime() + 30 * 60 * 1000).toISOString())).toBe(true);
-		expect(await repo.isRejected(url, new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString())).toBe(false);
+		expect(repo.articles.find((article) => article.id === old.id)).toBeUndefined();
+		expect(githubCalls[0]?.method).toBe("GET");
+		expect(githubCalls[0]?.url).toContain("images/2026/01/already-published.jpg");
+		expect(githubCalls[1]?.method).toBe("DELETE");
 	});
 
 	it("stops when the wall clock is exhausted", async () => {

@@ -325,6 +325,11 @@ export function imageLimitReason(bytes: Uint8Array): "image_bytes" | "image_dime
 	return null;
 }
 
+/** 1x1 baseline JPEG with a SOF0 marker so the dimension check can read it. */
+export const TINY_JPEG = Uint8Array.from([
+	0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xd9,
+]);
+
 export const TINY_PNG = Uint8Array.from(
 	atob(
 		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",

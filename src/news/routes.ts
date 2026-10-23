@@ -9,15 +9,16 @@ import {
 	renderIndex,
 	renderNotFound,
 } from "./html";
+import { loadPublicImage, mediaPathFromRequest } from "./github-images";
 import { runPublishCycle } from "./pipeline";
-import { D1NewsRepository, R2ImageStore, type ImageStore, type NewsRepository } from "./repository";
+import { D1NewsRepository, type NewsRepository } from "./repository";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap } from "./syndication";
 import type { SitemapEntry, StoredArticle } from "./types";
 import { isCategory } from "./text";
 
 export interface NewsRequestDeps {
 	repo?: NewsRepository | null;
-	images?: ImageStore | null;
+	fetchImpl?: typeof fetch;
 }
 
 export function isNewsRequestPath(pathname: string, indexNowKey?: string): boolean {
@@ -33,7 +34,15 @@ function normalizePath(pathname: string): string {
 	return pathname;
 }
 
-function securityHeaders(contentType: string, cache: string): Headers {
+/**
+ * Pages keep img-src 'self'. Illustrations are proxied from jsDelivr onto
+ * /ai-news/media/..., so the policy does not allow cdn.jsdelivr.net.
+ * Image responses themselves cannot load anything.
+ */
+const PAGE_CSP = "default-src 'self'; base-uri 'self'; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'none'; style-src 'self'; upgrade-insecure-requests";
+const IMAGE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'";
+
+function securityHeaders(contentType: string, cache: string, csp = PAGE_CSP): Headers {
 	const headers = new Headers();
 	headers.set("content-type", contentType);
 	headers.set("cache-control", cache);
@@ -42,10 +51,7 @@ function securityHeaders(contentType: string, cache: string): Headers {
 	headers.set("referrer-policy", "strict-origin-when-cross-origin");
 	headers.set("strict-transport-security", "max-age=31536000");
 	headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
-	headers.set(
-		"content-security-policy",
-		"default-src 'self'; base-uri 'self'; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'none'; style-src 'self'; upgrade-insecure-requests",
-	);
+	headers.set("content-security-policy", csp);
 	return headers;
 }
 
@@ -144,7 +150,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 	const origin = siteOrigin(env, request);
 	const path = normalizePath(url.pathname);
 	const repo = "repo" in override ? (override.repo ?? null) : (env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB) : null);
-	const images = "images" in override ? (override.images ?? null) : (env.AI_NEWS_IMAGES ? new R2ImageStore(env.AI_NEWS_IMAGES) : null);
+	const fetchImpl = override.fetchImpl ?? fetch;
 
 	try {
 		const key = env.INDEXNOW_KEY?.trim();
@@ -179,32 +185,19 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			return xmlResponse(request, renderAtom(origin, articles), "application/atom+xml; charset=utf-8");
 		}
 
-		const imageMatch = /^\/ai-news\/image\/([0-9a-f-]{16,80})$/i.exec(path);
-		if (imageMatch) {
-			const id = imageMatch[1];
-			if (!repo || !images || !id) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			let article = null;
-			try {
-				article = await repo.getById(id);
-			} catch (error) {
-				logReadError(path, error);
-				return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			}
-			if (!article) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+		const mediaPath = mediaPathFromRequest(path);
+		if (mediaPath) {
 			let stored = null;
 			try {
-				stored = await images.get(article.imageKey);
+				stored = await loadPublicImage(mediaPath, fetchImpl);
 			} catch (error) {
 				logReadError(path, error);
 				return htmlResponse(request, renderNotFound(origin), 404, "no-store");
 			}
 			if (!stored) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			const headers = securityHeaders(stored.contentType || article.imageType, "public, max-age=86400");
-			if (request.method === "HEAD") {
-				await stored.body.cancel();
-				return new Response(null, { status: 200, headers });
-			}
-			return new Response(stored.body, { status: 200, headers });
+			const headers = securityHeaders(stored.contentType, "public, max-age=31536000, immutable", IMAGE_CSP);
+			if (request.method === "HEAD") return new Response(null, { status: 200, headers });
+			return new Response(stored.bytes, { status: 200, headers });
 		}
 
 		const feedMatch = /^\/ai-news\/(ai|technology|fashion|showbiz)\/(feed\.xml|atom\.xml)$/.exec(path);
@@ -271,14 +264,13 @@ export async function publishScheduled(env: Env, controller: ScheduledController
 		console.log(JSON.stringify({ message: "ai-news publishing paused" }));
 		return;
 	}
-	if (!env.AI_NEWS_DB || !env.AI_NEWS_IMAGES) {
+	if (!env.AI_NEWS_DB) {
 		console.error(JSON.stringify({ message: "ai-news bindings missing" }));
 		return;
 	}
 	await runPublishCycle({
 		env,
 		repo: new D1NewsRepository(env.AI_NEWS_DB),
-		images: new R2ImageStore(env.AI_NEWS_IMAGES),
 		now: new Date(controller.scheduledTime || Date.now()),
 	});
 }

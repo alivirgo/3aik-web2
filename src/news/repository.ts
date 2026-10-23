@@ -22,17 +22,6 @@ export interface NewsRepository {
 	deleteArticle(id: string): Promise<void>;
 }
 
-export interface StoredImage {
-	body: ReadableStream;
-	contentType: string;
-}
-
-export interface ImageStore {
-	put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
-	get(key: string): Promise<StoredImage | null>;
-	delete(key: string): Promise<void>;
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -287,7 +276,7 @@ export class D1NewsRepository implements NewsRepository {
 		return (result.results ?? []).map((row) => ({
 			id: readString(row, "id"),
 			imageKey: readString(row, "image_key"),
-		})).filter((entry) => entry.id && entry.imageKey);
+		})).filter((entry) => entry.id);
 	}
 
 	async deleteArticle(id: string): Promise<void> {
@@ -418,42 +407,5 @@ export class MemoryNewsRepository implements NewsRepository {
 
 	async deleteArticle(id: string): Promise<void> {
 		this.articles = this.articles.filter((article) => article.id !== id);
-	}
-}
-
-export class MemoryImageStore implements ImageStore {
-	readonly objects = new Map<string, { bytes: Uint8Array; contentType: string }>();
-
-	async put(key: string, bytes: Uint8Array, contentType: string): Promise<void> {
-		this.objects.set(key, { bytes, contentType });
-	}
-
-	async get(key: string): Promise<StoredImage | null> {
-		const stored = this.objects.get(key);
-		if (!stored) return null;
-		const copy = stored.bytes.slice();
-		return { body: new Blob([copy]).stream(), contentType: stored.contentType };
-	}
-
-	async delete(key: string): Promise<void> {
-		this.objects.delete(key);
-	}
-}
-
-export class R2ImageStore implements ImageStore {
-	constructor(private readonly bucket: R2Bucket) {}
-
-	async put(key: string, bytes: Uint8Array, contentType: string): Promise<void> {
-		await this.bucket.put(key, bytes, { httpMetadata: { contentType } });
-	}
-
-	async get(key: string): Promise<StoredImage | null> {
-		const object = await this.bucket.get(key);
-		if (!object) return null;
-		return { body: object.body, contentType: object.httpMetadata?.contentType ?? "application/octet-stream" };
-	}
-
-	async delete(key: string): Promise<void> {
-		await this.bucket.delete(key);
 	}
 }
