@@ -44,7 +44,10 @@ describe("GitHub image storage", () => {
 		expect(imageLimitReason(webp)).toBeNull();
 		expect(imageLimitReason(TINY_JPEG)).toBeNull();
 		expect(githubImagePath("2026-10-23T12:07:00.000Z", "short-bulletin", "webp")).toBe("images/2026/10/short-bulletin.webp");
+		expect(githubImagePath("2026-10-23T12:07:00.000Z", "short-bulletin", "jpg", "abcd1234")).toBe("images/2026/10/short-bulletin-abcd1234.jpg");
+		expect(githubImagePath("2026-10-23T12:07:00.000Z", "a".repeat(80), "webp", "abcd1234")).toBe(`images/2026/10/${"a".repeat(71)}-abcd1234.webp`);
 		expect(githubImagePath("2026-10-23T12:07:00.000Z", "../secret", "jpg")).toBeNull();
+		expect(githubImagePath("2026-10-23T12:07:00.000Z", "short-bulletin", "jpg", "../secret")).toBeNull();
 		expect(MAX_GITHUB_DELETES_PER_RUN).toBeLessThan(20);
 		expect(retryAfterMs("30", 0)).toBe(30_000);
 	});
@@ -112,6 +115,17 @@ describe("GitHub image storage", () => {
 		expect(refused.ok).toBe(false);
 		expect(refused.commitSha).toBe("");
 		expect(different.mock.calls.filter((call) => call[1]?.method === "PUT")).toHaveLength(1);
+
+		const dropped = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			if (init?.method === "PUT") return new Response(JSON.stringify({ message: "sha wasn't supplied." }), { status: 422 });
+			throw new Error("network down");
+		});
+		await expect(commitImageFile("ghp-test", path, TINY_JPEG, dropped as typeof fetch)).resolves.toEqual({
+			ok: false,
+			pause: false,
+			commitSha: "",
+			retryAfterMs: null,
+		});
 	});
 
 	it("returns a pause from delete so retention can stop", async () => {

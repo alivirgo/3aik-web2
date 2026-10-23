@@ -1,6 +1,6 @@
 # 3aik News
 
-`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or GitHub while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Apply the D1 migrations, seed the public image repo, create the fine-grained token, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
+`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` is `on` in `wrangler.jsonc`, which matches the live worker. A later deploy of this file keeps the cron writing. A missing value is still off, and while publishing is off the cron returns before it opens D1 or GitHub. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Migrations `0001` through `0003` are applied, the image repo has a first commit on `main`, and `GITHUB_IMAGES_TOKEN` is set. This change does not deploy anything.
 
 ## What readers are told
 
@@ -32,7 +32,7 @@ npx wrangler secret put GITHUB_IMAGES_TOKEN
 
 Paste the token when prompted. For local dev, put the same name in `.dev.vars` (gitignored). See `.dev.vars.example`. If the secret is missing, or a commit fails, the article is still published with no image.
 
-Then set `AI_NEWS_PUBLISHING` to `on` in `wrangler.jsonc` when you want the cron to write.
+`AI_NEWS_PUBLISHING` is already `on` in `wrangler.jsonc`. Leave it on. A one-off `wrangler deploy --var AI_NEWS_PUBLISHING:on` is replaced by the next deploy of this file, so the file is what keeps publishing on.
 
 Local equivalents:
 
@@ -61,7 +61,7 @@ Bindings added to `wrangler.jsonc`:
 | `AI` | Workers AI | already on the worker |
 | `GITHUB_IMAGES_TOKEN` | Secret | contents:write on `alivirgo/3aik-ai-news-images` only |
 
-Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, and `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`). Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>.webp` (JPEG uses `.jpg`) through the GitHub Contents API. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
+Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, and `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`). Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>-<8-char-id>.webp` (JPEG uses `.jpg`) through the GitHub Contents API. The suffix is the first 8 characters of the article id, so a leftover file from a failed delete does not block a later article that reuses the title. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
 
 ## Rate, schedule, and pause
 
@@ -69,7 +69,7 @@ Article rows, source URLs, and rotation counters are in D1. Migrations: `migrati
 
 Cron ticks are `7 * * * *` and `37 * * * *` (minute 7 and minute 37, UTC). Each tick publishes at most `ceil(rate / 2)` articles, and never more than the room left in the current UTC hour. A rate of 1 publishes on the first tick that still has room and skips the other. A rate of 2 publishes one article on each tick. A rate of 4 publishes up to two per tick.
 
-Publishing is off unless `AI_NEWS_PUBLISHING` is `on`, `true`, `yes`, or `1`. A missing value is off. `false`, `paused`, and `0` also pause. Prefer the config file. A dashboard-only edit can be overwritten by the next `wrangler deploy`.
+Publishing runs when `AI_NEWS_PUBLISHING` is `on`, `true`, `yes`, or `1`. The checked-in value is `on`. A missing value is off. `false`, `paused`, and `0` also pause. Prefer the config file. A dashboard-only edit can be overwritten by the next `wrangler deploy`.
 
 While paused, the cron does not take the publish lock and does not read or write D1 or GitHub. `/ai-news` still serves pages, feeds, and sitemaps from D1 when the database exists. If the database is missing, lists and feeds are empty and a story URL returns 404.
 
@@ -92,7 +92,7 @@ The run budget is the per-article number times the slots for that tick, clamped 
 
 Each `AI.run` passes `{ rejectIfBusy: true }`, so a busy model fails instead of waiting in a capacity queue. The desk also stops waiting after the per-call timeout. That timer does not cancel inference that has already started, so a timed-out call may still be billed.
 
-The publish lock lasts longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
+The publish lock is taken before retention pruning and is still held when the model clock starts. It lasts longer than pruning (five GitHub deletes, two timed requests each, plus the pause between them), longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
 
 Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20. The D1 row is deleted first, then the GitHub file, so a failed image delete cannot leave a story that points at a missing file. Lifetime author counters stay, so rotation does not restart. To clean by hand:
 
@@ -104,13 +104,13 @@ DELETE FROM source_rejections WHERE expires_at <= datetime('now');
 
 Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. A PNG from an image model is not stored: the desk tries the next image model inside the same image budget. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
 
-A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image.
+A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image. A network error during that lookup is caught inside the upload, so the draft is kept and the article still publishes with no image.
 
 A 429 is a rate limit. A 403 is a rate limit only when the remaining budget is 0, `Retry-After` is set, or the body names a secondary rate limit or abuse detection. A plain permission 403 does not pause the tick. The desk does not sleep through `Retry-After` (a long wait would run past the 45 second wall). It stops further Contents API calls for that tick and logs the delay. Further image commits in that tick are also skipped when fewer than 20 requests remain on the token.
 
 Retention asks D1 for up to 20 old rows, then deletes at most 5 GitHub files in that tick, with 250 ms between those deletes. `deleteImageFile` returns whether GitHub asked for a pause. On a pause, retention stops and that tick does not commit a new image. The row already removed can leave its file in the repo. Later rows stay until a later tick. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
 
-Readers load `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>.webp`. The Worker proxies that file only when D1 has the same `image_key` and `image_commit`. An unknown key is a 404 with `cache-control: public, max-age=60` and is not fetched from jsDelivr, so a stranger cannot force unlimited CDN reads. A D1 error, and a failed fetch for a key that does exist, is `no-store`. `HEAD` on a known image returns the stored content type and an empty body. It does not download the file. A known `GET` fetches that one path from jsDelivr at the commit SHA (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo and that same SHA). `@main` is not used: jsDelivr caches a branch tip for about 12 hours, and a year-long immutable response would keep serving a moving file. The write token is not sent on that read. A successful image is answered with `cache-control: public, max-age=31536000, immutable`. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
+Readers load `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp`. The Worker proxies that file only when D1 has the same `image_key` and `image_commit`. An unknown key is a 404 with `cache-control: public, max-age=60` and is not fetched from jsDelivr, so a stranger cannot force unlimited CDN reads. A D1 error, and a failed fetch for a key that does exist, is `no-store`. `HEAD` on a known image returns the stored content type and an empty body. It does not download the file. A known `GET` fetches that one path from jsDelivr at the commit SHA (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo and that same SHA). `@main` is not used: jsDelivr caches a branch tip for about 12 hours, and a year-long immutable response would keep serving a moving file. The write token is not sent on that read. A successful image is answered with `cache-control: public, max-age=31536000, immutable`. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
 
 ## Taking an image down, and repo growth
 
@@ -179,7 +179,7 @@ Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technol
 | `/ai-news/<category>/feed.xml` and `atom.xml` | Section feeds |
 | `/ai-news/sitemap.xml` | News section sitemap |
 | `/ai-news/news-sitemap.xml` | Google News sitemap (stories from the last 48 hours) |
-| `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>.webp` | Illustration, proxied from the public image repo at that commit SHA |
+| `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp` | Illustration, proxied from the public image repo at that commit SHA |
 | `/llms.txt` | Notes for answer engines, including `/ai-news` |
 
 `public/robots.txt` still allows all crawlers at `/` and still lists `https://3aik.com/sitemap.xml`. It also names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers, and adds the two news sitemaps. `public/sitemap.xml` still lists the home page and adds the news section URLs.

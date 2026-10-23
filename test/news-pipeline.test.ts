@@ -130,7 +130,7 @@ describe("publish cycle", () => {
 		expect(article?.sources[0]?.url).toBe("https://example.com/fresh-bulletin");
 		expect(article?.bodyText).toContain("The Verge");
 		expect(article?.bodyHtml).toBe("");
-		expect(article?.imageKey).toMatch(/^images\/2026\/10\/[a-z0-9-]+\.jpg$/);
+		expect(article?.imageKey).toBe(`images/2026/10/${article?.slug}-${article?.id.slice(0, 8)}.jpg`);
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
 		expect(githubCalls).toHaveLength(1);
 		expect(githubCalls[0]?.method).toBe("PUT");
@@ -300,6 +300,20 @@ describe("publish cycle", () => {
 		});
 		await runPublishCycle(deps);
 		expect(writeDraft).toHaveBeenCalledTimes(1);
+	});
+
+	it("stores a new image path when a later article reuses a deleted slug", async () => {
+		const { deps, repo } = harness({ token: "ghp-test" });
+		const first = await runPublishCycle(deps);
+		const firstArticle = repo.articles[0];
+		expect(first.published).toEqual([firstArticle?.slug]);
+		repo.articles.length = 0;
+		const second = await runPublishCycle(deps);
+		const secondArticle = repo.articles[0];
+		expect(second.published).toEqual([firstArticle?.slug]);
+		expect(secondArticle?.slug).toBe(firstArticle?.slug);
+		expect(secondArticle?.imageKey).toBe(`images/2026/10/${secondArticle?.slug}-${secondArticle?.id.slice(0, 8)}.jpg`);
+		expect(secondArticle?.imageKey).not.toBe(firstArticle?.imageKey);
 	});
 
 	it("releases the lock after a cycle", async () => {

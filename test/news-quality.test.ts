@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AUTHORS, authorsIn, pickAuthor, pickCategory } from "../src/news/authors";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, TEXT_MAX_TOKENS, imageCallBudget, lockTtlMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
+import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, TEXT_MAX_TOKENS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
 import { buildArticlePrompt, extractModelText, parseArticleDraft, withTimeout } from "../src/news/model";
 import { assessDraft, copiedFromSource, slopHits } from "../src/news/quality";
 import type { ArticleDraft, Category, QualityCorpusItem, SourceRef } from "../src/news/types";
@@ -232,6 +232,7 @@ describe("schedule math and model parsing", () => {
 		const listed = wrangler.match(/"crons":\s*\[([\s\S]*?)\]/)?.[1] ?? "";
 		const crons = [...listed.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
 		expect(crons).toHaveLength(CRON_TICKS_PER_HOUR);
+		expect(wrangler).toMatch(/"AI_NEWS_PUBLISHING":\s*"on"/);
 		expect(slotsThisRun(1, 0)).toBe(1);
 		expect(slotsThisRun(1, 1)).toBe(0);
 		expect(slotsThisRun(2, 0)).toBe(1);
@@ -258,8 +259,8 @@ describe("schedule math and model parsing", () => {
 		const env = { AI_NEWS_ARTICLES_PER_HOUR: "1" };
 		const slots = 1;
 		const worst = textCallBudget(env, slots) * textTimeoutMs(env) + imageCallBudget(env, slots) * imageTimeoutMs(env);
-		expect(lockTtlMs(env)).toBeGreaterThan(worst);
-		expect(lockTtlMs(env)).toBeGreaterThan(wallBudgetMs(env));
+		expect(lockTtlMs(env)).toBe(Math.max(worst, wallBudgetMs(env)) + pruneBudgetMs() + 60_000);
+		expect(pruneBudgetMs()).toBeGreaterThan(0);
 		expect(imageCallBudget({ AI_NEWS_ARTICLES_PER_HOUR: "1", AI_NEWS_IMAGE_CALLS_PER_ARTICLE: "1" }, slotsThisRun(1, 0))).toBeGreaterThanOrEqual(IMAGE_MODELS.length);
 	});
 

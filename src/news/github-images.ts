@@ -1,4 +1,7 @@
+import { GITHUB_REQUEST_TIMEOUT_MS } from "./config";
 import { detectImageType } from "./text";
+
+export { GITHUB_DELETE_PACE_MS, GITHUB_REQUEST_TIMEOUT_MS, MAX_GITHUB_DELETES_PER_RUN, pruneBudgetMs } from "./config";
 
 /** Public repo that holds news illustrations. The Worker secret can write only this repo. */
 export const IMAGE_REPO = "alivirgo/3aik-ai-news-images";
@@ -13,10 +16,6 @@ export const GITHUB_IMAGE_MAX_BYTES = 1_000_000;
 /** Leave headroom on the token's hourly budget. Further images in this tick are skipped. */
 const RATE_LIMIT_FLOOR = 20;
 
-/** Retention deletes stay well under a burst of 20 commits. Each delete is two API calls. */
-export const MAX_GITHUB_DELETES_PER_RUN = 5;
-export const GITHUB_DELETE_PACE_MS = 250;
-
 const IMAGE_PATH = /^images\/\d{4}\/\d{2}\/[a-z0-9-]{1,80}\.(webp|jpg)$/;
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const CDN_HOSTS = new Set(["cdn.jsdelivr.net", "fastly.jsdelivr.net"]);
@@ -29,13 +28,21 @@ export function isGitHubImagePath(path: string): boolean {
 	return IMAGE_PATH.test(path);
 }
 
-export function githubImagePath(publishedAt: string, slug: string, extension: "webp" | "jpg"): string | null {
-	if (!/^[a-z0-9-]{1,80}$/.test(slug)) return null;
+/**
+ * Image file name is the slug plus an optional 8-character suffix. The suffix
+ * keeps a new article off a file that retention failed to delete. The stem is
+ * shortened so the whole name still fits the 80-character path limit.
+ */
+export function githubImagePath(publishedAt: string, slug: string, extension: "webp" | "jpg", suffix = ""): string | null {
+	if (suffix && !/^[a-z0-9]{8}$/.test(suffix)) return null;
+	const extra = suffix ? `-${suffix}` : "";
+	const stem = slug.slice(0, 80 - extra.length).replace(/-+$/g, "");
+	if (!/^[a-z0-9-]{1,80}$/.test(stem)) return null;
 	const date = new Date(publishedAt);
 	if (Number.isNaN(date.getTime())) return null;
 	const year = date.getUTCFullYear();
 	const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-	const path = `images/${year}/${month}/${slug}.${extension}`;
+	const path = `images/${year}/${month}/${stem}${extra}.${extension}`;
 	return isGitHubImagePath(path) ? path : null;
 }
 
@@ -184,8 +191,10 @@ function lowRemaining(remaining: number | null): boolean {
  * Create the file. A 422 means the path already exists: reuse that commit when the
  * bytes match, and leave a different file untouched. The stored id is commit.sha,
  * which is safe to pin. The blob sha is only the Contents API update token, and
- * this path does not update. Rate-limit responses are not retried. The token stays
- * out of the URL. A long Retry-After stops the tick instead of sleeping through it.
+ * this path does not update. The lookup is awaited inside this try, so a network
+ * error becomes a miss and the draft is still published. Rate-limit responses are
+ * not retried. The token stays out of the URL. A long Retry-After stops the tick
+ * instead of sleeping through it.
  */
 export async function commitImageFile(
 	token: string,
@@ -204,7 +213,7 @@ export async function commitImageFile(
 				content: bytesToBase64(bytes),
 				branch: IMAGE_BRANCH,
 			}),
-			signal: AbortSignal.timeout(10_000),
+			signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
 			redirect: "manual",
 		});
 		const remaining = rateRemaining(created);
@@ -231,7 +240,7 @@ export async function commitImageFile(
 			console.error(JSON.stringify({ message: "ai-news image commit failed", status: created.status, path: repoPath }));
 			return WRITE_MISS;
 		}
-		return reuseMatchingCommit(token, repoPath, bytes, fetchImpl);
+		return await reuseMatchingCommit(token, repoPath, bytes, fetchImpl);
 	} catch (error) {
 		console.error(JSON.stringify({ message: "ai-news image commit error", path: repoPath, error: redacted(error, token) }));
 		return WRITE_MISS;
@@ -246,7 +255,7 @@ async function reuseMatchingCommit(
 ): Promise<GitHubWriteResult> {
 	const lookup = await fetchImpl(`${contentsUrl(repoPath)}?ref=${IMAGE_BRANCH}`, {
 		headers: githubHeaders(token, false),
-		signal: AbortSignal.timeout(10_000),
+		signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
 		redirect: "manual",
 	});
 	const lookupRemaining = rateRemaining(lookup);
@@ -263,7 +272,7 @@ async function reuseMatchingCommit(
 	}
 	const history = await fetchImpl(commitsUrl(repoPath), {
 		headers: githubHeaders(token, false),
-		signal: AbortSignal.timeout(10_000),
+		signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
 		redirect: "manual",
 	});
 	const historyRemaining = rateRemaining(history);
@@ -291,7 +300,7 @@ export async function deleteImageFile(
 	try {
 		const lookup = await fetchImpl(`${contentsUrl(repoPath)}?ref=${IMAGE_BRANCH}`, {
 			headers: githubHeaders(token, false),
-			signal: AbortSignal.timeout(10_000),
+			signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
 			redirect: "manual",
 		});
 		const lookupRemaining = rateRemaining(lookup);
@@ -325,7 +334,7 @@ export async function deleteImageFile(
 				sha: blobSha,
 				branch: IMAGE_BRANCH,
 			}),
-			signal: AbortSignal.timeout(10_000),
+			signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
 			redirect: "manual",
 		});
 		const removedRemaining = rateRemaining(removed);

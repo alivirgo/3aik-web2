@@ -227,14 +227,31 @@ export function imageCallBudget(env: NewsEnv, slots: number): number {
 	return Math.min(8, perSlot * Math.max(1, slots));
 }
 
+/** Retention deletes stay well under a burst of 20 commits. Each delete is two API calls. */
+export const MAX_GITHUB_DELETES_PER_RUN = 5;
+export const GITHUB_DELETE_PACE_MS = 250;
+/** One Contents API call. A delete sends two of these back to back. */
+export const GITHUB_REQUEST_TIMEOUT_MS = 10_000;
+
 /**
- * Lock must outlast the longest run we can still be inside: every budgeted
- * model call hitting its timeout, or the wall clock, whichever is longer.
+ * Longest retention can sit on GitHub before the model clock starts.
+ * The publish lock adds this on top of the model budget.
+ */
+export function pruneBudgetMs(): number {
+	const calls = MAX_GITHUB_DELETES_PER_RUN * 2 * GITHUB_REQUEST_TIMEOUT_MS;
+	const pace = Math.max(0, MAX_GITHUB_DELETES_PER_RUN - 1) * GITHUB_DELETE_PACE_MS;
+	return calls + pace;
+}
+
+/**
+ * Lock must outlast pruning and the longest run we can still be inside.
+ * Pruning finishes before the model clock starts, so its GitHub timeouts are
+ * added to every budgeted call hitting its timeout, or the wall clock.
  */
 export function lockTtlMs(env: NewsEnv): number {
 	const slots = Math.max(1, slotsThisRun(articlesPerHour(env), 0));
 	const worstCase = textCallBudget(env, slots) * textTimeoutMs(env) + imageCallBudget(env, slots) * imageTimeoutMs(env);
-	return Math.max(wallBudgetMs(env), worstCase) + 60_000;
+	return Math.max(wallBudgetMs(env), worstCase) + pruneBudgetMs() + 60_000;
 }
 
 export function slotsThisRun(rate: number, publishedThisHour: number): number {

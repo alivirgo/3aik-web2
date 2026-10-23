@@ -31,7 +31,7 @@
   },
   "vars": {
     "AI_NEWS_ARTICLES_PER_HOUR": "1",
-    "AI_NEWS_PUBLISHING": "off",
+    "AI_NEWS_PUBLISHING": "on",
     "AI_NEWS_SITE_ORIGIN": "https://3aik.com",
     "AI_NEWS_TEXT_CALLS_PER_ARTICLE": "6",
     "AI_NEWS_IMAGE_CALLS_PER_ARTICLE": "2",

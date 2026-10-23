@@ -216,6 +216,7 @@ async function storeIllustration(
 	deps: PublishDependencies,
 	prompt: string,
 	slug: string,
+	imageSuffix: string,
 	publishedAt: string,
 	budget: RunBudget,
 	writesPaused: boolean,
@@ -243,7 +244,7 @@ async function storeIllustration(
 	}
 	const detected = detectImageType(image.bytes);
 	const extension = detected ? extensionForMime(detected.mime) : null;
-	const path = extension ? githubImagePath(publishedAt, slug, extension) : null;
+	const path = extension ? githubImagePath(publishedAt, slug, extension, imageSuffix) : null;
 	if (!detected || !path || imageLimitReason(image.bytes) || image.bytes.byteLength > GITHUB_IMAGE_MAX_BYTES) {
 		console.error(JSON.stringify({ message: "ai-news image skipped", reason: "type-or-size", model: image.model }));
 		return { ...EMPTY_PICTURE, model: image.model };
@@ -399,9 +400,10 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				continue;
 			}
 			const id = crypto.randomUUID();
+			const imageSuffix = id.slice(0, 8);
 			let slug = slugify(drafted.draft.title);
-			if (await deps.repo.hasSlug(slug)) slug = `${slug}-${id.slice(0, 8)}`;
-			const picture = await storeIllustration(deps, drafted.draft.imagePrompt, slug, nowIso, budget, githubWritesPaused);
+			if (await deps.repo.hasSlug(slug)) slug = `${slug}-${imageSuffix}`;
+			const picture = await storeIllustration(deps, drafted.draft.imagePrompt, slug, imageSuffix, nowIso, budget, githubWritesPaused);
 			if (picture.pauseWrites) githubWritesPaused = true;
 			const article: StoredArticle = {
 				id,
