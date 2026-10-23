@@ -1,0 +1,216 @@
+# 3aik News
+
+`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or GitHub while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Apply the D1 migrations, seed the public image repo, create the fine-grained token, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
+
+## What readers are told
+
+Articles are written with AI assistance and checked by the desk rules before publishing. The 24 bylines are editorial personas, not real people. Bios describe a beat and a voice. They do not claim a degree, an employer, or a human career.
+
+Every news page, including articles, carries this footer:
+
+> 3aik.com takes no responsibility for the accuracy of news. Readers should verify claims with the linked original sources.
+
+The same point is on [/ai-news/disclaimer](https://3aik.com/ai-news/disclaimer). [/ai-news/about](https://3aik.com/ai-news/about) explains the personas and the check.
+
+## One-time resources
+
+From the repo root, with Wrangler logged into the 3aik account:
+
+The D1 database already exists. Binding name `AI_NEWS_DB`, database name `3aik-ai-news`, id `87a550eb-1752-4cec-8c20-dd6b839099e2`.
+
+```sh
+npx wrangler d1 migrations apply 3aik-ai-news --remote
+```
+
+Images are files in the public repo [alivirgo/3aik-ai-news-images](https://github.com/alivirgo/3aik-ai-news-images). Create that public repo and put a first commit on `main` before the cron runs. The Contents API answers 409 on a repository that has no commits, so an empty default branch cannot receive the first image. Adding a README when you create the repo is enough.
+
+Create a fine-grained personal access token with **contents: write** on that repo only. Grant the token no other repository. GitHub requires an expiry on a fine-grained token (at most one year). When it expires, image commits fail and articles still publish with no picture until you mint a new token and run `npx wrangler secret put GITHUB_IMAGES_TOKEN` again. Keep the token out of git and out of `wrangler.jsonc`. Set a reminder before the expiry date.
+
+```sh
+npx wrangler secret put GITHUB_IMAGES_TOKEN
+```
+
+Paste the token when prompted. For local dev, put the same name in `.dev.vars` (gitignored). See `.dev.vars.example`. If the secret is missing, or a commit fails, the article is still published with no image.
+
+Then set `AI_NEWS_PUBLISHING` to `on` in `wrangler.jsonc` when you want the cron to write.
+
+Local equivalents:
+
+```sh
+npx wrangler d1 migrations apply 3aik-ai-news --local
+npx wrangler dev --test-scheduled
+```
+
+Trigger one cron tick locally (Wrangler 4.123, the version in this repo):
+
+```sh
+curl "http://localhost:8787/cdn-cgi/local/scheduled?cron=7+*+*+*+*"
+```
+
+Deploy when you are ready. Do not treat a dry run as a deploy.
+
+```sh
+npx wrangler deploy
+```
+
+Bindings added to `wrangler.jsonc`:
+
+| Binding | Kind | Name |
+| --- | --- | --- |
+| `AI_NEWS_DB` | D1 | `3aik-ai-news` |
+| `AI` | Workers AI | already on the worker |
+| `GITHUB_IMAGES_TOKEN` | Secret | contents:write on `alivirgo/3aik-ai-news-images` only |
+
+Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, and `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`). Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>.webp` (JPEG uses `.jpg`) through the GitHub Contents API. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
+
+## Rate, schedule, and pause
+
+`AI_NEWS_ARTICLES_PER_HOUR` is the cap for the whole site, not per category. It starts at `"1"`. Set it to `"2"` for the top of the initial range, then higher later. Values above 8 are clamped to 8. `0` publishes nothing.
+
+Cron ticks are `7 * * * *` and `37 * * * *` (minute 7 and minute 37, UTC). Each tick publishes at most `ceil(rate / 2)` articles, and never more than the room left in the current UTC hour. A rate of 1 publishes on the first tick that still has room and skips the other. A rate of 2 publishes one article on each tick. A rate of 4 publishes up to two per tick.
+
+Publishing is off unless `AI_NEWS_PUBLISHING` is `on`, `true`, `yes`, or `1`. A missing value is off. `false`, `paused`, and `0` also pause. Prefer the config file. A dashboard-only edit can be overwritten by the next `wrangler deploy`.
+
+While paused, the cron does not take the publish lock and does not read or write D1 or GitHub. `/ai-news` still serves pages, feeds, and sitemaps from D1 when the database exists. If the database is missing, lists and feeds are empty and a story URL returns 404.
+
+## Spend, time, and retention
+
+Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`:
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `AI_NEWS_TEXT_CALLS_PER_ARTICLE` | 6 | Text `AI.run` calls per article slot this tick. A 3-model cascade counts one call per model. |
+| `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 2 | Image calls per slot. The budget is at least the two configured image models, so the FLUX.1 Schnell fallback still runs when the hourly rate is 1. |
+| `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
+| `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, and timeout failures block it for 1 hour. A missing image, a failed image model, or a failed GitHub commit does not block the source: the article publishes with no picture. |
+| `AI_NEWS_WALL_MS` | 45000 | Stop starting new work after this much wall time. |
+| `AI_NEWS_TEXT_TIMEOUT_MS` | 15000 | Per text call. |
+| `AI_NEWS_IMAGE_TIMEOUT_MS` | 20000 | Per image call. |
+| `AI_NEWS_RETENTION_DAYS` | 180 | Delete articles older than this during a publish tick. `0` disables cleanup. |
+
+The run budget is the per-article number times the slots for that tick, clamped (24 text calls, 8 image calls). Each image slot still gets at least one try per configured image model. Text output is capped at 2048 tokens.
+
+Each `AI.run` passes `{ rejectIfBusy: true }`, so a busy model fails instead of waiting in a capacity queue. The desk also stops waiting after the per-call timeout. That timer does not cancel inference that has already started, so a timed-out call may still be billed.
+
+The publish lock lasts longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
+
+Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20. The D1 row is deleted first, then the GitHub file, so a failed image delete cannot leave a story that points at a missing file. Lifetime author counters stay, so rotation does not restart. To clean by hand:
+
+```sql
+DELETE FROM article_sources WHERE article_id IN (SELECT id FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z');
+DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
+DELETE FROM source_rejections WHERE expires_at <= datetime('now');
+```
+
+Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. A PNG from an image model is not stored: the desk tries the next image model inside the same image budget. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
+
+A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image.
+
+A 429 is a rate limit. A 403 is a rate limit only when the remaining budget is 0, `Retry-After` is set, or the body names a secondary rate limit or abuse detection. A plain permission 403 does not pause the tick. The desk does not sleep through `Retry-After` (a long wait would run past the 45 second wall). It stops further Contents API calls for that tick and logs the delay. Further image commits in that tick are also skipped when fewer than 20 requests remain on the token.
+
+Retention asks D1 for up to 20 old rows, then deletes at most 5 GitHub files in that tick, with 250 ms between those deletes. `deleteImageFile` returns whether GitHub asked for a pause. On a pause, retention stops and that tick does not commit a new image. The row already removed can leave its file in the repo. Later rows stay until a later tick. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
+
+Readers load `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>.webp`. The Worker proxies that file only when D1 has the same `image_key` and `image_commit`. An unknown key is a 404 with `cache-control: public, max-age=60` and is not fetched from jsDelivr, so a stranger cannot force unlimited CDN reads. A D1 error, and a failed fetch for a key that does exist, is `no-store`. `HEAD` on a known image returns the stored content type and an empty body. It does not download the file. A known `GET` fetches that one path from jsDelivr at the commit SHA (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo and that same SHA). `@main` is not used: jsDelivr caches a branch tip for about 12 hours, and a year-long immutable response would keep serving a moving file. The write token is not sent on that read. A successful image is answered with `cache-control: public, max-age=31536000, immutable`. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
+
+## Taking an image down, and repo growth
+
+A published image stays in two public places. Git history of `alivirgo/3aik-ai-news-images` keeps the blob at the commit SHA stored in D1. Deleting the file on `main` does not remove that commit. The Worker edge cache can also keep a successful response for one year.
+
+To take one image down:
+
+1. Rewrite history so the blob is gone (`git filter-repo` or BFG), then force-push `main`. A normal delete commit is not enough, because readers pin the old SHA.
+2. Clear `image_key` and `image_commit` on the D1 row, or delete the article. The proxy only fetches a path that D1 still lists, so clearing the row stops new origin fetches.
+3. Purge the Cloudflare cache for `https://3aik.com/ai-news/media/<old-sha>/images/...`. A cached 200 is not replaced by the 60 second 404 that an unknown key gets later. Until the purge, the edge can still serve the picture.
+
+At about one image an hour, under the 1 MB cap, the repo grows on the order of 1 to 3 GB a year once git objects and history are counted. Plan a new public repo when this one approaches 1 GB (GitHub's recommended repository size, and a more comfortable size for jsDelivr). Point new commits at the new repo, for example one repo per year, and leave old SHAs in the old repo so published URLs keep working. `IMAGE_REPO` is a constant in `src/news/github-images.ts` today, so that split is a later code change. Do not rewrite old commits only to move them.
+
+## Feeds
+
+Each fetch follows at most three redirects, and only to `https` on the same site. A `www` host and its apex count as the same site. Any other hostname does not. The response must be `xml`, `rss`, or `atom` (`text/xml`, `application/xml`, `application/rss+xml`, `application/atom+xml`, `application/rdf+xml`, `text/rss`). The body is streamed and dropped above 2 MB. An item with no publication date is stale and is not used.
+
+## Models
+
+Text, in order, via the existing `AI` binding:
+
+1. `@cf/openai/gpt-oss-120b` (primary, general-purpose reasoning)
+2. `@cf/moonshotai/kimi-k2.6`
+3. `@cf/zai-org/glm-4.7-flash`
+
+Image:
+
+1. `@cf/black-forest-labs/flux-2-klein-9b` (multipart prompt, 1024 square)
+2. `@cf/black-forest-labs/flux-1-schnell`
+
+Checked against the Workers AI catalog (gpt-oss-120b, Kimi K2.6, GLM 4.7 Flash, FLUX.2 Klein 9B, FLUX.1 Schnell). Illustrations are abstract. Prompts are rejected if they ask for a person, a face, or a logo. No extra API key is required for Workers AI.
+
+## Sources and the quality gate
+
+Feeds are listed in `src/news/config.ts` (The Verge, TechCrunch, MIT Technology Review, BBC News, Ars Technica, WIRED, The Guardian, Vogue, WWD, Variety, Deadline). Each run fetches a rotating subset. A story older than 96 hours is skipped. A source URL is stored once, so the same story is not published again.
+
+Before a row is inserted the draft must:
+
+- contain no em dash (U+2014), no en dash used as a clause break, no figure dash, minus sign, or two-em dash (U+2012, U+2212, U+FE58, U+FE31, U+2E3A), and no `---` or spaced `--`
+- avoid the slop list in `src/news/quality.ts` (`delve`, `in today's fast-paced`, `game-changer`, `it's worth noting`, `tapestry`, `landscape`, `in conclusion`, and the rest of that list)
+- be 400 to 1100 words, with at least eight sentences, one of 12 words or fewer, one of 25 words or more, and an uneven rhythm
+- not copy an 8-word sequence from the source title or excerpt
+- not repeat a title or a source URL, and not be too similar to a recent article
+- name the outlet in the body
+- for fashion and showbiz, attribute disputes in the same sentence as the claim
+
+Failures are logged as JSON and the model is asked to try again, up to three times per story. A bad image response stops that tick so the desk does not burn a string of text calls.
+
+New articles can link up to two older stories in the same category. The link is added in that persona's own sentence if the draft did not include it.
+
+## Personas
+
+Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technology 6, Fashion 5, Showbiz 5. The scheduler picks the least-published persona in the least-published category that has a fresh source. The roster is on the about page and in `src/news/authors.ts`.
+
+## URLs
+
+| Path | Page |
+| --- | --- |
+| `/ai-news` | Latest stories |
+| `/ai-news/ai`, `/technology`, `/fashion`, `/showbiz` | Sections |
+| `/ai-news/author/<id>` | Persona |
+| `/ai-news/article/<slug>` | Story, with canonical URL, Open Graph, NewsArticle JSON-LD, breadcrumbs, TL;DR, and FAQ |
+| `/ai-news/about` | How the desk works |
+| `/ai-news/disclaimer` | Accuracy disclaimer |
+| `/ai-news/feed.xml`, `/ai-news/atom.xml` | Site feeds |
+| `/ai-news/<category>/feed.xml` and `atom.xml` | Section feeds |
+| `/ai-news/sitemap.xml` | News section sitemap |
+| `/ai-news/news-sitemap.xml` | Google News sitemap (stories from the last 48 hours) |
+| `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>.webp` | Illustration, proxied from the public image repo at that commit SHA |
+| `/llms.txt` | Notes for answer engines, including `/ai-news` |
+
+`public/robots.txt` still allows all crawlers at `/` and still lists `https://3aik.com/sitemap.xml`. It also names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers, and adds the two news sitemaps. `public/sitemap.xml` still lists the home page and adds the news section URLs.
+
+The service worker does not cache `/ai-news` or `/llms.txt` into the app shell, so opening a story cannot replace the cached home page.
+
+## IndexNow
+
+Optional. Create a key on your machine (8 to 128 letters, numbers, or hyphens). Do not commit it.
+
+```sh
+node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
+npx wrangler secret put INDEXNOW_KEY
+```
+
+Paste the key when prompted, not into git. For local dev, put it in `.dev.vars` (gitignored). See `.dev.vars.example`.
+
+On each successful publish the cron POSTs the new article URL to `https://api.indexnow.org/indexnow`. The worker serves the key at `https://3aik.com/<key>.txt`, which is the `keyLocation` IndexNow checks. If `INDEXNOW_KEY` is unset, publishing continues and the ping is skipped. A failed ping does not unpublish the story.
+
+IndexNow docs: [indexnow.org/documentation](https://www.indexnow.org/documentation).
+
+## Samples
+
+`docs/samples/` holds four dry-run articles, one per section, based on public RSS items from 22 and 23 October 2026. They were written to the same gate the model must pass (`npm test` runs that check). This environment cannot call Workers AI, so the sample illustrations are prompts and alt text only. Production commits one WebP or JPEG per article to `alivirgo/3aik-ai-news-images` when the token is set.
+
+## Code map
+
+- `src/news/pipeline.ts` cron cycle
+- `src/news/quality.ts` gate
+- `src/news/feeds.ts` RSS and Atom parser
+- `src/news/model.ts` Workers AI calls and prompts
+- `src/news/github-images.ts` Contents API writes and the jsDelivr read
+- `src/news/routes.ts` HTML, feeds, sitemaps, IndexNow key
+- `src/index.ts` sends `/ai-news`, `/llms.txt`, and the key file to that router, then leaves every other route as it was

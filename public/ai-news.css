@@ -1,0 +1,207 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f0e8;
+  --paper: #fffdf8;
+  --ink: #1c1915;
+  --muted: #5e584f;
+  --line: #e3d9cc;
+  --accent: #7f2a12;
+  --accent-soft: #f3e2d8;
+  --card: #fffdf8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #141311;
+    --paper: #1d1b18;
+    --ink: #f4efe7;
+    --muted: #c2b9ad;
+    --line: #3a342c;
+    --accent: #f0b09a;
+    --accent-soft: #3a2a24;
+    --card: #221f1c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+}
+
+a { color: var(--accent); text-underline-offset: 0.16em; }
+
+a:hover { text-decoration-thickness: 2px; }
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.skip {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  transform: translateY(-150%);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.5rem 0.75rem;
+  z-index: 2;
+}
+
+.skip:focus { transform: none; }
+
+.top, main, .site-foot {
+  width: min(42rem, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.top { padding-top: 1.25rem; }
+
+.top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.brand {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 1.15rem;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.8rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.95rem;
+}
+
+.disclosure, .site-foot, .meta, .by, .kicker, figcaption {
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.disclosure {
+  color: var(--muted);
+  font-size: 0.92rem;
+  border-top: 1px solid var(--line);
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+}
+
+main { padding-bottom: 2.5rem; }
+
+h1, h2, h3 { line-height: 1.2; font-weight: 650; }
+
+h1 { font-size: clamp(1.8rem, 4vw, 2.5rem); margin: 0.4rem 0 0.8rem; }
+
+h2 { font-size: 1.35rem; margin-top: 1.6rem; }
+
+.deck { font-size: 1.15rem; }
+
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.crumbs li:not(:last-child)::after { content: "/"; margin-left: 0.5rem; color: var(--muted); }
+
+.meta, .by, .kicker { color: var(--muted); font-size: 0.92rem; }
+
+figure { margin: 1.2rem 0; }
+
+img {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: var(--accent-soft);
+  border-radius: 0.4rem;
+}
+
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 0.4rem; }
+
+.tldr, .faq, .card, .persona-foot {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+}
+
+.tldr, .faq, .persona-foot { padding: 0.9rem 1rem; }
+
+.tldr ul, .prose, .faq p { margin-top: 0.4rem; }
+
+.prose p { margin: 0 0 1rem; }
+
+.cards { display: grid; gap: 1rem; }
+
+.card { padding: 0.9rem; }
+
+.card h2 { margin: 0.3rem 0; font-size: 1.3rem; }
+
+.card h2 a { color: var(--ink); text-decoration-thickness: 1px; }
+
+.empty { padding: 1rem; background: var(--accent-soft); border-radius: 0.5rem; }
+
+.roster { padding-left: 1.1rem; }
+
+.roster li { margin: 0.85rem 0; }
+
+.roster span {
+  display: inline-block;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.site-foot {
+  border-top: 1px solid var(--line);
+  padding: 1rem 0 2.5rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.foot-links { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; }
+
+.ai-label {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 0.15em;
+}
+
+@media (min-width: 720px) {
+  body { font-size: 1.125rem; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .card:first-child { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}

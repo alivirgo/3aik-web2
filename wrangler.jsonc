@@ -18,6 +18,30 @@
       "id": "0dd27f8bcc504a51b5c8bfde19db00d9"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "AI_NEWS_DB",
+      "database_name": "3aik-ai-news",
+      "database_id": "87a550eb-1752-4cec-8c20-dd6b839099e2",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["7 * * * *", "37 * * * *"]
+  },
+  "vars": {
+    "AI_NEWS_ARTICLES_PER_HOUR": "1",
+    "AI_NEWS_PUBLISHING": "off",
+    "AI_NEWS_SITE_ORIGIN": "https://3aik.com",
+    "AI_NEWS_TEXT_CALLS_PER_ARTICLE": "6",
+    "AI_NEWS_IMAGE_CALLS_PER_ARTICLE": "2",
+    "AI_NEWS_MAX_FAILURES": "2",
+    "AI_NEWS_REJECT_TTL_HOURS": "24",
+    "AI_NEWS_WALL_MS": "45000",
+    "AI_NEWS_TEXT_TIMEOUT_MS": "15000",
+    "AI_NEWS_IMAGE_TIMEOUT_MS": "20000",
+    "AI_NEWS_RETENTION_DAYS": "180"
+  },
   "ratelimits": [
     {
       "name": "CHAT_RATE_LIMITER",

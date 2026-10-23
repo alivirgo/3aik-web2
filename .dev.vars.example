@@ -2,6 +2,16 @@
 # Copy to `.dev.vars` (gitignored) and fill in only what you need.
 # Never commit real values.
 
+# Optional hex key (8 to 128 letters, numbers, or hyphens) for IndexNow pings.
+# Leave blank to publish without pings. The worker serves https://3aik.com/<key>.txt itself.
+INDEXNOW_KEY=
+
+# Fine-grained GitHub token with contents:write on alivirgo/3aik-ai-news-images only.
+# The token has an expiry. When it lapses, articles still publish and images are skipped
+# until you replace this value. The image repo needs a first commit on main before use.
+# Leave blank to publish articles without images. Never commit a real token.
+GITHUB_IMAGES_TOKEN=
+
 POLLINATIONS_API_KEY=
 OPENAI_API_KEY=
 AIORNOT_API_KEY=

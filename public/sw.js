@@ -35,6 +35,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (url.pathname === "/llms.txt" || url.pathname === "/ai-news" || url.pathname.startsWith("/ai-news/")) return;
 
   const isNavigation = request.mode === "navigate";
   if (!isNavigation && !SHELL_PATHS.has(url.pathname)) return;

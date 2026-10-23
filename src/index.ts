@@ -1,3 +1,4 @@
+import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -130,10 +131,15 @@ class HttpError extends Error {
 }
 
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
 		try {
+			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
+				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+				return handleNewsRequest(request, env, {}, ctx);
+			}
+
 			if (url.pathname === "/privacy" || url.pathname === "/privacy/") {
 				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
 				const privacyAsset = new URL("/privacy/index.html", request.url);
@@ -208,6 +214,9 @@ export default {
 			console.error("[Worker] Unexpected request failure", error);
 			return problem(500, "internal_error", "Something went wrong. Please try again.");
 		}
+	},
+	async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+		await publishScheduled(env, controller);
 	},
 } satisfies ExportedHandler<Env>;
 
