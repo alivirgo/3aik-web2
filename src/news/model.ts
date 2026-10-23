@@ -264,7 +264,10 @@ export async function generateIllustration(
 			const bytes = await imageBytes(result);
 			const detected = bytes ? detectImageType(bytes) : null;
 			const limited = bytes ? imageLimitReason(bytes) : "image_bytes";
-			if (!bytes || !detected || limited) throw new Error(limited ?? "The image model returned no supported image.");
+			const storable = detected?.extension === "webp" || detected?.extension === "jpg";
+			if (!bytes || !detected || limited || !storable) {
+				throw new Error(limited ?? (detected ? "image_type" : "The image model returned no supported image."));
+			}
 			return { bytes, contentType: detected.mime, model: model.label };
 		} catch (error) {
 			lastError = error;

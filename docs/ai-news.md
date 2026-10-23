@@ -1,6 +1,6 @@
 # 3aik News
 
-`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or GitHub while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Apply both migrations, create the public image repo and the fine-grained token, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
+`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or GitHub while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Apply the D1 migrations, seed the public image repo, create the fine-grained token, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
 
 ## What readers are told
 
@@ -22,7 +22,9 @@ The D1 database already exists. Binding name `AI_NEWS_DB`, database name `3aik-a
 npx wrangler d1 migrations apply 3aik-ai-news --remote
 ```
 
-Images are files in the public repo [alivirgo/3aik-ai-news-images](https://github.com/alivirgo/3aik-ai-news-images). Create that repo (empty, default branch `main`) and a fine-grained personal access token with **contents: write** on that repo only. Grant the token no other repository. Keep the token out of git.
+Images are files in the public repo [alivirgo/3aik-ai-news-images](https://github.com/alivirgo/3aik-ai-news-images). Create that public repo and put a first commit on `main` before the cron runs. The Contents API answers 409 on a repository that has no commits, so an empty default branch cannot receive the first image. Adding a README when you create the repo is enough.
+
+Create a fine-grained personal access token with **contents: write** on that repo only. Grant the token no other repository. GitHub requires an expiry on a fine-grained token (at most one year). When it expires, image commits fail and articles still publish with no picture until you mint a new token and run `npx wrangler secret put GITHUB_IMAGES_TOKEN` again. Keep the token out of git and out of `wrangler.jsonc`. Set a reminder before the expiry date.
 
 ```sh
 npx wrangler secret put GITHUB_IMAGES_TOKEN
@@ -59,7 +61,7 @@ Bindings added to `wrangler.jsonc`:
 | `AI` | Workers AI | already on the worker |
 | `GITHUB_IMAGES_TOKEN` | Secret | contents:write on `alivirgo/3aik-ai-news-images` only |
 
-Article rows, source URLs, and rotation counters are in D1. Migration: `migrations/0001_ai_news_init.sql`. Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>.webp` (JPEG uses `.jpg`) through the GitHub Contents API.
+Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, and `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`). Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>.webp` (JPEG uses `.jpg`) through the GitHub Contents API. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
 
 ## Rate, schedule, and pause
 
@@ -100,9 +102,27 @@ DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
 DELETE FROM source_rejections WHERE expires_at <= datetime('now');
 ```
 
-Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. The desk makes at most one sha retry, does not retry a rate-limit response, and stops further image commits in that tick when fewer than 20 requests remain on the token. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
+Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. A PNG from an image model is not stored: the desk tries the next image model inside the same image budget. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
 
-Readers load `/ai-news/media/images/YYYY/MM/<slug>.webp`. The Worker fetches that one path from jsDelivr (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo), checks the magic bytes, and answers with `cache-control: public, max-age=31536000, immutable`. The write token is not sent on that read. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
+A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image.
+
+A 429 is a rate limit. A 403 is a rate limit only when the remaining budget is 0, `Retry-After` is set, or the body names a secondary rate limit or abuse detection. A plain permission 403 does not pause the tick. The desk does not sleep through `Retry-After` (a long wait would run past the 45 second wall). It stops further Contents API calls for that tick and logs the delay. Further image commits in that tick are also skipped when fewer than 20 requests remain on the token.
+
+Retention asks D1 for up to 20 old rows, then deletes at most 5 GitHub files in that tick, with 250 ms between those deletes. `deleteImageFile` returns whether GitHub asked for a pause. On a pause, retention stops and that tick does not commit a new image. The row already removed can leave its file in the repo. Later rows stay until a later tick. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
+
+Readers load `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>.webp`. The Worker proxies that file only when D1 has the same `image_key` and `image_commit`. An unknown key is a 404 with `cache-control: public, max-age=60` and is not fetched from jsDelivr, so a stranger cannot force unlimited CDN reads. A D1 error, and a failed fetch for a key that does exist, is `no-store`. `HEAD` on a known image returns the stored content type and an empty body. It does not download the file. A known `GET` fetches that one path from jsDelivr at the commit SHA (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo and that same SHA). `@main` is not used: jsDelivr caches a branch tip for about 12 hours, and a year-long immutable response would keep serving a moving file. The write token is not sent on that read. A successful image is answered with `cache-control: public, max-age=31536000, immutable`. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
+
+## Taking an image down, and repo growth
+
+A published image stays in two public places. Git history of `alivirgo/3aik-ai-news-images` keeps the blob at the commit SHA stored in D1. Deleting the file on `main` does not remove that commit. The Worker edge cache can also keep a successful response for one year.
+
+To take one image down:
+
+1. Rewrite history so the blob is gone (`git filter-repo` or BFG), then force-push `main`. A normal delete commit is not enough, because readers pin the old SHA.
+2. Clear `image_key` and `image_commit` on the D1 row, or delete the article. The proxy only fetches a path that D1 still lists, so clearing the row stops new origin fetches.
+3. Purge the Cloudflare cache for `https://3aik.com/ai-news/media/<old-sha>/images/...`. A cached 200 is not replaced by the 60 second 404 that an unknown key gets later. Until the purge, the edge can still serve the picture.
+
+At about one image an hour, under the 1 MB cap, the repo grows on the order of 1 to 3 GB a year once git objects and history are counted. Plan a new public repo when this one approaches 1 GB (GitHub's recommended repository size, and a more comfortable size for jsDelivr). Point new commits at the new repo, for example one repo per year, and leave old SHAs in the old repo so published URLs keep working. `IMAGE_REPO` is a constant in `src/news/github-images.ts` today, so that split is a later code change. Do not rewrite old commits only to move them.
 
 ## Feeds
 
@@ -159,7 +179,7 @@ Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technol
 | `/ai-news/<category>/feed.xml` and `atom.xml` | Section feeds |
 | `/ai-news/sitemap.xml` | News section sitemap |
 | `/ai-news/news-sitemap.xml` | Google News sitemap (stories from the last 48 hours) |
-| `/ai-news/media/images/YYYY/MM/<slug>.webp` | Illustration, proxied from the public image repo |
+| `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>.webp` | Illustration, proxied from the public image repo at that commit SHA |
 | `/llms.txt` | Notes for answer engines, including `/ai-news` |
 
 `public/robots.txt` still allows all crawlers at `/` and still lists `https://3aik.com/sitemap.xml`. It also names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers, and adds the two news sitemaps. `public/sitemap.xml` still lists the home page and adds the news section URLs.
@@ -191,5 +211,6 @@ IndexNow docs: [indexnow.org/documentation](https://www.indexnow.org/documentati
 - `src/news/quality.ts` gate
 - `src/news/feeds.ts` RSS and Atom parser
 - `src/news/model.ts` Workers AI calls and prompts
+- `src/news/github-images.ts` Contents API writes and the jsDelivr read
 - `src/news/routes.ts` HTML, feeds, sitemaps, IndexNow key
 - `src/index.ts` sends `/ai-news`, `/llms.txt`, and the key file to that router, then leaves every other route as it was

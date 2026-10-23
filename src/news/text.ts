@@ -287,6 +287,12 @@ export function imageDimensions(bytes: Uint8Array): { width: number; height: num
 			if (!width || !height) return null;
 			return { width: width + 1, height: height + 1 };
 		}
+		if (chunk === "VP8 " && bytes.length >= 30 && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+			const width = ((bytes[26] ?? 0) | ((bytes[27] ?? 0) << 8)) & 0x3fff;
+			const height = ((bytes[28] ?? 0) | ((bytes[29] ?? 0) << 8)) & 0x3fff;
+			if (!width || !height) return null;
+			return { width, height };
+		}
 		if (chunk === "VP8L" && bytes.length >= 25) {
 			const b0 = bytes[21] ?? 0;
 			const b1 = bytes[22] ?? 0;

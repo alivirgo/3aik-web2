@@ -20,6 +20,7 @@ export interface NewsRepository {
 	listSitemap(limit: number): Promise<SitemapEntry[]>;
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
+	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -59,6 +60,7 @@ export function articleFromRow(row: Record<string, unknown>): StoredArticle | nu
 		sources: readJson<StoredSource[]>(row, "sources_json", []),
 		related: readJson<StoredRelated[]>(row, "related_json", []),
 		imageKey: readString(row, "image_key"),
+		imageCommit: readString(row, "image_commit"),
 		imageAlt: readString(row, "image_alt"),
 		imageType: readString(row, "image_type"),
 		publishedAt: readString(row, "published_at"),
@@ -67,7 +69,7 @@ export function articleFromRow(row: Record<string, unknown>): StoredArticle | nu
 }
 
 const ARTICLE_COLUMNS = `id, slug, title, description, category, tags_json, author_id, body_html, body_text,
-	key_points_json, faq_json, sources_json, related_json, image_key, image_alt, image_type, published_at, updated_at`;
+	key_points_json, faq_json, sources_json, related_json, image_key, image_commit, image_alt, image_type, published_at, updated_at`;
 
 export class D1NewsRepository implements NewsRepository {
 	constructor(private readonly db: D1Database) {}
@@ -166,9 +168,9 @@ export class D1NewsRepository implements NewsRepository {
 				.prepare(
 					`INSERT INTO articles (
 						id, slug, title, description, category, tags_json, author_id, body_html, body_text,
-						key_points_json, faq_json, sources_json, related_json, image_key, image_alt, image_type,
+						key_points_json, faq_json, sources_json, related_json, image_key, image_commit, image_alt, image_type,
 						published_at, updated_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
 				.bind(
 					article.id,
@@ -185,6 +187,7 @@ export class D1NewsRepository implements NewsRepository {
 					JSON.stringify(article.sources),
 					JSON.stringify(article.related),
 					article.imageKey,
+					article.imageCommit,
 					article.imageAlt,
 					article.imageType,
 					article.publishedAt,
@@ -284,6 +287,16 @@ export class D1NewsRepository implements NewsRepository {
 			this.db.prepare("DELETE FROM article_sources WHERE article_id = ?").bind(id),
 			this.db.prepare("DELETE FROM articles WHERE id = ?").bind(id),
 		]);
+	}
+
+	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
+		const row = await this.db
+			.prepare("SELECT image_type FROM articles WHERE image_key = ? AND image_commit = ? LIMIT 1")
+			.bind(imageKey, imageCommit)
+			.first<Record<string, unknown>>();
+		const record = asRecord(row);
+		const contentType = record ? readString(record, "image_type") : "";
+		return contentType ? { contentType } : null;
 	}
 }
 
@@ -407,5 +420,10 @@ export class MemoryNewsRepository implements NewsRepository {
 
 	async deleteArticle(id: string): Promise<void> {
 		this.articles = this.articles.filter((article) => article.id !== id);
+	}
+
+	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
+		const article = this.articles.find((entry) => entry.imageKey === imageKey && entry.imageCommit === imageCommit);
+		return article?.imageType ? { contentType: article.imageType } : null;
 	}
 }

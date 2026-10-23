@@ -10,6 +10,8 @@ import { TINY_JPEG } from "../src/news/text";
 
 const root = resolve(import.meta.dirname, "..");
 const publishedAt = "2026-10-23T12:07:00.000Z";
+const COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567";
+const IMAGE_PATH = "images/2026/10/short-bulletin.jpg";
 
 function article(): StoredArticle {
 	return {
@@ -30,7 +32,8 @@ function article(): StoredArticle {
 			outlet: "The Verge",
 		}],
 		related: [],
-		imageKey: "images/2026/10/short-bulletin.jpg",
+		imageKey: IMAGE_PATH,
+		imageCommit: COMMIT_SHA,
 		imageAlt: "Abstract stack of paper rectangles in sand and ink blue on a warm gray field.",
 		imageType: "image/jpeg",
 		publishedAt,
@@ -72,7 +75,7 @@ describe("news pages", () => {
 		expect(response.headers.get("content-security-policy")).toContain("script-src 'none'");
 		expect(response.headers.get("content-security-policy")).toContain("img-src 'self'");
 		expect(response.headers.get("content-security-policy")).not.toContain("jsdelivr");
-		expect(html).toContain("https://3aik.com/ai-news/media/images/2026/10/short-bulletin.jpg");
+		expect(html).toContain(`https://3aik.com/ai-news/media/${COMMIT_SHA}/${IMAGE_PATH}`);
 		expect(html).not.toContain("cdn.jsdelivr.net");
 		expect(html).toContain("<title>A short bulletin, retold with the blanks left blank | 3aik News</title>");
 		expect(html).toContain('name="description"');
@@ -99,24 +102,36 @@ describe("news pages", () => {
 	it("serves the image, feeds, sitemaps, llms.txt, and the IndexNow key", async () => {
 		const { repo } = desk();
 		const env = { AI_NEWS_SITE_ORIGIN: "https://3aik.com", INDEXNOW_KEY: "index-key" };
-		const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url === "https://cdn.jsdelivr.net/gh/alivirgo/3aik-ai-news-images@main/images/2026/10/short-bulletin.jpg") {
+			expect(init?.method ?? "GET").toBe("GET");
+			if (url === `https://cdn.jsdelivr.net/gh/alivirgo/3aik-ai-news-images@${COMMIT_SHA}/${IMAGE_PATH}`) {
 				return new Response(TINY_JPEG, { status: 200, headers: { "content-type": "image/jpeg" } });
 			}
 			return new Response("no", { status: 404 });
 		});
-		const image = await handleNewsRequest(
-			new Request("https://3aik.test/ai-news/media/images/2026/10/short-bulletin.jpg"),
+		const imageUrl = `https://3aik.test/ai-news/media/${COMMIT_SHA}/${IMAGE_PATH}`;
+		const head = await handleNewsRequest(new Request(imageUrl, { method: "HEAD" }), env, { repo, fetchImpl: fetchImpl as typeof fetch });
+		expect(head.status).toBe(200);
+		expect(head.headers.get("content-type")).toBe("image/jpeg");
+		expect((await head.arrayBuffer()).byteLength).toBe(0);
+		expect(fetchImpl).not.toHaveBeenCalled();
+		const missing = await handleNewsRequest(
+			new Request(`https://3aik.test/ai-news/media/${COMMIT_SHA}/images/2026/10/missing.jpg`),
 			env,
 			{ repo, fetchImpl: fetchImpl as typeof fetch },
 		);
+		expect(missing.status).toBe(404);
+		expect(missing.headers.get("cache-control")).toContain("max-age=60");
+		expect(fetchImpl).not.toHaveBeenCalled();
+		const image = await handleNewsRequest(new Request(imageUrl), env, { repo, fetchImpl: fetchImpl as typeof fetch });
 		expect(image.headers.get("content-type")).toBe("image/jpeg");
 		expect(image.headers.get("cache-control")).toContain("immutable");
 		expect(image.headers.get("content-security-policy")).toContain("default-src 'none'");
 		expect(new Uint8Array(await image.arrayBuffer())).toEqual(TINY_JPEG);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
 		const blocked = await handleNewsRequest(
-			new Request("https://3aik.test/ai-news/media/images/2026/10/../secret.jpg"),
+			new Request(`https://3aik.test/ai-news/media/${COMMIT_SHA}/images/2026/10/../secret.jpg`),
 			env,
 			{ repo, fetchImpl: fetchImpl as typeof fetch },
 		);
@@ -141,8 +156,8 @@ describe("news pages", () => {
 
 		const author = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/mira-ellison"), env, { repo });
 		expect(await author.text()).toContain("not a real person");
-		const missing = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/not-a-persona"), env, { repo });
-		expect(missing.status).toBe(404);
+		const unknownAuthor = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/not-a-persona"), env, { repo });
+		expect(unknownAuthor.status).toBe(404);
 	});
 });
 

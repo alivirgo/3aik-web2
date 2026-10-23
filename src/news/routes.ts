@@ -9,7 +9,7 @@ import {
 	renderIndex,
 	renderNotFound,
 } from "./html";
-import { loadPublicImage, mediaPathFromRequest } from "./github-images";
+import { loadPublicImage, parseMediaRequest } from "./github-images";
 import { runPublishCycle } from "./pipeline";
 import { D1NewsRepository, type NewsRepository } from "./repository";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap } from "./syndication";
@@ -99,7 +99,7 @@ async function matchEdge(request: Request): Promise<Response | null> {
 }
 
 async function putEdge(request: Request, response: Response, ctx?: ExecutionContext): Promise<void> {
-	if (request.method !== "GET" || response.status !== 200) return;
+	if (request.method !== "GET" || (response.status !== 200 && response.status !== 404)) return;
 	const control = response.headers.get("cache-control") ?? "";
 	if (!control.includes("public") || control.includes("no-store")) return;
 	const cache = edgeCache();
@@ -185,18 +185,39 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			return xmlResponse(request, renderAtom(origin, articles), "application/atom+xml; charset=utf-8");
 		}
 
-		const mediaPath = mediaPathFromRequest(path);
-		if (mediaPath) {
+		const media = parseMediaRequest(path);
+		if (media) {
+			const miss = () => {
+				const headers = securityHeaders("text/plain; charset=utf-8", "public, max-age=60", IMAGE_CSP);
+				return new Response(request.method === "HEAD" ? null : "Not found\n", { status: 404, headers });
+			};
+			let known: { contentType: string } | null = null;
+			if (repo) {
+				try {
+					known = await repo.findImage(media.repoPath, media.commitSha);
+				} catch (error) {
+					logReadError(path, error);
+					return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+				}
+			}
+			if (!known) return miss();
+			if (request.method === "HEAD") {
+				const headers = securityHeaders(known.contentType, "public, max-age=31536000, immutable", IMAGE_CSP);
+				return new Response(null, { status: 200, headers });
+			}
 			let stored = null;
 			try {
-				stored = await loadPublicImage(mediaPath, fetchImpl);
+				stored = await loadPublicImage(media.repoPath, media.commitSha, fetchImpl);
 			} catch (error) {
 				logReadError(path, error);
-				return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+				const headers = securityHeaders("text/plain; charset=utf-8", "no-store", IMAGE_CSP);
+				return new Response(request.method === "HEAD" ? null : "Not found\n", { status: 404, headers });
 			}
-			if (!stored) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+			if (!stored) {
+				const headers = securityHeaders("text/plain; charset=utf-8", "no-store", IMAGE_CSP);
+				return new Response("Not found\n", { status: 404, headers });
+			}
 			const headers = securityHeaders(stored.contentType, "public, max-age=31536000, immutable", IMAGE_CSP);
-			if (request.method === "HEAD") return new Response(null, { status: 200, headers });
 			return new Response(stored.bytes, { status: 200, headers });
 		}
 

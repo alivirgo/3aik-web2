@@ -21,7 +21,9 @@ import {
 } from "./config";
 import { fetchStories } from "./feeds";
 import {
+	GITHUB_DELETE_PACE_MS,
 	GITHUB_IMAGE_MAX_BYTES,
+	MAX_GITHUB_DELETES_PER_RUN,
 	commitImageFile,
 	deleteImageFile,
 	extensionForMime,
@@ -193,12 +195,17 @@ async function draftStory(
 
 interface StoredPicture {
 	imageKey: string;
+	imageCommit: string;
 	imageType: string;
 	model: string;
 	pauseWrites: boolean;
 }
 
-const EMPTY_PICTURE: StoredPicture = { imageKey: "", imageType: "", model: "", pauseWrites: false };
+const EMPTY_PICTURE: StoredPicture = { imageKey: "", imageCommit: "", imageType: "", model: "", pauseWrites: false };
+
+function pace(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * A missing token, a failed model, a file that is not a small WebP or JPEG, or a
@@ -242,8 +249,14 @@ async function storeIllustration(
 		return { ...EMPTY_PICTURE, model: image.model };
 	}
 	const committed = await commitImageFile(token, path, image.bytes, deps.fetchImpl ?? fetch);
-	if (!committed.ok) return { ...EMPTY_PICTURE, model: image.model, pauseWrites: committed.pause };
-	return { imageKey: path, imageType: detected.mime, model: image.model, pauseWrites: committed.pause };
+	if (!committed.ok || !committed.commitSha) return { ...EMPTY_PICTURE, model: image.model, pauseWrites: committed.pause };
+	return {
+		imageKey: path,
+		imageCommit: committed.commitSha,
+		imageType: detected.mime,
+		model: image.model,
+		pauseWrites: committed.pause,
+	};
 }
 
 function rejectionTtlMs(env: NewsEnv, reason: string): number {
@@ -256,22 +269,39 @@ async function rememberFailure(repo: NewsRepository, env: NewsEnv, url: string, 
 	await repo.rejectSource(url, reason, expires);
 }
 
-async function pruneDesk(deps: PublishDependencies, nowIso: string): Promise<void> {
+async function pruneDesk(deps: PublishDependencies, nowIso: string): Promise<boolean> {
 	await deps.repo.forgetExpiredRejections(nowIso);
 	const days = retentionDays(deps.env);
-	if (days <= 0) return;
+	if (days <= 0) return false;
 	const cutoff = new Date(deps.now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 	const expired = await deps.repo.expiredArticles(cutoff, RETENTION_BATCH);
 	const token = deps.env.GITHUB_IMAGES_TOKEN?.trim() ?? "";
+	let githubDeletes = 0;
+	let paused = false;
+	let removed = 0;
 	for (const row of expired) {
+		const needsGithub = Boolean(token && isGitHubImagePath(row.imageKey));
+		if (needsGithub && githubDeletes >= MAX_GITHUB_DELETES_PER_RUN) break;
 		await deps.repo.deleteArticle(row.id);
-		if (token && isGitHubImagePath(row.imageKey)) {
-			await deleteImageFile(token, row.imageKey, deps.fetchImpl ?? fetch);
+		removed += 1;
+		if (!needsGithub) continue;
+		if (githubDeletes > 0) await pace(GITHUB_DELETE_PACE_MS);
+		const result = await deleteImageFile(token, row.imageKey, deps.fetchImpl ?? fetch);
+		githubDeletes += 1;
+		if (result.pause) {
+			paused = true;
+			console.error(JSON.stringify({
+				message: "ai-news retention paused",
+				retryAfterMs: result.retryAfterMs,
+				deleted: removed,
+			}));
+			break;
 		}
 	}
-	if (expired.length) {
-		console.log(JSON.stringify({ message: "ai-news retention", deleted: expired.length, cutoff }));
+	if (removed) {
+		console.log(JSON.stringify({ message: "ai-news retention", deleted: removed, cutoff, paused }));
 	}
+	return paused;
 }
 
 export async function pingIndexNow(env: NewsEnv, urls: string[], fetchImpl: typeof fetch = fetch): Promise<void> {
@@ -316,7 +346,7 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 	const published: string[] = [];
 	const failures: string[] = [];
 	try {
-		await pruneDesk(deps, nowIso);
+		const retentionPaused = await pruneDesk(deps, nowIso);
 		const already = await deps.repo.countPublishedSince(hourStartIso(deps.now));
 		const slots = slotsThisRun(rate, already);
 		if (slots <= 0) return { published, skipped: "quota", failures };
@@ -340,7 +370,7 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 		const budget = makeBudget(deps.env, slots, clock(), clock);
 		const failureCap = maxFailuresPerRun(deps.env);
 		let consecutiveFailures = 0;
-		let githubWritesPaused = false;
+		let githubWritesPaused = retentionPaused;
 		while (published.length < slots && fresh.length && !budget.stop && consecutiveFailures < failureCap) {
 			const stats = await deps.repo.stats();
 			const available = [...new Set(fresh.map((story) => story.category))];
@@ -388,6 +418,7 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				sources: sources.map(({ url, title, outlet }) => ({ url, title, outlet })),
 				related: related.map(({ slug: relatedSlug, title }) => ({ slug: relatedSlug, title })),
 				imageKey: picture.imageKey,
+				imageCommit: picture.imageCommit,
 				imageAlt: picture.imageKey ? drafted.draft.imageAlt : "",
 				imageType: picture.imageType,
 				publishedAt: nowIso,

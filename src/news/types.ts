@@ -79,6 +79,8 @@ export interface StoredArticle {
 	sources: StoredSource[];
 	related: StoredRelated[];
 	imageKey: string;
+	/** Git commit that contains imageKey. Empty when the article has no picture. */
+	imageCommit: string;
 	imageAlt: string;
 	imageType: string;
 	publishedAt: string;

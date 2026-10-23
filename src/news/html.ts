@@ -169,7 +169,7 @@ function crumbs(origin: string, items: Array<{ href?: string; label: string }>):
 function articleCard(origin: string, article: StoredArticle): string {
 	const author = authorById(article.authorId);
 	const name = author?.name ?? article.authorId;
-	const image = readerImageUrl(origin, article.imageKey);
+	const image = readerImageUrl(origin, article.imageKey, article.imageCommit);
 	const media = image
 		? `<a class="card-media" href="${articleHref(origin, article.slug)}"><img src="${escapeHtml(image)}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"></a>`
 		: "";
@@ -277,7 +277,7 @@ export function renderArticle(origin: string, article: StoredArticle): string {
 	const author = authorById(article.authorId);
 	const name = author?.name ?? "Desk persona";
 	const canonical = articleHref(origin, article.slug);
-	const image = readerImageUrl(origin, article.imageKey);
+	const image = readerImageUrl(origin, article.imageKey, article.imageCommit);
 	const trail = crumbs(origin, [
 		{ href: `${origin}/`, label: "3aik" },
 		{ href: `${origin}/ai-news`, label: "News" },

@@ -6,6 +6,7 @@ import type { ArticleDraft, StoredArticle } from "../src/news/types";
 import { TINY_JPEG, TINY_PNG } from "../src/news/text";
 
 const now = new Date("2026-10-23T12:07:00.000Z");
+const COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567";
 const feed = FEEDS.find((entry) => entry.category === "ai");
 if (!feed) throw new Error("missing AI feed");
 
@@ -76,8 +77,15 @@ function harness(options: { publishing?: string; rate?: string; indexNow?: strin
 			if (init?.method === "GET" || !init?.method) {
 				return new Response(JSON.stringify({ sha: "abc123" }), { status: 200, headers: { "x-ratelimit-remaining": "4000" } });
 			}
-			return new Response("{}", {
-				status: options.githubStatus ?? (init?.method === "DELETE" ? 200 : 201),
+			const status = options.githubStatus ?? (init?.method === "DELETE" ? 200 : 201);
+			const body = status === 200 || status === 201
+				? JSON.stringify({
+					commit: { sha: COMMIT_SHA },
+					content: { sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+				})
+				: "{}";
+			return new Response(body, {
+				status,
 				headers: { "x-ratelimit-remaining": "4000" },
 			});
 		}
@@ -123,6 +131,7 @@ describe("publish cycle", () => {
 		expect(article?.bodyText).toContain("The Verge");
 		expect(article?.bodyHtml).toBe("");
 		expect(article?.imageKey).toMatch(/^images\/2026\/10\/[a-z0-9-]+\.jpg$/);
+		expect(article?.imageCommit).toBe(COMMIT_SHA);
 		expect(githubCalls).toHaveLength(1);
 		expect(githubCalls[0]?.method).toBe("PUT");
 		expect(githubCalls[0]?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
@@ -244,6 +253,43 @@ describe("publish cycle", () => {
 		expect(githubCalls[1]?.method).toBe("DELETE");
 	});
 
+	it("stops retention and later image commits when GitHub asks for a pause", async () => {
+		const { deps, repo, paint } = harness({ token: "ghp-test" });
+		deps.env.AI_NEWS_RETENTION_DAYS = "1";
+		const older = existing("https://example.com/aged-1", "2026-01-01T00:00:00.000Z");
+		older.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+		older.slug = "aged-one";
+		older.imageKey = "images/2026/01/aged-one.jpg";
+		older.imageType = "image/jpeg";
+		older.imageCommit = COMMIT_SHA;
+		const newer = existing("https://example.com/aged-2", "2026-02-01T00:00:00.000Z");
+		newer.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+		newer.slug = "aged-two";
+		newer.imageKey = "images/2026/02/aged-two.jpg";
+		newer.imageType = "image/jpeg";
+		newer.imageCommit = COMMIT_SHA;
+		repo.articles.push(older, newer);
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === feed!.url) return new Response(rss(), { status: 200, headers: { "content-type": "application/rss+xml" } });
+			if (url.startsWith("https://api.github.com/")) {
+				return new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit." }), {
+					status: 403,
+					headers: { "retry-after": "30", "x-ratelimit-remaining": "4000" },
+				});
+			}
+			return new Response("no", { status: 404 });
+		});
+		await runPublishCycle(deps);
+		expect(repo.articles.find((article) => article.id === older.id)).toBeUndefined();
+		expect(repo.articles.find((article) => article.id === newer.id)).toBeTruthy();
+		expect(paint).not.toHaveBeenCalled();
+		expect(deps.fetchImpl.mock.calls.filter((call) => {
+			const url = typeof call[0] === "string" ? call[0] : call[0] instanceof URL ? call[0].toString() : call[0].url;
+			return url.startsWith("https://api.github.com/");
+		})).toHaveLength(1);
+	});
+
 	it("stops when the wall clock is exhausted", async () => {
 		const { deps, writeDraft } = harness();
 		let clock = now.getTime();
@@ -298,6 +344,7 @@ function existing(url: string, publishedAt: string): StoredArticle {
 		sources: [{ url, title: "Old", outlet: "The Verge" }],
 		related: [],
 		imageKey: "articles/old.png",
+		imageCommit: "",
 		imageAlt: "Old abstract squares.",
 		imageType: "image/png",
 		publishedAt,
