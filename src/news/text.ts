@@ -121,6 +121,39 @@ export function words(input: string): string[] {
 	return normalized ? normalized.split(" ") : [];
 }
 
+/** Same word split as `words`, plus the casing and commas the plagiarism check needs. */
+export interface CasedToken {
+	norm: string;
+	capitalized: boolean;
+	followedByComma: boolean;
+}
+
+export function casedTokens(input: string): CasedToken[] {
+	const tokens: CasedToken[] = [];
+	let raw = "";
+	const flush = (followedByComma: boolean) => {
+		if (!raw) return;
+		const first = raw[0] ?? "";
+		tokens.push({
+			norm: raw.toLowerCase(),
+			capitalized: first >= "A" && first <= "Z",
+			followedByComma,
+		});
+		raw = "";
+	};
+	for (let index = 0; index < input.length; index += 1) {
+		const char = input[index] ?? "";
+		if (char === "'" || char === "\u2019" || char === "\u2018") continue;
+		if (/[A-Za-z0-9]/.test(char)) {
+			raw += char;
+			continue;
+		}
+		flush(char === ",");
+	}
+	flush(false);
+	return tokens;
+}
+
 export function wordCount(input: string): number {
 	return words(input).length;
 }

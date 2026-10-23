@@ -3,10 +3,10 @@ import { AUTHORS, authorsIn, pickAuthor, pickCategory } from "../src/news/author
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, TEXT_MAX_TOKENS, TEXT_MODELS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
-import { buildArticlePrompt, extractModelText, generateDraftText, parseArticleDraft, withTimeout } from "../src/news/model";
+import { buildArticlePrompt, extractModelText, generateDraftText, parseArticleDraft, rejectionRepair, withTimeout } from "../src/news/model";
 import { assessDraft, copiedFromSource, slopHits } from "../src/news/quality";
 import type { ArticleDraft, Category, QualityCorpusItem, SourceRef } from "../src/news/types";
-import { TINY_PNG, escapeMarkdown, forbiddenDash, imageLimitReason, normalizeSourceUrl, stripEditorialDashes } from "../src/news/text";
+import { TINY_PNG, casedTokens, escapeMarkdown, forbiddenDash, imageLimitReason, normalizeSourceUrl, stripEditorialDashes, words } from "../src/news/text";
 
 function source(outlet = "The Verge"): SourceRef {
 	return {
@@ -117,6 +117,33 @@ describe("quality gate", () => {
 		if (!verdict.ok) expect(verdict.reasons.some((reason) => reason.startsWith("copied_sequence:"))).toBe(true);
 	});
 
+	it("ignores a proper-noun brand list and still flags an ordinary clause", () => {
+		const brands = "Aritzia, Ralph Lauren, Aerie, Urban Outfitters, Gap brand";
+		const bare = "Aritzia Ralph Lauren Aerie Urban Outfitters Gap brand";
+		expect(copiedFromSource(brands, `The note named ${brands} and then stopped.`)).toBeNull();
+		expect(copiedFromSource(bare, `The note named ${bare} and then stopped.`)).toBeNull();
+		expect(casedTokens(brands).map((token) => token.norm).join(" ")).toBe(words(brands).join(" "));
+
+		const stolen = "vendor posted a short bulletin about a routine";
+		const excerpt = `${source().excerpt} Names: ${brands}.`;
+		expect(copiedFromSource(excerpt, `Today ${stolen} maintenance. Names: ${brands}.`)).toBe(stolen);
+
+		const mixed = "Shoppers compared Aritzia and Ralph Lauren with Aerie during the holiday sale.";
+		expect(copiedFromSource(mixed, mixed)).toBeTruthy();
+		const headline = "Vendor Posts Short Bulletin About Routine Maintenance Today";
+		expect(copiedFromSource(headline, headline)).toBeTruthy();
+
+		const draft = passingDraft();
+		draft.paragraphs[0] = `${draft.paragraphs[0]} The note named ${brands}.`;
+		const verdict = assessDraft({
+			draft,
+			category: "ai",
+			sources: [{ ...source(), excerpt: `${source().excerpt} The lineup was ${brands}.` }],
+			recent: [],
+		});
+		expect(verdict).toEqual({ ok: true });
+	});
+
 	it("rejects a duplicate title and a near-copy of a recent body", () => {
 		const draft = passingDraft();
 		const recent: QualityCorpusItem[] = [{ slug: "older", title: draft.title, bodyText: "Different words entirely about kites and harbors." }];
@@ -223,6 +250,53 @@ describe("authors and prompts", () => {
 			related: [],
 		});
 		expect(hostile.user.match(/<\/untrusted-source>/gi)).toHaveLength(1);
+		expect(prompt.system).toContain("at least 450 words");
+		expect(prompt.system).toContain("100 to 160 characters");
+		expect(prompt.system).toContain("25 to 70 words");
+		expect(prompt.system).toContain("according to");
+		expect(prompt.user).toContain("synergy");
+		expect(prompt.user).toContain("underscore");
+		expect(prompt.user).toContain("landscape");
+		expect(prompt.user).toContain("in summary");
+		expect(prompt.user).toContain("not only");
+		expect(prompt.user).toContain("100 to 160 characters");
+		expect(prompt.user).toContain("25 to 70 words");
+	});
+
+	it("tells a retry the exact rejection and how to repair it", () => {
+		const author = AUTHORS.find((entry) => entry.category === "fashion");
+		expect(author).toBeTruthy();
+		const failure = "slop:synergy, slop:underscore, description_length, copied_sequence:aritzia ralph lauren aerie urban outfitters gap brand, too_short:277, no_short_sentence, missing_attribution, slop:landscape, slop:in-summary, slop:not-only-but-also, too_short:308, flat_rhythm, faq_answer_length, image_prompt";
+		const prompt = buildArticlePrompt({
+			author: author!,
+			story: {
+				url: "https://example.com/story",
+				title: "A reported weekend plan",
+				outlet: "Vogue",
+				category: "fashion",
+				excerpt: "A short excerpt that is long enough to stand in for a real feed item in this prompt test.",
+				publishedAt: null,
+			},
+			related: [],
+			failure,
+		});
+		expect(prompt.user).toContain(failure);
+		const repair = rejectionRepair(failure);
+		expect(repair).toContain("277");
+		expect(repair).toContain("at least 450 words");
+		expect(repair).toContain("synergy");
+		expect(repair).toContain("underscore");
+		expect(repair).toContain("100 and 160 characters");
+		expect(repair).toContain("aritzia ralph lauren aerie urban outfitters gap brand");
+		expect(repair).toContain("12 words or fewer");
+		expect(repair).toContain("according to");
+		expect(repair).toContain("landscape");
+		expect(repair).toContain("in summary");
+		expect(repair).toContain("not only ... but also");
+		expect(repair).toContain("25 and 70 words");
+		expect(repair).toContain("must not be uniform");
+		expect(repair).toContain("shapes, materials, and color only");
+		expect(prompt.user).toContain(repair);
 	});
 });
 
@@ -264,7 +338,7 @@ describe("schedule math and model parsing", () => {
 	it("keeps publishing off unless it is explicitly enabled, and sizes the lock past the run", () => {
 		expect(publishingEnabled({})).toBe(false);
 		expect(publishingEnabled({ AI_NEWS_PUBLISHING: "on" })).toBe(true);
-		expect(TEXT_MAX_TOKENS).toBeLessThanOrEqual(2048);
+		expect(TEXT_MAX_TOKENS).toBe(8192);
 		expect(textTimeoutMs({})).toBe(60_000);
 		expect(textTimeoutMs({ AI_NEWS_TEXT_TIMEOUT_MS: "90000" })).toBe(90_000);
 		expect(textTimeoutMs({ AI_NEWS_TEXT_TIMEOUT_MS: "999999" })).toBe(180_000);
@@ -302,7 +376,7 @@ describe("schedule math and model parsing", () => {
 			instructions: "Be brief.",
 			input: "Write the bulletin.",
 			max_output_tokens: TEXT_MAX_TOKENS,
-			reasoning: { effort: "low" },
+			reasoning: { effort: "medium" },
 		});
 		expect(first?.[1]).not.toHaveProperty("messages");
 		expect(ai.run.mock.calls[1]?.[0]).toBe("@cf/zai-org/glm-4.7-flash");

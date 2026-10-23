@@ -1,14 +1,15 @@
 import { COPY_WINDOW, BODY_SHINGLE_LIMIT, MAX_WORDS, MIN_WORDS, TITLE_JACCARD_LIMIT } from "./config";
 import type { ArticleDraft, Category, QualityCorpusItem, SourceRef } from "./types";
 import {
+	casedTokens,
 	forbiddenDash,
 	normalizeForMatch,
 	sentencesOf,
 	shingleJaccard,
 	tokenJaccard,
 	wordCount,
-	wordWindows,
 	words,
+	type CasedToken,
 } from "./text";
 
 export const SLOP_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
@@ -66,16 +67,84 @@ export function slopHits(text: string): string[] {
 	return SLOP_PATTERNS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.id);
 }
 
+const CONNECTORS = new Set("a an and or of in on for to with from by at as nor but per via vs".split(" "));
+const LIST_LABELS = new Set(["brand", "brands", "label", "labels"]);
+const VERBS = new Set(
+	`is are was were be been being has have had do does did will would can could should may might must
+	said says say said posted posts post reported reports report opens opened open launches launched launch
+	announced announces announce compared compare drew draw made make makes plans planned plan expected expects
+	includes included include including named names name lists listed list showed shows show rose fell cut cuts
+	added adds add used uses use going goes went come comes came take takes took give gives gave get gets got
+	see sees saw know knows think thinks want wants need needs look looks keep keeps kept start starts started
+	stop stops stopped call calls called try tries tried ask asks asked work works worked seem seems seemed
+	leave leaves left put find finds found tell tells told become becomes became write writes wrote headline headlined
+	accused slam slams slammed raise raises raised hit hits win wins won lose loses lost buy buys bought sell sells sold
+	pay pays paid grow grows grew move moves moved run runs ran set sets offer offers offered bring brings brought
+	hold holds held turn turns turned follow follows followed lead leads led mean means meant remain remains remained
+	stay stays stayed appear appears appeared continue continues continued end ends ended begin begins began
+	help helps helped let lets reshapes reshape transform transforms change changes unveil unveils reveal reveals
+	confirm confirms deny denies seek seeks`.split(/\s+/),
+);
+const COMMON_WORDS = new Set(
+	`about after again all also back before between both day during each first here how into its just last like
+	many more most new news next not now off old one only other our out over own part people short since some still
+	such than that their them then there these they this those through time today two under until very way week what
+	when where which while who year you your vendor bulletin routine maintenance window public status page company
+	market price prices store shoppers sale record sales quarter line online note retailers desk limit nothing else
+	extra quiet holiday ahead home world city years month months item items group firm firms share shares stock stocks
+	deal deals product products service services customer customers user users data team teams big small high low long
+	early late full half past second third`.split(/\s+/),
+);
+
+/**
+ * A copied window is ignored only when the source span is a list of proper nouns
+ * (brand names and similar), not a sentence. Lowercase prose, title-case headlines,
+ * and any span that contains a verb still count as copies.
+ */
+function isProperNounList(tokens: CasedToken[]): boolean {
+	if (tokens.length < COPY_WINDOW) return false;
+	let proper = 0;
+	let commas = 0;
+	let content = 0;
+	for (const token of tokens) {
+		if (token.followedByComma) commas += 1;
+		if (VERBS.has(token.norm)) {
+			content += 1;
+			continue;
+		}
+		if (CONNECTORS.has(token.norm) || LIST_LABELS.has(token.norm) || COMMON_WORDS.has(token.norm)) continue;
+		if (token.capitalized) proper += 1;
+		else content += 1;
+	}
+	if (content > 0) return false;
+	if (proper >= 6) return true;
+	return commas >= 2 && proper >= 4;
+}
+
 export function copiedFromSource(sourceText: string, articleText: string): string | null {
-	const sourceWindows = wordWindows(sourceText, COPY_WINDOW);
-	const articleWindows = wordWindows(articleText, COPY_WINDOW);
-	for (const window of articleWindows) {
-		if (sourceWindows.has(window)) return window;
+	const sourceTokens = casedTokens(sourceText);
+	const byWindow = new Map<string, CasedToken[][]>();
+	for (let index = 0; index + COPY_WINDOW <= sourceTokens.length; index += 1) {
+		const span = sourceTokens.slice(index, index + COPY_WINDOW);
+		const key = span.map((token) => token.norm).join(" ");
+		const existing = byWindow.get(key);
+		if (existing) existing.push(span);
+		else byWindow.set(key, [span]);
+	}
+	const articleTokens = words(articleText);
+	for (let index = 0; index + COPY_WINDOW <= articleTokens.length; index += 1) {
+		const key = articleTokens.slice(index, index + COPY_WINDOW).join(" ");
+		const spans = byWindow.get(key);
+		if (!spans) continue;
+		if (spans.every((span) => isProperNounList(span))) continue;
+		return key;
 	}
 	const articleNorm = normalizeForMatch(articleText);
 	for (const sentence of sourceText.split(/[.!?]+/)) {
 		const normalized = normalizeForMatch(sentence);
-		if (words(normalized).length >= COPY_WINDOW && articleNorm.includes(normalized)) return normalized;
+		if (words(normalized).length < COPY_WINDOW || !articleNorm.includes(normalized)) continue;
+		if (isProperNounList(casedTokens(sentence))) continue;
+		return normalized;
 	}
 	return null;
 }

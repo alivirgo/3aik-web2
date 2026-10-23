@@ -20,8 +20,11 @@ export const TITLE_JACCARD_LIMIT = 0.62;
 export const BODY_SHINGLE_LIMIT = 0.16;
 export const COPY_WINDOW = 8;
 
-/** Output tokens for one article JSON object, not a long reasoning trace. */
-export const TEXT_MAX_TOKENS = 2048;
+/**
+ * Room for the article JSON plus, on gpt-oss, the reasoning tokens that count
+ * against max_output_tokens. 2048 was ending the draft around 300 words.
+ */
+export const TEXT_MAX_TOKENS = 8192;
 export const MAX_FEED_BYTES = 2 * 1024 * 1024;
 export const MAX_IMAGE_EDGE = 1024;
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -33,7 +36,7 @@ export const DEFAULT_MAX_FAILURES = 2;
 export const DEFAULT_REJECT_TTL_HOURS = 24;
 /** Five minutes. A scheduled handler may run for 15 minutes. */
 export const DEFAULT_WALL_MS = 300_000;
-/** One minute, enough for a 120B model on low reasoning effort. */
+/** One minute, enough for a 120B model on medium reasoning effort. */
 export const DEFAULT_TEXT_TIMEOUT_MS = 60_000;
 export const DEFAULT_IMAGE_TIMEOUT_MS = 20_000;
 export const DEFAULT_RETENTION_DAYS = 180;

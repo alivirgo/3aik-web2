@@ -84,11 +84,11 @@ Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`
 | `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
 | `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, and timeout failures block it for 1 hour. A missing image, a failed image model, or a failed GitHub commit does not block the source: the article publishes with no picture. |
 | `AI_NEWS_WALL_MS` | 300000 | Stop starting new work after this much wall time. Values above 900000 are clamped. A scheduled handler may run for 15 minutes. |
-| `AI_NEWS_TEXT_TIMEOUT_MS` | 60000 | Per text call. Values above 180000 are clamped. A 120B model needs about a minute. |
+| `AI_NEWS_TEXT_TIMEOUT_MS` | 60000 | Per text call. Values above 180000 are clamped. GPT OSS on medium reasoning effort needs about a minute. |
 | `AI_NEWS_IMAGE_TIMEOUT_MS` | 20000 | Per image call. |
 | `AI_NEWS_RETENTION_DAYS` | 180 | Delete articles older than this during a publish tick. `0` disables cleanup. |
 
-The run budget is the per-article number times the slots for that tick, clamped (24 text calls, 8 image calls). Each image slot still gets at least one try per configured image model. Text output is capped at 2048 tokens.
+The run budget is the per-article number times the slots for that tick, clamped (24 text calls, 8 image calls). Each image slot still gets at least one try per configured image model. Text output is capped at 8192 tokens. On gpt-oss, reasoning tokens count against that cap, so the cap has to leave room for the article after a medium reasoning pass.
 
 Each `AI.run` passes `{ rejectIfBusy: true }`, so a busy model fails instead of waiting in a capacity queue. The desk also stops waiting after the per-call timeout. That timer does not cancel inference that has already started, so a timed-out call may still be billed.
 
@@ -132,7 +132,7 @@ Each fetch follows at most three redirects, and only to `https` on the same site
 
 Text, in order, via the existing `AI` binding. These models are available on the Workers Free plan:
 
-1. `@cf/openai/gpt-oss-120b` (primary). The binding call uses the Responses shape: `instructions`, `input`, `max_output_tokens`, and `reasoning.effort` set to `low`. A chat `messages` body is valid too, but medium reasoning plus 2048 output tokens does not finish inside a short timeout.
+1. `@cf/openai/gpt-oss-120b` (primary). The binding call uses the Responses shape: `instructions`, `input`, `max_output_tokens` of 8192, and `reasoning.effort` set to `medium`. Reasoning tokens count against `max_output_tokens`. A chat `messages` body is valid too. GLM and Gemma keep the messages shape and the same output cap.
 2. `@cf/zai-org/glm-4.7-flash`
 3. `@cf/google/gemma-4-26b-a4b-it`
 
@@ -154,12 +154,12 @@ Before a row is inserted the draft must:
 - contain no em dash (U+2014), no en dash used as a clause break, no figure dash, minus sign, or two-em dash (U+2012, U+2212, U+FE58, U+FE31, U+2E3A), and no `---` or spaced `--`
 - avoid the slop list in `src/news/quality.ts` (`delve`, `in today's fast-paced`, `game-changer`, `it's worth noting`, `tapestry`, `landscape`, `in conclusion`, and the rest of that list)
 - be 400 to 1100 words, with at least eight sentences, one of 12 words or fewer, one of 25 words or more, and an uneven rhythm
-- not copy an 8-word sequence from the source title or excerpt
+- not copy an 8-word sequence from the source title or excerpt. A window that is only a list of proper nouns, such as brand names, is not treated as a copy. A sentence that uses those names, and any other 8-word sequence, still fails.
 - not repeat a title or a source URL, and not be too similar to a recent article
 - name the outlet in the body
 - for fashion and showbiz, attribute disputes in the same sentence as the claim
 
-Failures are logged as JSON and the model is asked to try again, up to three times per story. A bad image response stops that tick so the desk does not burn a string of text calls.
+Failures are logged as JSON. The next attempt is told the exact reason codes and what to change (word count, attribution, description length, FAQ length, banned wording, and any copied sequence), up to three times per story. A bad image response stops that tick so the desk does not burn a string of text calls.
 
 New articles can link up to two older stories in the same category. The link is added in that persona's own sentence if the draft did not include it.
 
