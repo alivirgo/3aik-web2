@@ -57,6 +57,13 @@ export interface StoredRelated {
 	title: string;
 }
 
+export interface SitemapEntry {
+	slug: string;
+	title: string;
+	publishedAt: string;
+	updatedAt: string;
+}
+
 export interface StoredArticle {
 	id: string;
 	slug: string;

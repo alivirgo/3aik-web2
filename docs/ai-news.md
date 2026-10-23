@@ -1,6 +1,6 @@
 # 3aik News
 
-`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` is `on` and the hourly cap is `1`. Create the D1 database, replace the placeholder id, apply migrations, and create the R2 bucket before the first deploy. Until those exist, set `AI_NEWS_PUBLISHING` to `off` so the cron does not run against a missing database. This change does not deploy anything.
+`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` ships as `off`. The cron returns before it opens D1 or R2 while publishing is off. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story or image, not a 500. The D1 id in `wrangler.jsonc` is still a placeholder. Create the database and bucket, replace that id, apply both migrations, then set `AI_NEWS_PUBLISHING` to `on` and deploy. This change does not deploy anything.
 
 ## What readers are told
 
@@ -25,6 +25,7 @@ Copy the `database_id` from that command into `wrangler.jsonc`, replacing the pl
 ```sh
 npx wrangler d1 migrations apply 3aik-ai-news --remote
 npx wrangler r2 bucket create 3aik-ai-news-images
+# then set AI_NEWS_PUBLISHING to "on" in wrangler.jsonc
 ```
 
 Local equivalents:
@@ -62,9 +63,42 @@ Images are stored in R2. Article rows, source URLs, and rotation counters are in
 
 Cron ticks are `7 * * * *` and `37 * * * *` (minute 7 and minute 37, UTC). Each tick publishes at most `ceil(rate / 2)` articles, and never more than the room left in the current UTC hour. A rate of 1 publishes on the first tick that still has room and skips the other. A rate of 2 publishes one article on each tick. A rate of 4 publishes up to two per tick.
 
-Pause without deleting data: set `AI_NEWS_PUBLISHING` to `off` in `wrangler.jsonc` and deploy. `false`, `paused`, and `0` also pause. `on` resumes. Prefer the config file. A dashboard-only edit can be overwritten by the next `wrangler deploy`.
+Publishing is off unless `AI_NEWS_PUBLISHING` is `on`, `true`, `yes`, or `1`. A missing value is off. `false`, `paused`, and `0` also pause. Prefer the config file. A dashboard-only edit can be overwritten by the next `wrangler deploy`.
 
-While paused, `/ai-news` still serves pages, feeds, and sitemaps. The cron logs `ai-news publishing paused` and returns.
+While paused, the cron does not take the publish lock and does not read or write D1 or R2. `/ai-news` still serves pages, feeds, and sitemaps from D1 when the database exists. If the database is missing, lists and feeds are empty and a story URL returns 404.
+
+## Spend, time, and retention
+
+Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`:
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `AI_NEWS_TEXT_CALLS_PER_ARTICLE` | 6 | Text `AI.run` calls per article slot this tick. A 3-model cascade counts one call per model. |
+| `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 1 | Image calls per slot. Set `2` to allow the FLUX.1 Schnell fallback. |
+| `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
+| `AI_NEWS_REJECT_TTL_HOURS` | 24 | A rejected or failed source URL is stored and skipped until this TTL ends. |
+| `AI_NEWS_WALL_MS` | 45000 | Stop starting new work after this much wall time. |
+| `AI_NEWS_TEXT_TIMEOUT_MS` | 15000 | Per text call. |
+| `AI_NEWS_IMAGE_TIMEOUT_MS` | 20000 | Per image call. |
+| `AI_NEWS_RETENTION_DAYS` | 180 | Delete articles older than this during a publish tick. `0` disables cleanup. |
+
+The run budget is the per-article number times the slots for that tick, clamped (24 text calls, 8 image calls). Text output is capped at 2048 tokens.
+
+The publish lock lasts longer than the worst case of every budgeted call hitting its timeout, and longer than the wall clock, plus 60 seconds. It is not a fixed 10 minutes.
+
+Failed source URLs live in `source_rejections` (`migrations/0002_ai_news_rejections.sql`). Expired rows are deleted at the start of a publish tick. Articles older than the retention window are deleted in batches of 20, and their R2 objects are deleted in the same tick. Lifetime author counters stay, so rotation does not restart. To clean by hand:
+
+```sql
+DELETE FROM article_sources WHERE article_id IN (SELECT id FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z');
+DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
+DELETE FROM source_rejections WHERE expires_at <= datetime('now');
+```
+
+Delete the matching `articles/<id>.*` objects from the R2 bucket as well.
+
+## Feeds
+
+Each fetch follows at most three redirects, and only to `https` on the same hostname. The response must be `xml`, `rss`, or `atom` (`text/xml`, `application/xml`, `application/rss+xml`, `application/atom+xml`, `application/rdf+xml`, `text/rss`). The body is streamed and dropped above 2 MB. An item with no publication date is stale and is not used.
 
 ## Models
 
@@ -87,7 +121,7 @@ Feeds are listed in `src/news/config.ts` (The Verge, TechCrunch, MIT Technology 
 
 Before a row is inserted the draft must:
 
-- contain no em dash (U+2014), no en dash used as a clause break, and no `---` or spaced `--`
+- contain no em dash (U+2014), no en dash used as a clause break, no figure dash, minus sign, or two-em dash (U+2012, U+2212, U+FE58, U+FE31, U+2E3A), and no `---` or spaced `--`
 - avoid the slop list in `src/news/quality.ts` (`delve`, `in today's fast-paced`, `game-changer`, `it's worth noting`, `tapestry`, `landscape`, `in conclusion`, and the rest of that list)
 - be 400 to 1100 words, with at least eight sentences, one of 12 words or fewer, one of 25 words or more, and an uneven rhythm
 - not copy an 8-word sequence from the source title or excerpt

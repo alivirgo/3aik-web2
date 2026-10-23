@@ -1,20 +1,30 @@
 import { pickAuthor, pickCategory } from "./authors";
 import {
+	RETENTION_BATCH,
 	SIMILARITY_LIMIT,
 	articlesPerHour,
 	hourStartIso,
+	imageCallBudget,
+	imageTimeoutMs,
+	lockTtlMs,
+	maxFailuresPerRun,
 	publishingEnabled,
+	rejectTtlHours,
+	retentionDays,
 	siteOrigin,
 	slotsThisRun,
+	textCallBudget,
+	textTimeoutMs,
+	wallBudgetMs,
 	type NewsEnv,
 } from "./config";
 import { fetchStories } from "./feeds";
 import { renderBodyHtml } from "./html";
-import { buildArticlePrompt, generateDraftText, generateIllustration, parseArticleDraft } from "./model";
+import { buildArticlePrompt, generateDraftText, generateIllustration, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
 import { assessDraft } from "./quality";
 import type { ImageStore, NewsRepository } from "./repository";
 import type { ArticleDraft, AuthorPersona, Category, RelatedLink, SourceRef, StoredArticle, StoryItem } from "./types";
-import { detectImageType, slugify, stripEditorialDashes, tokenJaccard } from "./text";
+import { detectImageType, imageLimitReason, slugify, stripEditorialDashes, tokenJaccard } from "./text";
 
 const ATTEMPTS = 3;
 
@@ -27,6 +37,7 @@ export interface PublishDependencies {
 	writeDraft?: (prompt: { system: string; user: string }) => Promise<{ text: string; model: string }>;
 	paint?: (prompt: string) => Promise<{ bytes: Uint8Array; contentType: string; model: string }>;
 	ping?: (urls: string[]) => Promise<void>;
+	clock?: () => number;
 }
 
 export interface PublishReport {
@@ -74,30 +85,77 @@ async function chooseRelated(repo: NewsRepository, origin: string, category: Cat
 		}));
 }
 
+interface RunBudget extends ModelBudget {
+	expired: () => boolean;
+	stop: boolean;
+}
+
+function makeBudget(env: NewsEnv, slots: number, startedAt: number, clock: () => number): RunBudget {
+	let textCalls = 0;
+	let imageCalls = 0;
+	const textLimit = textCallBudget(env, slots);
+	const imageLimit = imageCallBudget(env, slots);
+	const wall = wallBudgetMs(env);
+	const budget: RunBudget = {
+		textTimeoutMs: textTimeoutMs(env),
+		imageTimeoutMs: imageTimeoutMs(env),
+		stop: false,
+		expired: () => clock() - startedAt >= wall,
+		takeText: () => {
+			if (budget.expired() || textCalls >= textLimit) {
+				budget.stop = true;
+				return false;
+			}
+			textCalls += 1;
+			return true;
+		},
+		takeImage: () => {
+			if (budget.expired() || imageCalls >= imageLimit) {
+				budget.stop = true;
+				return false;
+			}
+			imageCalls += 1;
+			return true;
+		},
+	};
+	return budget;
+}
+
 async function draftStory(
 	deps: PublishDependencies,
 	story: StoryItem,
 	author: AuthorPersona,
 	related: RelatedLink[],
 	sources: SourceRef[],
-): Promise<{ draft: ArticleDraft; model: string } | null> {
+	budget: RunBudget,
+): Promise<{ ok: true; draft: ArticleDraft; model: string } | { ok: false; tried: boolean }> {
 	let failure = "";
+	let tried = false;
 	for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+		if (budget.expired()) {
+			budget.stop = true;
+			return { ok: false, tried };
+		}
 		const prompt = buildArticlePrompt({ author, story, related, failure: failure || undefined });
 		let text = "";
 		let model = "dry-run";
 		try {
 			const written = deps.writeDraft
-				? await deps.writeDraft(prompt)
-				: await generateDraftText(deps.env.AI as Ai, prompt.system, prompt.user);
+				? await (async () => {
+					if (!budget.takeText()) throw new Error("text_budget");
+					tried = true;
+					return withTimeout(deps.writeDraft!(prompt), budget.textTimeoutMs);
+				})()
+				: await generateDraftText(deps.env.AI as Ai, prompt.system, prompt.user, budget);
+			if (!deps.writeDraft) tried = true;
 			text = written.text;
 			model = written.model;
 		} catch (error) {
-			console.error(JSON.stringify({
-				message: "ai-news draft failed",
-				error: error instanceof Error ? error.message : String(error),
-			}));
-			return null;
+			const message = error instanceof Error ? error.message : String(error);
+			if (message === "text_budget" || message === "ai_timeout" || budget.expired()) budget.stop = true;
+			if (message !== "text_budget") tried = true;
+			console.error(JSON.stringify({ message: "ai-news draft failed", error: message }));
+			return { ok: false, tried };
 		}
 		const parsed = parseArticleDraft(text);
 		if (!parsed) {
@@ -112,9 +170,29 @@ async function draftStory(
 			console.log(JSON.stringify({ message: "ai-news draft rejected", attempt, reasons: verdict.reasons }));
 			continue;
 		}
-		return { draft, model };
+		return { ok: true, draft, model };
 	}
-	return null;
+	return { ok: false, tried };
+}
+
+async function rememberFailure(repo: NewsRepository, env: NewsEnv, url: string, reason: string, now: Date): Promise<void> {
+	const expires = new Date(now.getTime() + rejectTtlHours(env) * 60 * 60 * 1000).toISOString();
+	await repo.rejectSource(url, reason, expires);
+}
+
+async function pruneDesk(deps: PublishDependencies, nowIso: string): Promise<void> {
+	await deps.repo.forgetExpiredRejections(nowIso);
+	const days = retentionDays(deps.env);
+	if (days <= 0) return;
+	const cutoff = new Date(deps.now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+	const expired = await deps.repo.expiredArticles(cutoff, RETENTION_BATCH);
+	for (const row of expired) {
+		await deps.images.delete(row.imageKey);
+		await deps.repo.deleteArticle(row.id);
+	}
+	if (expired.length) {
+		console.log(JSON.stringify({ message: "ai-news retention", deleted: expired.length, cutoff }));
+	}
 }
 
 export async function pingIndexNow(env: NewsEnv, urls: string[], fetchImpl: typeof fetch = fetch): Promise<void> {
@@ -153,12 +231,13 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 	const rate = articlesPerHour(deps.env);
 	if (rate <= 0) return { published: [], skipped: "rate", failures: [] };
 	const nowIso = deps.now.toISOString();
-	const locked = await deps.repo.tryLock(new Date(deps.now.getTime() + 10 * 60 * 1000).toISOString(), nowIso);
+	const locked = await deps.repo.tryLock(new Date(deps.now.getTime() + lockTtlMs(deps.env)).toISOString(), nowIso);
 	if (!locked) return { published: [], skipped: "locked", failures: [] };
 
 	const published: string[] = [];
 	const failures: string[] = [];
 	try {
+		await pruneDesk(deps, nowIso);
 		const already = await deps.repo.countPublishedSince(hourStartIso(deps.now));
 		const slots = slotsThisRun(rate, already);
 		if (slots <= 0) return { published, skipped: "quota", failures };
@@ -172,13 +251,17 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 		for (const story of stories) {
 			if (fresh.length >= 12) break;
 			if (await deps.repo.hasSource(story.url)) continue;
+			if (await deps.repo.isRejected(story.url, nowIso)) continue;
 			fresh.push(story);
 		}
 		if (!fresh.length) return { published, skipped: "no-stories", failures };
 
 		const origin = siteOrigin(deps.env);
-		let imageDown = false;
-		while (published.length < slots && fresh.length && !imageDown) {
+		const clock = deps.clock ?? Date.now;
+		const budget = makeBudget(deps.env, slots, clock(), clock);
+		const failureCap = maxFailuresPerRun(deps.env);
+		let consecutiveFailures = 0;
+		while (published.length < slots && fresh.length && !budget.stop && consecutiveFailures < failureCap) {
 			const stats = await deps.repo.stats();
 			const available = [...new Set(fresh.map((story) => story.category))];
 			const category = pickCategory(stats, available);
@@ -194,19 +277,33 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				excerpt: story.excerpt,
 			}];
 			const related = await chooseRelated(deps.repo, origin, story.category, story.title);
-			const drafted = await draftStory(deps, story, author, related, sources);
-			if (!drafted) {
-				failures.push(story.url);
+			const drafted = await draftStory(deps, story, author, related, sources, budget);
+			if (!drafted.ok) {
+				if (drafted.tried) {
+					failures.push(story.url);
+					consecutiveFailures += 1;
+					await rememberFailure(deps.repo, deps.env, story.url, "draft", deps.now);
+				} else {
+					budget.stop = true;
+				}
 				continue;
 			}
 			let image: { bytes: Uint8Array; contentType: string; model: string };
 			try {
+				if (budget.expired()) {
+					budget.stop = true;
+					throw new Error("wall_budget");
+				}
 				image = deps.paint
-					? await deps.paint(drafted.draft.imagePrompt)
-					: await generateIllustration(deps.env.AI as Ai, drafted.draft.imagePrompt);
+					? await (budget.takeImage()
+						? withTimeout(deps.paint(drafted.draft.imagePrompt), budget.imageTimeoutMs)
+						: Promise.reject(new Error("image_budget")))
+					: await generateIllustration(deps.env.AI as Ai, drafted.draft.imagePrompt, budget);
 			} catch (error) {
-				imageDown = true;
-				failures.push("image");
+				budget.stop = true;
+				failures.push(story.url);
+				consecutiveFailures += 1;
+				await rememberFailure(deps.repo, deps.env, story.url, "image", deps.now);
 				console.error(JSON.stringify({
 					message: "ai-news image failed",
 					error: error instanceof Error ? error.message : String(error),
@@ -214,9 +311,12 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				break;
 			}
 			const detected = detectImageType(image.bytes);
-			if (!detected) {
-				imageDown = true;
-				failures.push("image-type");
+			const limited = imageLimitReason(image.bytes);
+			if (!detected || limited) {
+				budget.stop = true;
+				failures.push(story.url);
+				consecutiveFailures += 1;
+				await rememberFailure(deps.repo, deps.env, story.url, limited ?? "image-type", deps.now);
 				break;
 			}
 			const id = crypto.randomUUID();
@@ -249,12 +349,16 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 			} catch (error) {
 				await deps.images.delete(article.imageKey);
 				failures.push(story.url);
+				consecutiveFailures += 1;
+				await rememberFailure(deps.repo, deps.env, story.url, "insert", deps.now);
 				console.error(JSON.stringify({
 					message: "ai-news insert failed",
 					error: error instanceof Error ? error.message : String(error),
 				}));
+				if (consecutiveFailures >= failureCap) break;
 				continue;
 			}
+			consecutiveFailures = 0;
 			published.push(slug);
 			console.log(JSON.stringify({
 				message: "ai-news published",

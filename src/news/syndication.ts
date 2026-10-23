@@ -1,8 +1,8 @@
 import { AUTHORS, authorById } from "./authors";
 import { ACCURACY_DISCLAIMER, CATEGORY_LABEL, DESK_DISCLOSURE, SITE_NAME, personaFooter } from "./config";
-import type { Category, StoredArticle } from "./types";
+import type { Category, SitemapEntry, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
-import { rfc822, xmlEscape } from "./text";
+import { escapeMarkdown, rfc822, stripEditorialDashes, xmlEscape } from "./text";
 
 function articleUrl(origin: string, slug: string): string {
 	return `${origin}/ai-news/article/${slug}`;
@@ -22,7 +22,7 @@ export function renderRss(origin: string, articles: StoredArticle[], category?: 
 			ACCURACY_DISCLAIMER,
 		].join(" ");
 		return `<item>
-<title>${xmlEscape(article.title)}</title>
+<title>${xmlEscape(stripEditorialDashes(article.title))}</title>
 <link>${xmlEscape(url)}</link>
 <guid isPermaLink="true">${xmlEscape(url)}</guid>
 <pubDate>${xmlEscape(rfc822(article.publishedAt))}</pubDate>
@@ -54,7 +54,7 @@ export function renderAtom(origin: string, articles: StoredArticle[], category?:
 		const url = articleUrl(origin, article.slug);
 		const summary = `${article.description} ${personaFooter(name)} ${ACCURACY_DISCLAIMER}`;
 		return `<entry>
-<title>${xmlEscape(article.title)}</title>
+<title>${xmlEscape(stripEditorialDashes(article.title))}</title>
 <link href="${xmlEscape(url)}" rel="alternate" type="text/html"/>
 <id>${xmlEscape(url)}</id>
 <updated>${xmlEscape(article.publishedAt)}</updated>
@@ -75,7 +75,7 @@ ${entries}
 </feed>`;
 }
 
-export function renderSitemap(origin: string, articles: StoredArticle[]): string {
+export function renderSitemap(origin: string, articles: Array<Pick<SitemapEntry, "slug" | "updatedAt">>): string {
 	const staticUrls = [
 		`${origin}/ai-news`,
 		`${origin}/ai-news/about`,
@@ -92,7 +92,7 @@ ${articleEntries}
 </urlset>`;
 }
 
-export function renderNewsSitemap(origin: string, articles: StoredArticle[], now = new Date()): string {
+export function renderNewsSitemap(origin: string, articles: Array<Pick<SitemapEntry, "slug" | "title" | "publishedAt">>, now = new Date()): string {
 	const cutoff = now.getTime() - 48 * 60 * 60 * 1000;
 	const recent = articles.filter((article) => Date.parse(article.publishedAt) >= cutoff);
 	const entries = recent.map((article) => `<url>
@@ -100,7 +100,7 @@ export function renderNewsSitemap(origin: string, articles: StoredArticle[], now
 <news:news>
 <news:publication><news:name>${xmlEscape(SITE_NAME)}</news:name><news:language>en</news:language></news:publication>
 <news:publication_date>${xmlEscape(article.publishedAt)}</news:publication_date>
-<news:title>${xmlEscape(article.title)}</news:title>
+<news:title>${xmlEscape(stripEditorialDashes(article.title))}</news:title>
 </news:news>
 </url>`).join("\n");
 	return `<?xml version="1.0" encoding="UTF-8"?>
@@ -111,7 +111,11 @@ ${entries}
 
 export function renderLlmsTxt(origin: string, articles: StoredArticle[]): string {
 	const sections = CATEGORIES.map((category) => `- [${CATEGORY_LABEL[category]}](${origin}/ai-news/${category}): ${CATEGORY_LABEL[category]} coverage.`).join("\n");
-	const recent = articles.slice(0, 20).map((article) => `- [${article.title}](${articleUrl(origin, article.slug)}): ${article.description}`).join("\n");
+	const recent = articles.slice(0, 20).map((article) => {
+		const title = escapeMarkdown(stripEditorialDashes(article.title));
+		const description = escapeMarkdown(stripEditorialDashes(article.description));
+		return `- [${title}](${articleUrl(origin, article.slug)}): ${description}`;
+	}).join("\n");
 	return `# 3aik News
 
 > News pages on 3aik.com are written with AI assistance by named editorial personas and checked before publishing. The personas are not real people. ${ACCURACY_DISCLAIMER}

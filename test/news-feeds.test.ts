@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { FEEDS } from "../src/news/config";
-import { feedsForTick, fetchStories, parseFeed } from "../src/news/feeds";
+import { FEEDS, MAX_FEED_BYTES } from "../src/news/config";
+import { feedsForTick, fetchStories, isFeedContentType, parseFeed, readBodyCapped } from "../src/news/feeds";
 
 const now = new Date("2026-10-23T12:00:00.000Z");
 const feed = FEEDS[0];
@@ -39,6 +39,7 @@ describe("feed parser", () => {
 <title>Guid fallback note about a maintenance window</title>
 <link></link>
 <guid>https://example.com/from-guid</guid>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
 <description>The description is long enough to clear the minimum excerpt length for a usable RSS item.</description>
 </item></channel></rss>`;
 		expect(parseFeed(rss, feed, now)[0]?.url).toBe("https://example.com/from-guid");
@@ -73,10 +74,41 @@ describe("feed parser", () => {
 </item></channel></rss>`;
 		const stories = await fetchStories(now, async (input) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url === target.url) return new Response(xml, { status: 200 });
+			if (url === target.url) return new Response(xml, { status: 200, headers: { "content-type": "application/rss+xml; charset=utf-8" } });
 			return new Response("no", { status: 503 });
 		}, [target, FEEDS[3]]);
 		expect(stories.map((story) => story.url)).toEqual(["https://example.com/healthy"]);
 		expect(stories[0]?.outlet).toBe(target.outlet);
+	});
+
+	it("drops items that have no publication date", () => {
+		const xml = `<?xml version="1.0"?><rss><channel><item>
+<title>Undated note about a maintenance window</title>
+<link>https://example.com/undated</link>
+<description>This description is long enough to clear the minimum excerpt length for an undated item.</description>
+</item></channel></rss>`;
+		expect(parseFeed(xml, feed, now)).toEqual([]);
+	});
+
+	it("accepts feed content types and rejects html", () => {
+		expect(isFeedContentType("application/rss+xml; charset=utf-8")).toBe(true);
+		expect(isFeedContentType("application/atom+xml")).toBe(true);
+		expect(isFeedContentType("text/xml")).toBe(true);
+		expect(isFeedContentType("text/html")).toBe(false);
+		expect(isFeedContentType(null)).toBe(false);
+	});
+
+	it("does not follow a redirect onto another host and caps the body", async () => {
+		const stories = await fetchStories(now, async () => new Response(null, {
+			status: 302,
+			headers: { location: "https://evil.example/rss.xml" },
+		}), [feed]);
+		expect(stories).toEqual([]);
+
+		const tooBig = await readBodyCapped(new Response(new Uint8Array(64), {
+			headers: { "content-type": "application/rss+xml" },
+		}), 16);
+		expect(tooBig).toBeNull();
+		expect(MAX_FEED_BYTES).toBe(2 * 1024 * 1024);
 	});
 });

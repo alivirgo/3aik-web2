@@ -10,6 +10,14 @@ export interface Env {
 	AI_NEWS_ARTICLES_PER_HOUR?: string;
 	AI_NEWS_PUBLISHING?: string;
 	AI_NEWS_SITE_ORIGIN?: string;
+	AI_NEWS_TEXT_CALLS_PER_ARTICLE?: string;
+	AI_NEWS_IMAGE_CALLS_PER_ARTICLE?: string;
+	AI_NEWS_MAX_FAILURES?: string;
+	AI_NEWS_REJECT_TTL_HOURS?: string;
+	AI_NEWS_WALL_MS?: string;
+	AI_NEWS_TEXT_TIMEOUT_MS?: string;
+	AI_NEWS_IMAGE_TIMEOUT_MS?: string;
+	AI_NEWS_RETENTION_DAYS?: string;
 	INDEXNOW_KEY?: string;
 }
 

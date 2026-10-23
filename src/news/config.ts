@@ -20,6 +20,21 @@ export const TITLE_JACCARD_LIMIT = 0.62;
 export const BODY_SHINGLE_LIMIT = 0.16;
 export const COPY_WINDOW = 8;
 
+/** Output tokens for one article JSON object, not a long reasoning trace. */
+export const TEXT_MAX_TOKENS = 2048;
+export const MAX_FEED_BYTES = 2 * 1024 * 1024;
+export const MAX_IMAGE_EDGE = 1024;
+export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_TEXT_CALLS_PER_ARTICLE = 6;
+export const DEFAULT_IMAGE_CALLS_PER_ARTICLE = 1;
+export const DEFAULT_MAX_FAILURES = 2;
+export const DEFAULT_REJECT_TTL_HOURS = 24;
+export const DEFAULT_WALL_MS = 45_000;
+export const DEFAULT_TEXT_TIMEOUT_MS = 15_000;
+export const DEFAULT_IMAGE_TIMEOUT_MS = 20_000;
+export const DEFAULT_RETENTION_DAYS = 180;
+export const RETENTION_BATCH = 20;
+
 export const TEXT_MODELS = [
 	{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B" },
 	{ id: "@cf/moonshotai/kimi-k2.6", label: "Kimi K2.6" },
@@ -135,6 +150,14 @@ export interface NewsEnv {
 	AI_NEWS_ARTICLES_PER_HOUR?: string;
 	AI_NEWS_PUBLISHING?: string;
 	AI_NEWS_SITE_ORIGIN?: string;
+	AI_NEWS_TEXT_CALLS_PER_ARTICLE?: string;
+	AI_NEWS_IMAGE_CALLS_PER_ARTICLE?: string;
+	AI_NEWS_MAX_FAILURES?: string;
+	AI_NEWS_REJECT_TTL_HOURS?: string;
+	AI_NEWS_WALL_MS?: string;
+	AI_NEWS_TEXT_TIMEOUT_MS?: string;
+	AI_NEWS_IMAGE_TIMEOUT_MS?: string;
+	AI_NEWS_RETENTION_DAYS?: string;
 	INDEXNOW_KEY?: string;
 }
 
@@ -147,8 +170,66 @@ export function articlesPerHour(env: NewsEnv): number {
 }
 
 export function publishingEnabled(env: NewsEnv): boolean {
-	const value = (env.AI_NEWS_PUBLISHING ?? "on").trim().toLowerCase();
+	const value = (env.AI_NEWS_PUBLISHING ?? "off").trim().toLowerCase();
 	return value === "on" || value === "true" || value === "yes" || value === "1";
+}
+
+function clampedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+	if (raw === undefined || raw.trim() === "") return fallback;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) return fallback;
+	return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+export function textCallsPerArticle(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_TEXT_CALLS_PER_ARTICLE, DEFAULT_TEXT_CALLS_PER_ARTICLE, 1, 12);
+}
+
+export function imageCallsPerArticle(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_IMAGE_CALLS_PER_ARTICLE, DEFAULT_IMAGE_CALLS_PER_ARTICLE, 1, 4);
+}
+
+export function maxFailuresPerRun(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_MAX_FAILURES, DEFAULT_MAX_FAILURES, 1, 5);
+}
+
+export function rejectTtlHours(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_REJECT_TTL_HOURS, DEFAULT_REJECT_TTL_HOURS, 1, 168);
+}
+
+export function wallBudgetMs(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_WALL_MS, DEFAULT_WALL_MS, 5_000, 120_000);
+}
+
+export function textTimeoutMs(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_TEXT_TIMEOUT_MS, DEFAULT_TEXT_TIMEOUT_MS, 1_000, 30_000);
+}
+
+export function imageTimeoutMs(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_IMAGE_TIMEOUT_MS, DEFAULT_IMAGE_TIMEOUT_MS, 1_000, 45_000);
+}
+
+export function retentionDays(env: NewsEnv): number {
+	return clampedInt(env.AI_NEWS_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, 0, 3650);
+}
+
+/** Calls allowed in one cron tick. Scales with the slots this tick may publish, then clamps. */
+export function textCallBudget(env: NewsEnv, slots: number): number {
+	return Math.min(24, textCallsPerArticle(env) * Math.max(1, slots));
+}
+
+export function imageCallBudget(env: NewsEnv, slots: number): number {
+	return Math.min(8, imageCallsPerArticle(env) * Math.max(1, slots));
+}
+
+/**
+ * Lock must outlast the longest run we can still be inside: every budgeted
+ * model call hitting its timeout, or the wall clock, whichever is longer.
+ */
+export function lockTtlMs(env: NewsEnv): number {
+	const slots = Math.max(1, slotsThisRun(articlesPerHour(env), 0));
+	const worstCase = textCallBudget(env, slots) * textTimeoutMs(env) + imageCallBudget(env, slots) * imageTimeoutMs(env);
+	return Math.max(wallBudgetMs(env), worstCase) + 60_000;
 }
 
 export function slotsThisRun(rate: number, publishedThisHour: number): number {

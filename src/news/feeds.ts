@@ -1,4 +1,4 @@
-import { FEEDS, MAX_EXCERPT_CHARS, MIN_EXCERPT_CHARS, STORY_MAX_AGE_HOURS, type FeedSource } from "./config";
+import { FEEDS, MAX_EXCERPT_CHARS, MAX_FEED_BYTES, MIN_EXCERPT_CHARS, STORY_MAX_AGE_HOURS, type FeedSource } from "./config";
 import type { StoryItem } from "./types";
 import { clipWords, normalizeSourceUrl, stripHtml } from "./text";
 
@@ -36,9 +36,94 @@ function parseDate(raw: string | null): string | null {
 }
 
 function withinAge(publishedAt: string | null, now: Date): boolean {
-	if (!publishedAt) return true;
+	if (!publishedAt) return false;
 	const age = now.getTime() - Date.parse(publishedAt);
 	return age <= STORY_MAX_AGE_HOURS * 60 * 60 * 1000 && age > -6 * 60 * 60 * 1000;
+}
+
+export function isFeedContentType(header: string | null): boolean {
+	const type = (header ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+	return type === "text/xml"
+		|| type === "application/xml"
+		|| type === "text/rss"
+		|| type === "application/rss+xml"
+		|| type === "application/atom+xml"
+		|| type === "application/rdf+xml";
+}
+
+export async function readBodyCapped(response: Response, limit = MAX_FEED_BYTES): Promise<string | null> {
+	const reader = response.body?.getReader();
+	if (!reader) return null;
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			total += value.byteLength;
+			if (total > limit) {
+				await reader.cancel();
+				return null;
+			}
+			chunks.push(value);
+		}
+	} catch {
+		await reader.cancel().catch(() => undefined);
+		return null;
+	}
+	const merged = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		merged.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(merged);
+}
+
+async function fetchFeedDocument(fetchImpl: typeof fetch, feedUrl: string): Promise<string | null> {
+	let current = feedUrl;
+	let originalHost: string;
+	try {
+		originalHost = new URL(feedUrl).hostname.toLowerCase();
+	} catch {
+		return null;
+	}
+	for (let hop = 0; hop < 3; hop += 1) {
+		const response = await fetchImpl(current, {
+			redirect: "manual",
+			headers: {
+				accept: "application/rss+xml, application/atom+xml, application/xml, text/xml",
+				"user-agent": USER_AGENT,
+			},
+			signal: AbortSignal.timeout(8_000),
+		});
+		const status = response.status;
+		if (status >= 300 && status < 400) {
+			const location = response.headers.get("location");
+			await response.body?.cancel();
+			if (!location) return null;
+			let next: URL;
+			try {
+				next = new URL(location, current);
+			} catch {
+				return null;
+			}
+			if (next.protocol !== "https:" || next.hostname.toLowerCase() !== originalHost) return null;
+			current = next.toString();
+			continue;
+		}
+		if (!response.ok) {
+			await response.body?.cancel();
+			return null;
+		}
+		if (!isFeedContentType(response.headers.get("content-type"))) {
+			await response.body?.cancel();
+			return null;
+		}
+		return readBodyCapped(response);
+	}
+	return null;
 }
 
 function excerptFrom(block: string): string {
@@ -98,18 +183,11 @@ export async function fetchStories(
 	const batches = await Promise.all(
 		feeds.map(async (feed) => {
 			try {
-				const response = await fetchImpl(feed.url, {
-					headers: {
-						accept: "application/rss+xml, application/atom+xml, application/xml, text/xml",
-						"user-agent": USER_AGENT,
-					},
-					signal: AbortSignal.timeout(8_000),
-				});
-				if (!response.ok) {
-					console.error(JSON.stringify({ message: "ai-news feed failed", outlet: feed.outlet, status: response.status }));
+				const xml = await fetchFeedDocument(fetchImpl, feed.url);
+				if (!xml) {
+					console.error(JSON.stringify({ message: "ai-news feed failed", outlet: feed.outlet }));
 					return [];
 				}
-				const xml = await response.text();
 				return parseFeed(xml, feed, now);
 			} catch (error) {
 				console.error(JSON.stringify({

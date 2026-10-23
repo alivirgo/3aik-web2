@@ -40,6 +40,14 @@ export function renderBodyHtml(paragraphs: string[], allow: Set<string>): string
 	return paragraphs.map((paragraph) => `<p>${renderInline(paragraph, allow)}</p>`).join("\n");
 }
 
+export function paragraphsFromBody(bodyText: string): string[] {
+	return bodyText.split(/\n\n+/).map((paragraph) => paragraph.trim()).filter(Boolean);
+}
+
+function visibleTitle(title: string): string {
+	return stripEditorialDashes(title);
+}
+
 function categoryHref(origin: string, category: Category): string {
 	return `${origin}/ai-news/${category}`;
 }
@@ -163,9 +171,9 @@ function articleCard(origin: string, article: StoredArticle): string {
 	return `<article class="card">
 <a class="card-media" href="${articleHref(origin, article.slug)}"><img src="${origin}/ai-news/image/${escapeHtml(article.id)}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"></a>
 <p class="meta"><a href="${categoryHref(origin, article.category)}">${CATEGORY_LABEL[article.category]}</a> · <time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time></p>
-<h2><a href="${articleHref(origin, article.slug)}">${escapeHtml(article.title)}</a></h2>
-<p>${escapeHtml(article.description)}</p>
-<p class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a>, editorial persona</p>
+<h2><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></h2>
+<p>${escapeHtml(stripEditorialDashes(article.description))}</p>
+<p class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a>, editorial persona <span class="ai-label">AI-generated</span></p>
 </article>`;
 }
 
@@ -250,10 +258,9 @@ ${list}`;
 				url: canonical,
 				description: author.bio,
 				mainEntity: {
-					"@type": "Person",
+					"@type": "Organization",
 					name: author.name,
 					description: "Editorial persona on the 3aik news desk. Not a real person.",
-					jobTitle: "Editorial persona",
 					url: canonical,
 				},
 			},
@@ -270,7 +277,7 @@ export function renderArticle(origin: string, article: StoredArticle): string {
 		{ href: `${origin}/`, label: "3aik" },
 		{ href: `${origin}/ai-news`, label: "News" },
 		{ href: categoryHref(origin, article.category), label: CATEGORY_LABEL[article.category] },
-		{ label: article.title },
+		{ label: stripEditorialDashes(article.title) },
 	]);
 	const points = article.keyPoints.map((point) => `<li>${escapeHtml(stripEditorialDashes(point))}</li>`).join("");
 	const faqs = article.faq
@@ -281,17 +288,23 @@ export function renderArticle(origin: string, article: StoredArticle): string {
 		.join("");
 	const related = article.related.length
 		? `<section><h2>Related on this desk</h2><ul>${article.related
-			.map((item) => `<li><a href="${articleHref(origin, item.slug)}">${escapeHtml(item.title)}</a></li>`)
+			.map((item) => `<li><a href="${articleHref(origin, item.slug)}">${escapeHtml(stripEditorialDashes(item.title))}</a></li>`)
 			.join("")}</ul></section>`
 		: "";
+	const title = visibleTitle(article.title);
+	const allow = new Set<string>([
+		...article.sources.map((source) => source.url),
+		...article.related.map((item) => articleHref(origin, item.slug)),
+	]);
+	const prose = renderBodyHtml(paragraphsFromBody(article.bodyText), allow);
 	const body = `${trail.html}
 <article>
 <p class="meta"><a href="${categoryHref(origin, article.category)}">${CATEGORY_LABEL[article.category]}</a> · <time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time></p>
-<h1>${escapeHtml(article.title)}</h1>
-<p class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a>, editorial persona</p>
+<h1>${escapeHtml(title)}</h1>
+<p class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a>, editorial persona <span class="ai-label">AI-generated</span></p>
 <figure><img src="${image}" alt="${escapeHtml(article.imageAlt)}" width="1024" height="1024"><figcaption>${escapeHtml(article.imageAlt)}</figcaption></figure>
 <section class="tldr" aria-labelledby="tldr"><h2 id="tldr">TL;DR</h2><ul>${points}</ul></section>
-<div class="prose">${article.bodyHtml}</div>
+<div class="prose">${prose}</div>
 <section class="faq" aria-labelledby="faq"><h2 id="faq">Questions</h2>${faqs}</section>
 <section><h2>Sources</h2><ul>${sources}</ul></section>
 ${related}
@@ -300,7 +313,7 @@ ${related}
 	const newsLd = {
 		"@context": "https://schema.org",
 		"@type": "NewsArticle",
-		headline: article.title,
+		headline: title,
 		description: article.description,
 		image: [image],
 		datePublished: article.publishedAt,
@@ -308,11 +321,10 @@ ${related}
 		articleSection: CATEGORY_LABEL[article.category],
 		keywords: article.tags.join(", "),
 		author: {
-			"@type": "Person",
-			name,
-			url: authorHref(origin, article.authorId),
-			description: "Editorial persona on the 3aik news desk. Not a real person.",
-			jobTitle: "Editorial persona",
+			"@type": "Organization",
+			name: SITE_NAME,
+			url: `${origin}/ai-news`,
+			description: `The byline ${name} is an editorial persona, not a real person.`,
 		},
 		publisher: {
 			"@type": "Organization",
@@ -323,7 +335,7 @@ ${related}
 		mainEntityOfPage: canonical,
 		isBasedOn: article.sources.map((source) => ({
 			"@type": "NewsArticle",
-			headline: source.title,
+			headline: stripEditorialDashes(source.title),
 			url: source.url,
 			publisher: { "@type": "Organization", name: source.outlet },
 		})),
@@ -339,7 +351,7 @@ ${related}
 	};
 	return renderPage({
 		origin,
-		title: `${article.title} | ${SITE_NAME}`,
+		title: `${title} | ${SITE_NAME}`,
 		description: article.description,
 		canonical,
 		body,

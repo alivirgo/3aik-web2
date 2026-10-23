@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { siteOrigin } from "./config";
+import { publishingEnabled, siteOrigin } from "./config";
 import {
 	renderAbout,
 	renderArticle,
@@ -12,6 +12,7 @@ import {
 import { runPublishCycle } from "./pipeline";
 import { D1NewsRepository, R2ImageStore, type ImageStore, type NewsRepository } from "./repository";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap } from "./syndication";
+import type { SitemapEntry, StoredArticle } from "./types";
 import { isCategory } from "./text";
 
 export interface NewsRequestDeps {
@@ -66,12 +67,71 @@ function textResponse(request: Request, body: string, cache: string): Response {
 	return new Response(body, { status: 200, headers });
 }
 
-async function loadRecent(repo: NewsRepository | null, limit: number) {
-	if (!repo) return [];
-	return repo.listRecent(limit);
+function edgeCache(): Cache | null {
+	const store = (globalThis as { caches?: { default?: Cache } }).caches;
+	return store?.default ?? null;
 }
 
-export async function handleNewsRequest(request: Request, env: Env, override: NewsRequestDeps = {}): Promise<Response> {
+async function matchEdge(request: Request): Promise<Response | null> {
+	if (request.method !== "GET") return null;
+	const cache = edgeCache();
+	if (!cache) return null;
+	try {
+		const hit = await cache.match(new Request(request.url, { method: "GET" }));
+		return hit ?? null;
+	} catch {
+		return null;
+	}
+}
+
+async function putEdge(request: Request, response: Response, ctx?: ExecutionContext): Promise<void> {
+	if (request.method !== "GET" || response.status !== 200) return;
+	const control = response.headers.get("cache-control") ?? "";
+	if (!control.includes("public") || control.includes("no-store")) return;
+	const cache = edgeCache();
+	if (!cache) return;
+	const put = cache.put(new Request(request.url, { method: "GET" }), response.clone()).catch(() => undefined);
+	if (ctx) ctx.waitUntil(put);
+	else await put;
+}
+
+function logReadError(path: string, error: unknown): void {
+	console.error(JSON.stringify({
+		message: "ai-news read failed",
+		path,
+		error: error instanceof Error ? error.message : String(error),
+	}));
+}
+
+async function loadRecent(repo: NewsRepository | null, limit: number, category?: Parameters<NewsRepository["listRecent"]>[1]): Promise<StoredArticle[]> {
+	if (!repo) return [];
+	try {
+		return await repo.listRecent(limit, category);
+	} catch (error) {
+		logReadError("list", error);
+		return [];
+	}
+}
+
+async function loadSitemap(repo: NewsRepository | null, limit: number): Promise<SitemapEntry[]> {
+	if (!repo) return [];
+	try {
+		return await repo.listSitemap(limit);
+	} catch (error) {
+		logReadError("sitemap", error);
+		return [];
+	}
+}
+
+export async function handleNewsRequest(request: Request, env: Env, override: NewsRequestDeps = {}, ctx?: ExecutionContext): Promise<Response> {
+	const hit = await matchEdge(request);
+	if (hit) return hit;
+	const response = await buildNewsResponse(request, env, override);
+	await putEdge(request, response, ctx);
+	return response;
+}
+
+async function buildNewsResponse(request: Request, env: Env, override: NewsRequestDeps): Promise<Response> {
 	const url = new URL(request.url);
 	const origin = siteOrigin(env, request);
 	const path = normalizePath(url.pathname);
@@ -95,11 +155,11 @@ export async function handleNewsRequest(request: Request, env: Env, override: Ne
 		if (path === "/ai-news/about") return htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/disclaimer") return htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/sitemap.xml") {
-			const articles = await loadRecent(repo, 1000);
+			const articles = await loadSitemap(repo, 1000);
 			return xmlResponse(request, renderSitemap(origin, articles), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/news-sitemap.xml") {
-			const articles = await loadRecent(repo, 200);
+			const articles = await loadSitemap(repo, 200);
 			return xmlResponse(request, renderNewsSitemap(origin, articles, new Date()), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/feed.xml") {
@@ -115,20 +175,34 @@ export async function handleNewsRequest(request: Request, env: Env, override: Ne
 		if (imageMatch) {
 			const id = imageMatch[1];
 			if (!repo || !images || !id) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			const article = await repo.getById(id);
+			let article = null;
+			try {
+				article = await repo.getById(id);
+			} catch (error) {
+				logReadError(path, error);
+				return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+			}
 			if (!article) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			const stored = await images.get(article.imageKey);
+			let stored = null;
+			try {
+				stored = await images.get(article.imageKey);
+			} catch (error) {
+				logReadError(path, error);
+				return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+			}
 			if (!stored) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
 			const headers = securityHeaders(stored.contentType || article.imageType, "public, max-age=86400");
-			if (request.method === "HEAD") return new Response(null, { status: 200, headers });
-			const body = stored.bytes.slice().buffer as ArrayBuffer;
-			return new Response(body, { status: 200, headers });
+			if (request.method === "HEAD") {
+				await stored.body.cancel();
+				return new Response(null, { status: 200, headers });
+			}
+			return new Response(stored.body, { status: 200, headers });
 		}
 
 		const feedMatch = /^\/ai-news\/(ai|technology|fashion|showbiz)\/(feed\.xml|atom\.xml)$/.exec(path);
 		const feedCategory = feedMatch?.[1] ?? "";
 		if (feedMatch && isCategory(feedCategory)) {
-			const articles = repo ? await repo.listRecent(40, feedCategory) : [];
+			const articles = await loadRecent(repo, 40, feedCategory);
 			if (feedMatch[2] === "atom.xml") {
 				return xmlResponse(request, renderAtom(origin, articles, feedCategory), "application/atom+xml; charset=utf-8");
 			}
@@ -138,14 +212,21 @@ export async function handleNewsRequest(request: Request, env: Env, override: Ne
 		if (isCategory(path.slice("/ai-news/".length)) && path.startsWith("/ai-news/")) {
 			const category = path.slice("/ai-news/".length);
 			if (isCategory(category)) {
-				const articles = repo ? await repo.listRecent(24, category) : [];
+				const articles = await loadRecent(repo, 24, category);
 				return htmlResponse(request, renderCategory(origin, category, articles), 200, "public, max-age=60");
 			}
 		}
 
 		const authorMatch = /^\/ai-news\/author\/([a-z0-9-]{1,80})$/.exec(path);
 		if (authorMatch?.[1]) {
-			const articles = repo ? await repo.listByAuthor(authorMatch[1], 24) : [];
+			let articles: StoredArticle[] = [];
+			if (repo) {
+				try {
+					articles = await repo.listByAuthor(authorMatch[1], 24);
+				} catch (error) {
+					logReadError(path, error);
+				}
+			}
 			const page = renderAuthor(origin, authorMatch[1], articles);
 			if (!page) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
 			return htmlResponse(request, page, 200, "public, max-age=120");
@@ -153,7 +234,15 @@ export async function handleNewsRequest(request: Request, env: Env, override: Ne
 
 		const articleMatch = /^\/ai-news\/article\/([a-z0-9-]{1,120})$/.exec(path);
 		if (articleMatch?.[1]) {
-			const article = repo ? await repo.getBySlug(articleMatch[1]) : null;
+			let article = null;
+			if (repo) {
+				try {
+					article = await repo.getBySlug(articleMatch[1]);
+				} catch (error) {
+					logReadError(path, error);
+					return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+				}
+			}
 			if (!article) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
 			return htmlResponse(request, renderArticle(origin, article), 200, "public, max-age=120");
 		}
@@ -170,6 +259,10 @@ export async function handleNewsRequest(request: Request, env: Env, override: Ne
 }
 
 export async function publishScheduled(env: Env, controller: ScheduledController): Promise<void> {
+	if (!publishingEnabled(env)) {
+		console.log(JSON.stringify({ message: "ai-news publishing paused" }));
+		return;
+	}
 	if (!env.AI_NEWS_DB || !env.AI_NEWS_IMAGES) {
 		console.error(JSON.stringify({ message: "ai-news bindings missing" }));
 		return;

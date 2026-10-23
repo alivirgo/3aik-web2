@@ -64,7 +64,7 @@ function harness(options: { publishing?: string; rate?: string; indexNow?: strin
 	const ping = vi.fn(async () => undefined);
 	const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-		if (url === feed!.url) return new Response(rss(), { status: 200 });
+		if (url === feed!.url) return new Response(rss(), { status: 200, headers: { "content-type": "application/rss+xml" } });
 		return new Response("no", { status: 404 });
 	});
 	return {
@@ -137,6 +137,57 @@ describe("publish cycle", () => {
 		expect(report.skipped).toBe("no-stories");
 		expect(writeDraft).not.toHaveBeenCalled();
 		expect(repo.articles).toHaveLength(1);
+	});
+
+	it("stores a failed source and will not pay for it again until the TTL ends", async () => {
+		const { deps, repo, writeDraft } = harness({ rate: "1" });
+		deps.env.AI_NEWS_TEXT_CALLS_PER_ARTICLE = "1";
+		writeDraft.mockResolvedValue({ text: "not json", model: "dry-run" });
+		const first = await runPublishCycle(deps);
+		expect(first.published).toEqual([]);
+		expect(writeDraft).toHaveBeenCalledTimes(1);
+		expect(await repo.isRejected("https://example.com/fresh-bulletin", now.toISOString())).toBe(true);
+
+		writeDraft.mockClear();
+		const second = await runPublishCycle(deps);
+		expect(second.skipped).toBe("no-stories");
+		expect(writeDraft).not.toHaveBeenCalled();
+	});
+
+	it("stops after two failed stories instead of walking the rest of the feed", async () => {
+		const { deps, repo, writeDraft } = harness();
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== feed!.url) return new Response("no", { status: 404 });
+			const items = ["one", "two", "three"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+			return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+				status: 200,
+				headers: { "content-type": "application/rss+xml" },
+			});
+		});
+		writeDraft.mockResolvedValue({ text: "not json", model: "dry-run" });
+		await runPublishCycle(deps);
+		expect(writeDraft.mock.calls.length).toBeLessThanOrEqual(6);
+		expect(await repo.isRejected("https://example.com/one", now.toISOString())).toBe(true);
+		expect(await repo.isRejected("https://example.com/two", now.toISOString())).toBe(true);
+		expect(await repo.isRejected("https://example.com/three", now.toISOString())).toBe(false);
+	});
+
+	it("stops when the wall clock is exhausted", async () => {
+		const { deps, writeDraft } = harness();
+		let clock = now.getTime();
+		deps.clock = () => clock;
+		writeDraft.mockImplementation(async () => {
+			clock += 60_000;
+			return { text: "not json", model: "dry-run" };
+		});
+		await runPublishCycle(deps);
+		expect(writeDraft).toHaveBeenCalledTimes(1);
 	});
 
 	it("releases the lock after a cycle", async () => {

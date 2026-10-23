@@ -20,8 +20,8 @@ function article(): StoredArticle {
 		category: "ai",
 		tags: ["desk", "brief"],
 		authorId: "mira-ellison",
-		bodyHtml: "<p>The Verge reported a narrow product note.</p>",
-		bodyText: "The Verge reported a narrow product note.",
+		bodyHtml: "<p>STORED_HTML_SHOULD_NOT_RENDER</p><script>alert(1)</script>",
+		bodyText: "The Verge reported a narrow product note.\n\nSee the [source](https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model).",
 		keyPoints: ["The outlet reported a narrow product note and nothing past it."],
 		faq: [{ question: "What did the outlet report?", answer: "A narrow product note." }],
 		sources: [{
@@ -85,6 +85,12 @@ describe("news pages", () => {
 		expect(html).toContain("https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model");
 		expect(html).toContain("Mira Ellison is an editorial persona, not a real person.");
 		expect(html).toContain(ACCURACY_DISCLAIMER);
+		expect(html).toContain("AI-generated");
+		expect(html).toContain('"@type":"Organization"');
+		expect(html).not.toContain('"@type":"Person"');
+		expect(html).toContain("The Verge reported a narrow product note.");
+		expect(html).not.toContain("STORED_HTML_SHOULD_NOT_RENDER");
+		expect(html).not.toContain("<script>alert");
 		expect(html).not.toContain("\u2014");
 	});
 
@@ -140,11 +146,38 @@ describe("existing routes stay in place", () => {
 	});
 
 	it("does not call Workers AI when the scheduled bindings are missing", async () => {
-		const env = { AI: { run: vi.fn() }, ASSETS: { fetch: vi.fn() } } as never;
+		const env = { AI: { run: vi.fn() }, ASSETS: { fetch: vi.fn() }, AI_NEWS_PUBLISHING: "on" } as never;
 		const waitUntil = vi.fn();
 		await worker.scheduled({ scheduledTime: Date.now(), cron: "7 * * * *" } as never, env, { waitUntil } as never);
 		expect(waitUntil).toHaveBeenCalled();
 		expect((env as { AI: { run: ReturnType<typeof vi.fn> } }).AI.run).not.toHaveBeenCalled();
+	});
+
+	it("does not open D1 or R2 while publishing is off", async () => {
+		const env = {
+			AI: { run: vi.fn() },
+			ASSETS: { fetch: vi.fn() },
+			AI_NEWS_PUBLISHING: "off",
+			AI_NEWS_DB: { prepare: () => { throw new Error("touched d1"); } },
+			AI_NEWS_IMAGES: { get: () => { throw new Error("touched r2"); }, put: () => { throw new Error("touched r2"); } },
+		} as never;
+		const waitUntil = vi.fn();
+		await worker.scheduled({ scheduledTime: Date.now(), cron: "7 * * * *" } as never, env, { waitUntil } as never);
+		expect((env as { AI: { run: ReturnType<typeof vi.fn> } }).AI.run).not.toHaveBeenCalled();
+	});
+
+	it("serves an empty desk when the database is missing", async () => {
+		const env = {
+			AI_NEWS_SITE_ORIGIN: "https://3aik.com",
+			AI_NEWS_DB: { prepare() { throw new Error("no such database"); } },
+		} as never;
+		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news"), env);
+		expect(index.status).toBe(200);
+		expect(await index.text()).toContain("No stories are published yet");
+		const missing = await handleNewsRequest(new Request("https://3aik.test/ai-news/article/missing"), env);
+		expect(missing.status).toBe(404);
+		const llms = await handleNewsRequest(new Request("https://3aik.test/llms.txt"), env);
+		expect((await llms.text()).startsWith("# 3aik News")).toBe(true);
 	});
 });
 

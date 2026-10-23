@@ -1,4 +1,4 @@
-import type { Category, DeskStats, StoredArticle, StoredRelated, StoredSource } from "./types";
+import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
 import { isCategory } from "./text";
 
 export interface NewsRepository {
@@ -14,11 +14,22 @@ export interface NewsRepository {
 	insert(article: StoredArticle): Promise<void>;
 	tryLock(untilIso: string, nowIso: string): Promise<boolean>;
 	unlock(): Promise<void>;
+	isRejected(url: string, nowIso: string): Promise<boolean>;
+	rejectSource(url: string, reason: string, expiresAt: string): Promise<void>;
+	forgetExpiredRejections(nowIso: string): Promise<void>;
+	listSitemap(limit: number): Promise<SitemapEntry[]>;
+	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
+	deleteArticle(id: string): Promise<void>;
+}
+
+export interface StoredImage {
+	body: ReadableStream;
+	contentType: string;
 }
 
 export interface ImageStore {
 	put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
-	get(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null>;
+	get(key: string): Promise<StoredImage | null>;
 	delete(key: string): Promise<void>;
 }
 
@@ -232,11 +243,65 @@ export class D1NewsRepository implements NewsRepository {
 			.prepare("UPDATE runtime_lock SET locked_until = '1970-01-01T00:00:00.000Z' WHERE name = 'publish'")
 			.run();
 	}
+
+	async isRejected(url: string, nowIso: string): Promise<boolean> {
+		const row = await this.db
+			.prepare("SELECT source_url FROM source_rejections WHERE source_url = ? AND expires_at > ?")
+			.bind(url, nowIso)
+			.first();
+		return Boolean(row);
+	}
+
+	async rejectSource(url: string, reason: string, expiresAt: string): Promise<void> {
+		await this.db
+			.prepare(
+				`INSERT INTO source_rejections (source_url, reason, expires_at) VALUES (?, ?, ?)
+				 ON CONFLICT(source_url) DO UPDATE SET reason = excluded.reason, expires_at = excluded.expires_at`,
+			)
+			.bind(url, reason.slice(0, 180), expiresAt)
+			.run();
+	}
+
+	async forgetExpiredRejections(nowIso: string): Promise<void> {
+		await this.db.prepare("DELETE FROM source_rejections WHERE expires_at <= ?").bind(nowIso).run();
+	}
+
+	async listSitemap(limit: number): Promise<SitemapEntry[]> {
+		const result = await this.db
+			.prepare("SELECT slug, title, published_at, updated_at FROM articles ORDER BY published_at DESC LIMIT ?")
+			.bind(limit)
+			.all<Record<string, unknown>>();
+		return (result.results ?? []).map((row) => ({
+			slug: readString(row, "slug"),
+			title: readString(row, "title"),
+			publishedAt: readString(row, "published_at"),
+			updatedAt: readString(row, "updated_at"),
+		})).filter((entry) => entry.slug && entry.publishedAt);
+	}
+
+	async expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>> {
+		const result = await this.db
+			.prepare("SELECT id, image_key FROM articles WHERE published_at < ? ORDER BY published_at ASC LIMIT ?")
+			.bind(cutoffIso, limit)
+			.all<Record<string, unknown>>();
+		return (result.results ?? []).map((row) => ({
+			id: readString(row, "id"),
+			imageKey: readString(row, "image_key"),
+		})).filter((entry) => entry.id && entry.imageKey);
+	}
+
+	async deleteArticle(id: string): Promise<void> {
+		await this.db.batch([
+			this.db.prepare("DELETE FROM article_sources WHERE article_id = ?").bind(id),
+			this.db.prepare("DELETE FROM articles WHERE id = ?").bind(id),
+		]);
+	}
 }
 
 export class MemoryNewsRepository implements NewsRepository {
 	articles: StoredArticle[] = [];
 	private lockUntil = 0;
+	private rejections = new Map<string, { reason: string; expiresAt: string }>();
 
 	async listRecent(limit: number, category?: Category): Promise<StoredArticle[]> {
 		return this.articles
@@ -314,6 +379,46 @@ export class MemoryNewsRepository implements NewsRepository {
 	async unlock(): Promise<void> {
 		this.lockUntil = 0;
 	}
+
+	async isRejected(url: string, nowIso: string): Promise<boolean> {
+		const row = this.rejections.get(url);
+		return Boolean(row && row.expiresAt > nowIso);
+	}
+
+	async rejectSource(url: string, reason: string, expiresAt: string): Promise<void> {
+		this.rejections.set(url, { reason: reason.slice(0, 180), expiresAt });
+	}
+
+	async forgetExpiredRejections(nowIso: string): Promise<void> {
+		for (const [url, row] of this.rejections) {
+			if (row.expiresAt <= nowIso) this.rejections.delete(url);
+		}
+	}
+
+	async listSitemap(limit: number): Promise<SitemapEntry[]> {
+		return this.articles
+			.slice()
+			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+			.slice(0, limit)
+			.map((article) => ({
+				slug: article.slug,
+				title: article.title,
+				publishedAt: article.publishedAt,
+				updatedAt: article.updatedAt,
+			}));
+	}
+
+	async expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>> {
+		return this.articles
+			.filter((article) => article.publishedAt < cutoffIso)
+			.sort((left, right) => left.publishedAt.localeCompare(right.publishedAt))
+			.slice(0, limit)
+			.map((article) => ({ id: article.id, imageKey: article.imageKey }));
+	}
+
+	async deleteArticle(id: string): Promise<void> {
+		this.articles = this.articles.filter((article) => article.id !== id);
+	}
 }
 
 export class MemoryImageStore implements ImageStore {
@@ -323,8 +428,11 @@ export class MemoryImageStore implements ImageStore {
 		this.objects.set(key, { bytes, contentType });
 	}
 
-	async get(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
-		return this.objects.get(key) ?? null;
+	async get(key: string): Promise<StoredImage | null> {
+		const stored = this.objects.get(key);
+		if (!stored) return null;
+		const copy = stored.bytes.slice();
+		return { body: new Blob([copy]).stream(), contentType: stored.contentType };
 	}
 
 	async delete(key: string): Promise<void> {
@@ -339,11 +447,10 @@ export class R2ImageStore implements ImageStore {
 		await this.bucket.put(key, bytes, { httpMetadata: { contentType } });
 	}
 
-	async get(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+	async get(key: string): Promise<StoredImage | null> {
 		const object = await this.bucket.get(key);
 		if (!object) return null;
-		const bytes = new Uint8Array(await object.arrayBuffer());
-		return { bytes, contentType: object.httpMetadata?.contentType ?? "application/octet-stream" };
+		return { body: object.body, contentType: object.httpMetadata?.contentType ?? "application/octet-stream" };
 	}
 
 	async delete(key: string): Promise<void> {

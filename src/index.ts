@@ -131,13 +131,13 @@ class HttpError extends Error {
 }
 
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
 		try {
 			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
 				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
-				return handleNewsRequest(request, env);
+				return handleNewsRequest(request, env, {}, ctx);
 			}
 
 			if (url.pathname === "/privacy" || url.pathname === "/privacy/") {
