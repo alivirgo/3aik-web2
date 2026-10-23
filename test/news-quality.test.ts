@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AUTHORS, authorsIn, pickAuthor, pickCategory } from "../src/news/authors";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, TEXT_MAX_TOKENS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
-import { buildArticlePrompt, extractModelText, parseArticleDraft, withTimeout } from "../src/news/model";
+import { CRON_TICKS_PER_HOUR, IMAGE_MODELS, TEXT_MAX_TOKENS, TEXT_MODELS, imageCallBudget, lockTtlMs, pruneBudgetMs, publishingEnabled, slotsThisRun, textCallBudget, textTimeoutMs, imageTimeoutMs, wallBudgetMs } from "../src/news/config";
+import { buildArticlePrompt, extractModelText, generateDraftText, parseArticleDraft, withTimeout } from "../src/news/model";
 import { assessDraft, copiedFromSource, slopHits } from "../src/news/quality";
 import type { ArticleDraft, Category, QualityCorpusItem, SourceRef } from "../src/news/types";
 import { TINY_PNG, escapeMarkdown, forbiddenDash, imageLimitReason, normalizeSourceUrl, stripEditorialDashes } from "../src/news/text";
@@ -233,6 +233,8 @@ describe("schedule math and model parsing", () => {
 		const crons = [...listed.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
 		expect(crons).toHaveLength(CRON_TICKS_PER_HOUR);
 		expect(wrangler).toMatch(/"AI_NEWS_PUBLISHING":\s*"on"/);
+		expect(wrangler).toMatch(/"AI_NEWS_TEXT_TIMEOUT_MS":\s*"60000"/);
+		expect(wrangler).toMatch(/"AI_NEWS_WALL_MS":\s*"300000"/);
 		expect(slotsThisRun(1, 0)).toBe(1);
 		expect(slotsThisRun(1, 1)).toBe(0);
 		expect(slotsThisRun(2, 0)).toBe(1);
@@ -246,6 +248,13 @@ describe("schedule math and model parsing", () => {
 		expect(parseArticleDraft(raw)?.title).toBe(passingDraft().title);
 		expect(parseArticleDraft("no json here")).toBeNull();
 		expect(extractModelText({ choices: [{ message: { content: "hello" } }] })).toBe("hello");
+		expect(extractModelText({
+			output_text: "",
+			output: [
+				{ type: "reasoning", content: [{ type: "reasoning_text", text: "think" }] },
+				{ type: "message", content: [{ type: "output_text", text: "{\"title\":\"ok\"}" }] },
+			],
+		})).toBe("{\"title\":\"ok\"}");
 	});
 
 	it("strips tracking parameters from source URLs", () => {
@@ -256,12 +265,48 @@ describe("schedule math and model parsing", () => {
 		expect(publishingEnabled({})).toBe(false);
 		expect(publishingEnabled({ AI_NEWS_PUBLISHING: "on" })).toBe(true);
 		expect(TEXT_MAX_TOKENS).toBeLessThanOrEqual(2048);
+		expect(textTimeoutMs({})).toBe(60_000);
+		expect(textTimeoutMs({ AI_NEWS_TEXT_TIMEOUT_MS: "90000" })).toBe(90_000);
+		expect(textTimeoutMs({ AI_NEWS_TEXT_TIMEOUT_MS: "999999" })).toBe(180_000);
+		expect(wallBudgetMs({})).toBe(300_000);
+		expect(wallBudgetMs({ AI_NEWS_WALL_MS: "400000" })).toBe(400_000);
+		expect(wallBudgetMs({ AI_NEWS_WALL_MS: "9999999" })).toBe(900_000);
+		expect(TEXT_MODELS.map((model) => model.id)).not.toContain("@cf/moonshotai/kimi-k2.6");
+		expect(TEXT_MODELS.map((model) => model.id)).toContain("@cf/zai-org/glm-4.7-flash");
 		const env = { AI_NEWS_ARTICLES_PER_HOUR: "1" };
 		const slots = 1;
 		const worst = textCallBudget(env, slots) * textTimeoutMs(env) + imageCallBudget(env, slots) * imageTimeoutMs(env);
 		expect(lockTtlMs(env)).toBe(Math.max(worst, wallBudgetMs(env)) + pruneBudgetMs() + 60_000);
 		expect(pruneBudgetMs()).toBeGreaterThan(0);
 		expect(imageCallBudget({ AI_NEWS_ARTICLES_PER_HOUR: "1", AI_NEWS_IMAGE_CALLS_PER_ARTICLE: "1" }, slotsThisRun(1, 0))).toBeGreaterThanOrEqual(IMAGE_MODELS.length);
+	});
+
+	it("calls gpt-oss with the responses input and uses the next free-plan model after a timeout", async () => {
+		const ai = {
+			run: vi.fn(async (model: string) => {
+				if (String(model).includes("gpt-oss")) throw new Error("ai_timeout");
+				return { response: "{\"title\":\"ok\"}" };
+			}),
+		};
+		const written = await generateDraftText(ai as never, "Be brief.", "Write the bulletin.", {
+			takeText: () => true,
+			takeImage: () => false,
+			textTimeoutMs: 1_000,
+			imageTimeoutMs: 1_000,
+		});
+		expect(written.model).toBe("GLM 4.7 Flash");
+		expect(written.text).toContain("title");
+		const first = ai.run.mock.calls[0];
+		expect(first?.[0]).toBe("@cf/openai/gpt-oss-120b");
+		expect(first?.[1]).toMatchObject({
+			instructions: "Be brief.",
+			input: "Write the bulletin.",
+			max_output_tokens: TEXT_MAX_TOKENS,
+			reasoning: { effort: "low" },
+		});
+		expect(first?.[1]).not.toHaveProperty("messages");
+		expect(ai.run.mock.calls[1]?.[0]).toBe("@cf/zai-org/glm-4.7-flash");
+		expect(ai.run.mock.calls[1]?.[1]).toMatchObject({ max_tokens: TEXT_MAX_TOKENS });
 	});
 
 	it("rejects an oversized illustration and times out a stalled call", async () => {

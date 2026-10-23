@@ -31,16 +31,22 @@ export const DEFAULT_IMAGE_CALLS_PER_ARTICLE = 2;
 export const SHORT_REJECT_TTL_MS = 60 * 60 * 1000;
 export const DEFAULT_MAX_FAILURES = 2;
 export const DEFAULT_REJECT_TTL_HOURS = 24;
-export const DEFAULT_WALL_MS = 45_000;
-export const DEFAULT_TEXT_TIMEOUT_MS = 15_000;
+/** Five minutes. A scheduled handler may run for 15 minutes. */
+export const DEFAULT_WALL_MS = 300_000;
+/** One minute, enough for a 120B model on low reasoning effort. */
+export const DEFAULT_TEXT_TIMEOUT_MS = 60_000;
 export const DEFAULT_IMAGE_TIMEOUT_MS = 20_000;
 export const DEFAULT_RETENTION_DAYS = 180;
 export const RETENTION_BATCH = 20;
 
+/**
+ * Free-plan text models. Kimi K2.6 is omitted: on the Workers Free plan it
+ * returns 5035 and never produces a draft. GPT OSS uses the Responses API.
+ */
 export const TEXT_MODELS = [
-	{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B" },
-	{ id: "@cf/moonshotai/kimi-k2.6", label: "Kimi K2.6" },
-	{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash" },
+	{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B", format: "responses" },
+	{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash", format: "messages" },
+	{ id: "@cf/google/gemma-4-26b-a4b-it", label: "Gemma 4 26B A4B", format: "messages" },
 ] as const;
 
 export const IMAGE_MODELS = [
@@ -202,11 +208,11 @@ export function rejectTtlHours(env: NewsEnv): number {
 }
 
 export function wallBudgetMs(env: NewsEnv): number {
-	return clampedInt(env.AI_NEWS_WALL_MS, DEFAULT_WALL_MS, 5_000, 120_000);
+	return clampedInt(env.AI_NEWS_WALL_MS, DEFAULT_WALL_MS, 5_000, 900_000);
 }
 
 export function textTimeoutMs(env: NewsEnv): number {
-	return clampedInt(env.AI_NEWS_TEXT_TIMEOUT_MS, DEFAULT_TEXT_TIMEOUT_MS, 1_000, 30_000);
+	return clampedInt(env.AI_NEWS_TEXT_TIMEOUT_MS, DEFAULT_TEXT_TIMEOUT_MS, 1_000, 180_000);
 }
 
 export function imageTimeoutMs(env: NewsEnv): number {

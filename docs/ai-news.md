@@ -83,8 +83,8 @@ Each tick has a hard model budget. Defaults, all overridable in `wrangler.jsonc`
 | `AI_NEWS_IMAGE_CALLS_PER_ARTICLE` | 2 | Image calls per slot. The budget is at least the two configured image models, so the FLUX.1 Schnell fallback still runs when the hourly rate is 1. |
 | `AI_NEWS_MAX_FAILURES` | 2 | Stop the tick after this many failed stories in a row. |
 | `AI_NEWS_REJECT_TTL_HOURS` | 24 | How long a content or quality rejection blocks that source URL. Budget, wall-clock, and timeout failures block it for 1 hour. A missing image, a failed image model, or a failed GitHub commit does not block the source: the article publishes with no picture. |
-| `AI_NEWS_WALL_MS` | 45000 | Stop starting new work after this much wall time. |
-| `AI_NEWS_TEXT_TIMEOUT_MS` | 15000 | Per text call. |
+| `AI_NEWS_WALL_MS` | 300000 | Stop starting new work after this much wall time. Values above 900000 are clamped. A scheduled handler may run for 15 minutes. |
+| `AI_NEWS_TEXT_TIMEOUT_MS` | 60000 | Per text call. Values above 180000 are clamped. A 120B model needs about a minute. |
 | `AI_NEWS_IMAGE_TIMEOUT_MS` | 20000 | Per image call. |
 | `AI_NEWS_RETENTION_DAYS` | 180 | Delete articles older than this during a publish tick. `0` disables cleanup. |
 
@@ -106,7 +106,7 @@ Delete the matching `images/YYYY/MM/<slug>.webp` or `.jpg` file from `alivirgo/3
 
 A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image. A network error during that lookup is caught inside the upload, so the draft is kept and the article still publishes with no image.
 
-A 429 is a rate limit. A 403 is a rate limit only when the remaining budget is 0, `Retry-After` is set, or the body names a secondary rate limit or abuse detection. A plain permission 403 does not pause the tick. The desk does not sleep through `Retry-After` (a long wait would run past the 45 second wall). It stops further Contents API calls for that tick and logs the delay. Further image commits in that tick are also skipped when fewer than 20 requests remain on the token.
+A 429 is a rate limit. A 403 is a rate limit only when the remaining budget is 0, `Retry-After` is set, or the body names a secondary rate limit or abuse detection. A plain permission 403 does not pause the tick. The desk does not sleep through `Retry-After` (a long wait would run past the tick wall). It stops further Contents API calls for that tick and logs the delay. Further image commits in that tick are also skipped when fewer than 20 requests remain on the token.
 
 Retention asks D1 for up to 20 old rows, then deletes at most 5 GitHub files in that tick, with 250 ms between those deletes. `deleteImageFile` returns whether GitHub asked for a pause. On a pause, retention stops and that tick does not commit a new image. The row already removed can leave its file in the repo. Later rows stay until a later tick. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
 
@@ -130,18 +130,20 @@ Each fetch follows at most three redirects, and only to `https` on the same site
 
 ## Models
 
-Text, in order, via the existing `AI` binding:
+Text, in order, via the existing `AI` binding. These models are available on the Workers Free plan:
 
-1. `@cf/openai/gpt-oss-120b` (primary, general-purpose reasoning)
-2. `@cf/moonshotai/kimi-k2.6`
-3. `@cf/zai-org/glm-4.7-flash`
+1. `@cf/openai/gpt-oss-120b` (primary). The binding call uses the Responses shape: `instructions`, `input`, `max_output_tokens`, and `reasoning.effort` set to `low`. A chat `messages` body is valid too, but medium reasoning plus 2048 output tokens does not finish inside a short timeout.
+2. `@cf/zai-org/glm-4.7-flash`
+3. `@cf/google/gemma-4-26b-a4b-it`
+
+`@cf/moonshotai/kimi-k2.6` is not in the chain. On the Workers Free plan it returns error 5035 and never writes a draft. Streaming is not used: the desk needs the whole JSON object before it can publish, so a stream would not shorten the wait.
 
 Image:
 
 1. `@cf/black-forest-labs/flux-2-klein-9b` (multipart prompt, 1024 square)
 2. `@cf/black-forest-labs/flux-1-schnell`
 
-Checked against the Workers AI catalog (gpt-oss-120b, Kimi K2.6, GLM 4.7 Flash, FLUX.2 Klein 9B, FLUX.1 Schnell). Illustrations are abstract. Prompts are rejected if they ask for a person, a face, or a logo. No extra API key is required for Workers AI.
+Checked against the Workers AI catalog (gpt-oss-120b, GLM 4.7 Flash, Gemma 4 26B A4B, FLUX.2 Klein 9B, FLUX.1 Schnell). Illustrations are abstract. Prompts are rejected if they ask for a person, a face, or a logo. No extra API key is required for Workers AI.
 
 ## Sources and the quality gate
 

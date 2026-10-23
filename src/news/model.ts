@@ -94,7 +94,22 @@ export function extractModelText(result: unknown): string {
 	const record = result as Record<string, unknown>;
 	if (typeof record.response === "string") return record.response;
 	if (typeof record.result === "string") return record.result;
-	if (typeof record.output_text === "string") return record.output_text;
+	if (typeof record.output_text === "string" && record.output_text.trim()) return record.output_text;
+	if (Array.isArray(record.output)) {
+		const parts: string[] = [];
+		for (const item of record.output) {
+			if (!item || typeof item !== "object") continue;
+			const entry = item as Record<string, unknown>;
+			if (entry.type === "reasoning") continue;
+			if (!Array.isArray(entry.content)) continue;
+			for (const block of entry.content) {
+				if (!block || typeof block !== "object") continue;
+				const piece = block as Record<string, unknown>;
+				if (piece.type === "output_text" && typeof piece.text === "string") parts.push(piece.text);
+			}
+		}
+		if (parts.length) return parts.join("\n");
+	}
 	if (Array.isArray(record.choices)) {
 		const first = record.choices[0];
 		if (first && typeof first === "object") {
@@ -148,16 +163,26 @@ export function parseArticleDraft(raw: string): ArticleDraft | null {
 	return { title, description, tags, keyPoints, faq, paragraphs, imageAlt, imagePrompt };
 }
 
-async function runTextModel(ai: Ai, model: string, system: string, user: string, timeoutMs: number): Promise<string> {
-	const result = await withTimeout(runAi(ai, model, {
-		messages: [
-			{ role: "system", content: system },
-			{ role: "user", content: user },
-		],
-		stream: false,
-		max_tokens: TEXT_MAX_TOKENS,
-		temperature: 0.8,
-	}), timeoutMs);
+async function runTextModel(ai: Ai, model: string, format: "responses" | "messages", system: string, user: string, timeoutMs: number): Promise<string> {
+	const inputs = format === "responses"
+		? {
+			instructions: system,
+			input: user,
+			max_output_tokens: TEXT_MAX_TOKENS,
+			temperature: 0.8,
+			reasoning: { effort: "low" },
+			stream: false,
+		}
+		: {
+			messages: [
+				{ role: "system", content: system },
+				{ role: "user", content: user },
+			],
+			stream: false,
+			max_tokens: TEXT_MAX_TOKENS,
+			temperature: 0.8,
+		};
+	const result = await withTimeout(runAi(ai, model, inputs), timeoutMs);
 	return extractModelText(result).trim();
 }
 
@@ -171,7 +196,7 @@ export async function generateDraftText(
 	for (const candidate of TEXT_MODELS) {
 		if (!budget.takeText()) break;
 		try {
-			const text = await runTextModel(ai, candidate.id, system, user, budget.textTimeoutMs);
+			const text = await runTextModel(ai, candidate.id, candidate.format, system, user, budget.textTimeoutMs);
 			if (!text) throw new Error("empty");
 			return { text, model: candidate.label };
 		} catch (error) {

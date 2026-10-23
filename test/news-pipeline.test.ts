@@ -292,6 +292,7 @@ describe("publish cycle", () => {
 
 	it("stops when the wall clock is exhausted", async () => {
 		const { deps, writeDraft } = harness();
+		deps.env.AI_NEWS_WALL_MS = "45000";
 		let clock = now.getTime();
 		deps.clock = () => clock;
 		writeDraft.mockImplementation(async () => {
