@@ -315,6 +315,7 @@ describe("schedule math and model parsing", () => {
 		const crons = [...listed.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
 		expect(crons).toHaveLength(CRON_TICKS_PER_HOUR);
 		expect(wrangler).toMatch(/"AI_NEWS_PUBLISHING":\s*"on"/);
+		expect(wrangler).toMatch(/"AI_NEWS_GENERATOR":\s*"off"/);
 		expect(wrangler).toMatch(/"AI_NEWS_TEXT_TIMEOUT_MS":\s*"60000"/);
 		expect(wrangler).toMatch(/"AI_NEWS_WALL_MS":\s*"300000"/);
 		expect(slotsThisRun(1, 0)).toBe(1);

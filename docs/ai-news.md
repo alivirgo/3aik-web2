@@ -1,6 +1,6 @@
 # 3aik News
 
-`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` is `on` in `wrangler.jsonc`, which matches the live worker. A later deploy of this file keeps the cron writing. A missing value is still off, and while publishing is off the cron returns before it opens D1 or GitHub. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Migrations `0001` through `0003` are applied, the image repo has a first commit on `main`, and `GITHUB_IMAGES_TOKEN` is set. This change does not deploy anything.
+`/ai-news` is a server-rendered news desk on the existing 3aik Worker. It does not change the home page, the chat API, or the privacy page. `AI_NEWS_PUBLISHING` is `on` in `wrangler.jsonc`, so the cron still prunes. `AI_NEWS_GENERATOR` is `off`, so that cron does not call Workers AI and does not spend neurons. New articles are posted to `POST /ai-news/api/ingest`. A missing publishing value is still off, and while publishing is off the cron returns before it opens D1 or GitHub. Read routes still serve pages: a missing database becomes an empty list, an empty feed, or a 404 for one story, not a 500. The D1 binding `AI_NEWS_DB` points at database `3aik-ai-news` (`87a550eb-1752-4cec-8c20-dd6b839099e2`, region WEUR). Migrations `0001` through `0003` are applied, the image repo has a first commit on `main`, and `GITHUB_IMAGES_TOKEN` is set. Merging to `main` is what publishes the worker. See External ingest.
 
 ## What readers are told
 
@@ -60,6 +60,7 @@ Bindings added to `wrangler.jsonc`:
 | `AI_NEWS_DB` | D1 | `3aik-ai-news` |
 | `AI` | Workers AI | already on the worker |
 | `GITHUB_IMAGES_TOKEN` | Secret | contents:write on `alivirgo/3aik-ai-news-images` only |
+| `AI_NEWS_INGEST_TOKEN` | Secret | Bearer token for `/ai-news/api/ingest`. Already set in production. |
 
 Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, and `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`). Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>-<8-char-id>.webp` (JPEG uses `.jpg`) through the GitHub Contents API. The suffix is the first 8 characters of the article id, so a leftover file from a failed delete does not block a later article that reuses the title. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
 
@@ -203,13 +204,78 @@ On each successful publish the cron POSTs the new article URL to `https://api.in
 
 IndexNow docs: [indexnow.org/documentation](https://www.indexnow.org/documentation).
 
+## External ingest
+
+The cron no longer writes articles while `AI_NEWS_GENERATOR` is `off`. An external writer posts them. The article page still says the piece was written with AI assistance and checked automatically. That stays true: the writer is an assistant, and this route runs the same gate as the Workers AI pipeline before insert.
+
+Set the secret once (production already has it). Do not put the value in git.
+
+```sh
+npx wrangler secret put AI_NEWS_INGEST_TOKEN
+```
+
+The hourly cap is 10 authenticated POSTs per UTC hour, stored in the existing `runtime_lock` table (`ingest:<hour>`). No new migration. `GET /ai-news/api/ingest/meta` does not count. A failed POST still counts.
+
+Workers Builds deploys `main` to production. GitHub Actions does not. After merge, the route is live. The ingest secret and `GITHUB_IMAGES_TOKEN` survive that deploy. `AI_NEWS_GENERATOR=off` in `wrangler.jsonc` is what the deploy publishes.
+
+### POST /ai-news/api/ingest
+
+`Authorization: Bearer <AI_NEWS_INGEST_TOKEN>`. `Content-Type: application/json`.
+
+| Status | Body |
+| --- | --- |
+| 201 | `{ "url", "slug" }` |
+| 401 | `{ "error": "unauthorized" }` when the bearer does not match |
+| 404 | `{ "error": "not_found" }` when the secret is unset |
+| 409 | `{ "error": "duplicate", "conflicts": [{ "field": "slug" or "source_url", "value" }] }` |
+| 422 | `{ "reasons": ["..."] }` for shape or quality failures |
+| 429 | `{ "error": "rate_limited", "retry_after" }` after 10 POSTs in the UTC hour |
+| 503 | `{ "error": "unavailable" }` when D1 is missing |
+
+JSON fields:
+
+| Field | Rule |
+| --- | --- |
+| `title` | 20 to 110 characters |
+| `dek` or `summary` | 90 to 170 characters |
+| `category` | `ai`, `tech` (stored as `technology`), `fashion`, or `showbiz` |
+| `author_slug` | One of the 24 persona ids, and that persona's category must match |
+| `body_markdown` or `html` | Paragraphs. Stored as plain text in `body_text`, same as the pipeline. 400 to 1100 words, 5 to 10 paragraphs |
+| `key_points` | 3 to 5 items, 8 to 40 words each |
+| `faq` | Exactly 3 `{ "question", "answer" }`. Question ends with `?`. Answer is 20 to 90 words |
+| `tags` | 2 to 4 lowercase hyphenated tags |
+| `sources` | 1 to 4 `{ "url", "publisher", "title" }`. At least one. Showbiz requires one. Optional `excerpt` |
+| `image` | Optional. `{ "data": "<base64 or data URL>", "alt": "..." }` or a base64 string plus `image_alt`. JPEG, PNG, or WebP, up to about 1.5 MB |
+
+The gate rejects em dashes, en dashes used as clause breaks, `---` and spaced `--`, slop words, an 8-word copy of the source title or fetched page, a missing outlet name, and (for fashion and showbiz) an unattributed dispute. A slug or source URL already on the desk returns 409 before those quality reasons, so a retry is not reported as a bad draft. `GET /ai-news/api/ingest/meta` returns the persona list, categories, those limits, and recent source URLs.
+
+A JPEG or WebP at or under 1 MB is committed to `alivirgo/3aik-ai-news-images` with `GITHUB_IMAGES_TOKEN`. PNG, a larger file, a missing token, or a failed commit still returns 201 and publishes with no picture.
+
+```sh
+IMG=$(base64 -w 0 photo.jpg)
+curl -sS -X POST https://3aik.com/ai-news/api/ingest \
+  -H "Authorization: Bearer $AI_NEWS_INGEST_TOKEN" \
+  -H "content-type: application/json" \
+  --data @article.json
+```
+
+`article.json` uses the fields above. Put the base64 in `image.data`. Read the rules first:
+
+```sh
+curl -sS https://3aik.com/ai-news/api/ingest/meta \
+  -H "Authorization: Bearer $AI_NEWS_INGEST_TOKEN"
+```
+
+To let the cron call Workers AI again, set `AI_NEWS_GENERATOR` to `workers-ai`. Leave it `off` to keep the neuron spend at zero. Cleanup still runs while publishing is on.
+
 ## Samples
 
 `docs/samples/` holds four dry-run articles, one per section, based on public RSS items from 22 and 23 October 2026. They were written to the same gate the model must pass (`npm test` runs that check). This environment cannot call Workers AI, so the sample illustrations are prompts and alt text only. Production commits one WebP or JPEG per article to `alivirgo/3aik-ai-news-images` when the token is set.
 
 ## Code map
 
-- `src/news/pipeline.ts` cron cycle
+- `src/news/pipeline.ts` cron cycle. With `AI_NEWS_GENERATOR` off it prunes and does not call Workers AI
+- `src/news/ingest.ts` external ingest API
 - `src/news/quality.ts` gate
 - `src/news/feeds.ts` RSS and Atom parser
 - `src/news/model.ts` Workers AI calls and prompts

@@ -10,6 +10,7 @@ import {
 	renderNotFound,
 } from "./html";
 import { loadPublicImage, parseMediaRequest } from "./github-images";
+import { handleIngestRequest, ingestApiPath } from "./ingest";
 import { runPublishCycle } from "./pipeline";
 import { D1NewsRepository, type NewsRepository } from "./repository";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap } from "./syndication";
@@ -19,6 +20,7 @@ import { isCategory } from "./text";
 export interface NewsRequestDeps {
 	repo?: NewsRepository | null;
 	fetchImpl?: typeof fetch;
+	now?: Date;
 }
 
 export function isNewsRequestPath(pathname: string, indexNowKey?: string): boolean {
@@ -138,6 +140,15 @@ async function loadSitemap(repo: NewsRepository | null, limit: number): Promise<
 }
 
 export async function handleNewsRequest(request: Request, env: Env, override: NewsRequestDeps = {}, ctx?: ExecutionContext): Promise<Response> {
+	const earlyPath = normalizePath(new URL(request.url).pathname);
+	if (ingestApiPath(earlyPath)) {
+		const repo = "repo" in override ? (override.repo ?? null) : (env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB) : null);
+		return handleIngestRequest(request, env, {
+			repo,
+			fetchImpl: override.fetchImpl ?? fetch,
+			now: override.now,
+		});
+	}
 	const hit = await matchEdge(request);
 	if (hit) return hit;
 	const response = await buildNewsResponse(request, env, override);

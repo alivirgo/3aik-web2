@@ -1,3 +1,4 @@
+import { ingestApiPath } from "./news/ingest";
 import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
 import type {
 	AgentMessage,
@@ -136,7 +137,9 @@ export default {
 
 		try {
 			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
-				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+				if (!ingestApiPath(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
+					return methodNotAllowed(["GET", "HEAD"]);
+				}
 				return handleNewsRequest(request, env, {}, ctx);
 			}
 

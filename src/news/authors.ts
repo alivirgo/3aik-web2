@@ -274,6 +274,27 @@ export function authorById(id: string): AuthorPersona | null {
 	return BY_ID.get(id) ?? null;
 }
 
+export interface PersonaBrief {
+	slug: string;
+	name: string;
+	category: Category;
+	beat: string;
+	voice: string;
+	instructions: string;
+}
+
+/** Public roster for the ingest writer. Voice is the short summary. Instructions are the desk rules for that persona. */
+export function personaBriefs(): PersonaBrief[] {
+	return SEEDS.map((seed) => ({
+		slug: seed.id,
+		name: seed.name,
+		category: seed.category,
+		beat: seed.beat,
+		voice: seed.publicVoice,
+		instructions: seed.voice,
+	}));
+}
+
 export function authorsIn(category: Category): AuthorPersona[] {
 	return AUTHORS.filter((author) => author.category === category);
 }
