@@ -1,3 +1,4 @@
+import { ADSENSE_SCRIPT } from "../adsense";
 import { authorById, AUTHORS } from "./authors";
 import {
 	ACCURACY_DISCLAIMER,
@@ -124,6 +125,7 @@ ${tags}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ai-news.css">
 ${scripts}
+${ADSENSE_SCRIPT}
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>

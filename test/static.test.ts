@@ -16,8 +16,10 @@ describe("browser application contract", () => {
     for (const id of new Set(references)) expect(html, `missing #${id}`).toContain(`id="${id}"`);
   });
 
-  it("ships without third-party browser dependencies", () => {
-    expect(html).not.toMatch(/<script[^>]+src="https?:\/\//i);
+  it("ships without third-party browser dependencies besides the AdSense tag", () => {
+    const adsense = '<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7587924838845990" crossorigin="anonymous"></script>';
+    expect(html).toContain(adsense);
+    expect(html.replace(adsense, "")).not.toMatch(/<script[^>]+src="https?:\/\//i);
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"[^>]+href="https?:\/\//i);
     expect(script).not.toContain("marked.parse");
     expect(script).not.toContain("innerHTML = message");

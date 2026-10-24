@@ -13,7 +13,8 @@ beforeAll(async () => {
   document.write(
     html
       .replace(/<link rel="stylesheet"[^>]+>/, "")
-      .replace(/<script src="\/chat\.js"[^>]*><\/script>/, ""),
+      .replace(/<script src="\/chat\.js"[^>]*><\/script>/, "")
+      .replace(/<script[^>]+src="https?:\/\/[^"]*"[^>]*><\/script>/g, ""),
   );
   document.close();
   localStorage.clear();
