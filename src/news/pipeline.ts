@@ -30,7 +30,7 @@ import {
 	githubImagePath,
 	isGitHubImagePath,
 } from "./github-images";
-import { buildArticlePrompt, generateDraftText, generateIllustration, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
+import { buildArticlePrompt, generateDraftText, generateIllustration, isNeuronCap, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
 import { assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
 import type { ArticleDraft, AuthorPersona, Category, RelatedLink, SourceRef, StoredArticle, StoryItem } from "./types";
@@ -167,10 +167,12 @@ async function draftStory(
 			model = written.model;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			if (message === "text_budget" || message === "ai_timeout" || budget.expired()) budget.stop = true;
-			if (message !== "text_budget") tried = true;
+			const neuronCap = message === "neuron_cap" || isNeuronCap(error);
+			if (message === "text_budget" || message === "ai_timeout" || neuronCap || budget.expired()) budget.stop = true;
+			if (neuronCap) tried = false;
+			else if (message !== "text_budget") tried = true;
 			console.error(JSON.stringify({ message: "ai-news draft failed", error: message }));
-			const reason = message === "text_budget" ? "budget" : message === "ai_timeout" ? "timeout" : "model";
+			const reason = neuronCap ? "neuron_cap" : message === "text_budget" ? "budget" : message === "ai_timeout" ? "timeout" : "model";
 			return stop(reason, false);
 		}
 		const parsed = parseArticleDraft(text);
@@ -216,6 +218,7 @@ async function storeIllustration(
 	deps: PublishDependencies,
 	prompt: string,
 	slug: string,
+	imageSuffix: string,
 	publishedAt: string,
 	budget: RunBudget,
 	writesPaused: boolean,
@@ -235,15 +238,17 @@ async function storeIllustration(
 			image = await generateIllustration(deps.env.AI as Ai, prompt, budget);
 		}
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message === "neuron_cap" || isNeuronCap(error)) budget.stop = true;
 		console.error(JSON.stringify({
 			message: "ai-news image failed",
-			error: error instanceof Error ? error.message : String(error),
+			error: message,
 		}));
 		return EMPTY_PICTURE;
 	}
 	const detected = detectImageType(image.bytes);
 	const extension = detected ? extensionForMime(detected.mime) : null;
-	const path = extension ? githubImagePath(publishedAt, slug, extension) : null;
+	const path = extension ? githubImagePath(publishedAt, slug, extension, imageSuffix) : null;
 	if (!detected || !path || imageLimitReason(image.bytes) || image.bytes.byteLength > GITHUB_IMAGE_MAX_BYTES) {
 		console.error(JSON.stringify({ message: "ai-news image skipped", reason: "type-or-size", model: image.model }));
 		return { ...EMPTY_PICTURE, model: image.model };
@@ -399,9 +404,10 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				continue;
 			}
 			const id = crypto.randomUUID();
+			const imageSuffix = id.slice(0, 8);
 			let slug = slugify(drafted.draft.title);
-			if (await deps.repo.hasSlug(slug)) slug = `${slug}-${id.slice(0, 8)}`;
-			const picture = await storeIllustration(deps, drafted.draft.imagePrompt, slug, nowIso, budget, githubWritesPaused);
+			if (await deps.repo.hasSlug(slug)) slug = `${slug}-${imageSuffix}`;
+			const picture = await storeIllustration(deps, drafted.draft.imagePrompt, slug, imageSuffix, nowIso, budget, githubWritesPaused);
 			if (picture.pauseWrites) githubWritesPaused = true;
 			const article: StoredArticle = {
 				id,

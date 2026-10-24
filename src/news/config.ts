@@ -20,8 +20,11 @@ export const TITLE_JACCARD_LIMIT = 0.62;
 export const BODY_SHINGLE_LIMIT = 0.16;
 export const COPY_WINDOW = 8;
 
-/** Output tokens for one article JSON object, not a long reasoning trace. */
-export const TEXT_MAX_TOKENS = 2048;
+/**
+ * Room for the article JSON plus, on gpt-oss, the reasoning tokens that count
+ * against max_output_tokens. 2048 was ending the draft around 300 words.
+ */
+export const TEXT_MAX_TOKENS = 8192;
 export const MAX_FEED_BYTES = 2 * 1024 * 1024;
 export const MAX_IMAGE_EDGE = 1024;
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -31,21 +34,31 @@ export const DEFAULT_IMAGE_CALLS_PER_ARTICLE = 2;
 export const SHORT_REJECT_TTL_MS = 60 * 60 * 1000;
 export const DEFAULT_MAX_FAILURES = 2;
 export const DEFAULT_REJECT_TTL_HOURS = 24;
-export const DEFAULT_WALL_MS = 45_000;
-export const DEFAULT_TEXT_TIMEOUT_MS = 15_000;
+/** Five minutes. A scheduled handler may run for 15 minutes. */
+export const DEFAULT_WALL_MS = 300_000;
+/** One minute, enough for a 120B model on medium reasoning effort. */
+export const DEFAULT_TEXT_TIMEOUT_MS = 60_000;
 export const DEFAULT_IMAGE_TIMEOUT_MS = 20_000;
 export const DEFAULT_RETENTION_DAYS = 180;
 export const RETENTION_BATCH = 20;
 
+/**
+ * Free-plan text models. Kimi K2.6 is omitted: on the Workers Free plan it
+ * returns 5035 and never produces a draft. GPT OSS uses the Responses API.
+ */
 export const TEXT_MODELS = [
-	{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B" },
-	{ id: "@cf/moonshotai/kimi-k2.6", label: "Kimi K2.6" },
-	{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash" },
+	{ id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B", format: "responses" },
+	{ id: "@cf/zai-org/glm-4.7-flash", label: "GLM 4.7 Flash", format: "messages" },
+	{ id: "@cf/google/gemma-4-26b-a4b-it", label: "Gemma 4 26B A4B", format: "messages" },
 ] as const;
 
+/**
+ * Schnell is first on the Free plan (about 58 neurons). Klein is the fallback
+ * (about 1,364). A daily neuron cap, Workers AI error 3036, stops the tick.
+ */
 export const IMAGE_MODELS = [
-	{ id: "@cf/black-forest-labs/flux-2-klein-9b", label: "FLUX.2 Klein 9B", multipart: true },
 	{ id: "@cf/black-forest-labs/flux-1-schnell", label: "FLUX.1 Schnell", multipart: false },
+	{ id: "@cf/black-forest-labs/flux-2-klein-9b", label: "FLUX.2 Klein 9B", multipart: true },
 ] as const;
 
 export const SITE_NAME = "3aik News";
@@ -53,7 +66,7 @@ export const PUBLISHER_NAME = "3aik";
 export const ACCURACY_DISCLAIMER =
 	"3aik.com takes no responsibility for the accuracy of news. Readers should verify claims with the linked original sources.";
 export const DESK_DISCLOSURE =
-	"AI-assisted articles, editorially checked before publishing. The named authors are editorial personas, not real people.";
+	"AI-assisted articles, automatically checked against source and quality rules before publishing. The named authors are editorial personas, not real people.";
 
 export const CATEGORY_LABEL: Record<Category, string> = {
 	ai: "AI",
@@ -202,11 +215,11 @@ export function rejectTtlHours(env: NewsEnv): number {
 }
 
 export function wallBudgetMs(env: NewsEnv): number {
-	return clampedInt(env.AI_NEWS_WALL_MS, DEFAULT_WALL_MS, 5_000, 120_000);
+	return clampedInt(env.AI_NEWS_WALL_MS, DEFAULT_WALL_MS, 5_000, 900_000);
 }
 
 export function textTimeoutMs(env: NewsEnv): number {
-	return clampedInt(env.AI_NEWS_TEXT_TIMEOUT_MS, DEFAULT_TEXT_TIMEOUT_MS, 1_000, 30_000);
+	return clampedInt(env.AI_NEWS_TEXT_TIMEOUT_MS, DEFAULT_TEXT_TIMEOUT_MS, 1_000, 180_000);
 }
 
 export function imageTimeoutMs(env: NewsEnv): number {
@@ -227,14 +240,35 @@ export function imageCallBudget(env: NewsEnv, slots: number): number {
 	return Math.min(8, perSlot * Math.max(1, slots));
 }
 
+/** Retention deletes stay well under a burst of 20 commits. Each delete is two API calls. */
+export const MAX_GITHUB_DELETES_PER_RUN = 5;
+export const GITHUB_DELETE_PACE_MS = 250;
+/** One Contents API call. A delete sends two of these back to back. */
+export const GITHUB_REQUEST_TIMEOUT_MS = 10_000;
+
 /**
- * Lock must outlast the longest run we can still be inside: every budgeted
- * model call hitting its timeout, or the wall clock, whichever is longer.
+ * Longest retention can sit on GitHub before the model clock starts.
+ * The publish lock adds this on top of the model budget.
  */
+export function pruneBudgetMs(): number {
+	const calls = MAX_GITHUB_DELETES_PER_RUN * 2 * GITHUB_REQUEST_TIMEOUT_MS;
+	const pace = Math.max(0, MAX_GITHUB_DELETES_PER_RUN - 1) * GITHUB_DELETE_PACE_MS;
+	return calls + pace;
+}
+
+/**
+ * Lock must outlast pruning and the longest run we can still be inside.
+ * Pruning finishes before the model clock starts, so its GitHub timeouts are
+ * added to every budgeted call hitting its timeout, or the wall clock.
+ * The floor is 900 seconds, the scheduled-handler limit.
+ */
+export const MIN_LOCK_TTL_MS = 900_000;
+
 export function lockTtlMs(env: NewsEnv): number {
 	const slots = Math.max(1, slotsThisRun(articlesPerHour(env), 0));
 	const worstCase = textCallBudget(env, slots) * textTimeoutMs(env) + imageCallBudget(env, slots) * imageTimeoutMs(env);
-	return Math.max(wallBudgetMs(env), worstCase) + 60_000;
+	const computed = Math.max(wallBudgetMs(env), worstCase) + pruneBudgetMs() + 60_000;
+	return Math.max(computed, MIN_LOCK_TTL_MS);
 }
 
 export function slotsThisRun(rate: number, publishedThisHour: number): number {
@@ -259,5 +293,5 @@ export function hourStartIso(now: Date): string {
 }
 
 export function personaFooter(name: string): string {
-	return `${name} is an editorial persona, not a real person. This article was written with AI assistance and editorially checked before publishing.`;
+	return `${name} is an editorial persona, not a real person. This article was written with AI assistance and automatically checked against source and quality rules before publishing.`;
 }

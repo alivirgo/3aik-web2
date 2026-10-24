@@ -380,9 +380,9 @@ export function renderAbout(origin: string): string {
 	]);
 	const body = `${trail.html}
 <h1>About this desk</h1>
-<p>3aik News is the news section of 3aik.com. Articles are written with AI assistance and editorially checked before they are published.</p>
+<p>3aik News is the news section of 3aik.com. Articles are written with AI assistance and automatically checked against source and quality rules before they are published.</p>
 <h2>What the check is</h2>
-<p>The editorial check is a set of desk rules applied before publishing. A draft must link at least one credible source, avoid copying that source's sentences, attribute sensitive claims, clear a length and sentence-variety bar, and avoid a list of stock phrases. The check is not a claim that a human reporter witnessed the event, and it is not a promise that the story is complete.</p>
+<p>The automatic check is a set of desk rules applied before publishing. A draft must link at least one credible source, avoid copying that source's sentences, attribute sensitive claims, clear a length and sentence-variety bar, and avoid a list of stock phrases. The check is not a claim that a human reporter witnessed the event, and it is not a promise that the story is complete.</p>
 <h2>Personas are not real people</h2>
 <p>Twenty-four named author personas split the beats across AI, technology, fashion, and showbiz. Each persona has a fixed beat and a distinct voice. A bio describes that voice. It does not describe a degree, an employer, or a human career. Do not treat a persona as a real journalist.</p>
 <h2>Sources and disputes</h2>
@@ -395,7 +395,7 @@ export function renderAbout(origin: string): string {
 	return renderPage({
 		origin,
 		title: `About | ${SITE_NAME}`,
-		description: "How 3aik News uses AI assistance, editorial checks, and 24 personas who are not real people.",
+		description: "How 3aik News uses AI assistance, automatic checks, and 24 personas who are not real people.",
 		canonical,
 		body,
 		jsonLd: [trail.json, {
@@ -403,7 +403,7 @@ export function renderAbout(origin: string): string {
 			"@type": "AboutPage",
 			name: `About ${SITE_NAME}`,
 			url: canonical,
-			description: "Articles are AI-assisted, editorially checked, and written under personas who are not real people.",
+			description: "Articles are AI-assisted, automatically checked against source and quality rules, and written under personas who are not real people.",
 		}],
 	});
 }
@@ -420,7 +420,7 @@ export function renderDisclaimer(origin: string): string {
 <p>${escapeHtml(ACCURACY_DISCLAIMER)}</p>
 <p>Reports can be incomplete, outdated, or wrong even when they link to a credible outlet. Read the linked source before you rely on a claim. Headlines here can be specific, and they are not supposed to state a fact the article does not support. If a headline and a source disagree, trust the source and treat this page as a brief, not as the record.</p>
 <p>Articles are written with AI assistance. Named authors are editorial personas, not real people. They do not have private sources or personal knowledge of the events they describe. A persona bio is a description of a writing voice, not a credential.</p>
-<p>The editorial check rejects some drafts before publishing. It looks for a real source link, copied wording, missing attribution, and a short list of writing failures. Passing the check does not make a story true.</p>
+<p>The automatic check rejects some drafts before publishing. It looks for a real source link, copied wording, missing attribution, and a short list of writing failures. Passing the check does not make a story true.</p>
 <p>Fashion and showbiz copy may mention a dispute only when a credible outlet has already reported it. The sentence should name that outlet. This desk does not add allegations of its own about real people.</p>
 <p>Nothing on these pages is legal, medical, financial, or other professional advice.</p>
 <p><a href="${origin}/ai-news/about">About this desk</a></p>`;

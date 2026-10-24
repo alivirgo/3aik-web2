@@ -130,7 +130,7 @@ describe("publish cycle", () => {
 		expect(article?.sources[0]?.url).toBe("https://example.com/fresh-bulletin");
 		expect(article?.bodyText).toContain("The Verge");
 		expect(article?.bodyHtml).toBe("");
-		expect(article?.imageKey).toMatch(/^images\/2026\/10\/[a-z0-9-]+\.jpg$/);
+		expect(article?.imageKey).toBe(`images/2026/10/${article?.slug}-${article?.id.slice(0, 8)}.jpg`);
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
 		expect(githubCalls).toHaveLength(1);
 		expect(githubCalls[0]?.method).toBe("PUT");
@@ -290,8 +290,110 @@ describe("publish cycle", () => {
 		})).toHaveLength(1);
 	});
 
+	it("keeps publishing when an article mentions 3036", async () => {
+		const { deps, repo, writeDraft } = harness({ rate: "4" });
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== feed!.url) return new Response("no", { status: 404 });
+			const items = ["one", "two"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+			return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+				status: 200,
+				headers: { "content-type": "application/rss+xml" },
+			});
+		});
+		let call = 0;
+		writeDraft.mockImplementation(async () => {
+			call += 1;
+			const body = draft();
+			if (call > 1) {
+				body.title = "Harbor lights, retold without adding prices or dates";
+				body.description = "The outlet reported a harbor note. This brief stays inside that note and does not add names, prices, or a scoreboard.";
+				body.paragraphs = body.paragraphs.map((paragraph) => paragraph
+					.replaceAll("product", "harbor")
+					.replaceAll("excerpt", "harbor text")
+					.replaceAll("limit", "boundary")
+					.replaceAll("names", "labels")
+					.replaceAll("price", "cost")
+					.replaceAll("date", "day")
+					.replaceAll("rollout", "launch")
+					.replaceAll("blanks", "gaps")
+					.replaceAll("figure", "amount")
+					.replaceAll("link", "source")
+					.replaceAll("retelling", "rewrite")
+					.replaceAll("pass", "round"));
+				body.keyPoints = body.keyPoints.map((point) => point.replaceAll("product", "harbor").replaceAll("names", "labels").replaceAll("price", "cost"));
+			}
+			body.paragraphs[0] = `${body.paragraphs[0]} Code 3036 stays a number in the note.`;
+			return { text: JSON.stringify(body), model: "dry-run" };
+		});
+		const report = await runPublishCycle(deps);
+		expect(report.published).toHaveLength(2);
+		expect(writeDraft).toHaveBeenCalledTimes(2);
+		expect(repo.articles.every((article) => article.bodyText.includes("3036"))).toBe(true);
+	});
+
+	it("stops the tick on the daily neuron cap without rejecting the source", async () => {
+		const { deps, repo, writeDraft } = harness();
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url !== feed!.url) return new Response("no", { status: 404 });
+			const items = ["one", "two"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+			return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+				status: 200,
+				headers: { "content-type": "application/rss+xml" },
+			});
+		});
+		writeDraft.mockRejectedValue(new Error("neuron_cap"));
+		const report = await runPublishCycle(deps);
+		expect(report.published).toEqual([]);
+		expect(writeDraft).toHaveBeenCalledTimes(1);
+		expect(await repo.isRejected("https://example.com/one", now.toISOString())).toBe(false);
+		expect(await repo.isRejected("https://example.com/two", now.toISOString())).toBe(false);
+	});
+
+	it("publishes the current article with no image and does not start another story after error 3036", async () => {
+		const { deps, repo, writeDraft, paint } = harness({ rate: "4", token: "ghp-test" });
+		deps.fetchImpl.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url === feed!.url) {
+				const items = ["one", "two"].map((name) => `<item>
+<title>Separate bulletin ${name} for the desk</title>
+<link>https://example.com/${name}</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 GMT</pubDate>
+<description>Quilted badgers maintain a violet harbor while the ${name} status page stays quiet today.</description>
+</item>`).join("");
+				return new Response(`<?xml version="1.0"?><rss><channel>${items}</channel></rss>`, {
+					status: 200,
+					headers: { "content-type": "application/rss+xml" },
+				});
+			}
+			if (url.startsWith("https://api.github.com/")) {
+				return new Response("{}", { status: 500, headers: { "x-ratelimit-remaining": "4000" } });
+			}
+			return new Response("no", { status: init ? 404 : 404 });
+		});
+		paint.mockRejectedValue(new Error("3036: You have used up your daily free allocation of 10,000 neurons."));
+		const report = await runPublishCycle(deps);
+		expect(report.published).toHaveLength(1);
+		expect(writeDraft).toHaveBeenCalledTimes(1);
+		expect(paint).toHaveBeenCalledTimes(1);
+		expect((await repo.getBySlug(report.published[0] ?? ""))?.imageKey).toBe("");
+		expect(await repo.isRejected("https://example.com/two", now.toISOString())).toBe(false);
+	});
+
 	it("stops when the wall clock is exhausted", async () => {
 		const { deps, writeDraft } = harness();
+		deps.env.AI_NEWS_WALL_MS = "45000";
 		let clock = now.getTime();
 		deps.clock = () => clock;
 		writeDraft.mockImplementation(async () => {
@@ -300,6 +402,20 @@ describe("publish cycle", () => {
 		});
 		await runPublishCycle(deps);
 		expect(writeDraft).toHaveBeenCalledTimes(1);
+	});
+
+	it("stores a new image path when a later article reuses a deleted slug", async () => {
+		const { deps, repo } = harness({ token: "ghp-test" });
+		const first = await runPublishCycle(deps);
+		const firstArticle = repo.articles[0];
+		expect(first.published).toEqual([firstArticle?.slug]);
+		repo.articles.length = 0;
+		const second = await runPublishCycle(deps);
+		const secondArticle = repo.articles[0];
+		expect(second.published).toEqual([firstArticle?.slug]);
+		expect(secondArticle?.slug).toBe(firstArticle?.slug);
+		expect(secondArticle?.imageKey).toBe(`images/2026/10/${secondArticle?.slug}-${secondArticle?.id.slice(0, 8)}.jpg`);
+		expect(secondArticle?.imageKey).not.toBe(firstArticle?.imageKey);
 	});
 
 	it("releases the lock after a cycle", async () => {
