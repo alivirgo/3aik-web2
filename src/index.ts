@@ -1,3 +1,4 @@
+import { ADSENSE_HOSTS } from "./adsense";
 import { ingestApiPath } from "./news/ingest";
 import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
 import type {
@@ -145,7 +146,7 @@ export default {
 
 			if (url.pathname === "/privacy" || url.pathname === "/privacy/") {
 				if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
-				const privacyAsset = new URL("/privacy/index.html", request.url);
+				const privacyAsset = new URL("/privacy/", request.url);
 				return withSecurityHeaders(await env.ASSETS.fetch(new Request(privacyAsset, request)));
 			}
 
@@ -887,7 +888,7 @@ function withSecurityHeaders(response: Response): Response {
 	headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
 	headers.set(
 		"content-security-policy",
-		"default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; upgrade-insecure-requests",
+		`default-src 'self'; base-uri 'self'; connect-src 'self' ${ADSENSE_HOSTS}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' data: blob: ${ADSENSE_HOSTS}; media-src 'self' blob:; object-src 'none'; script-src 'self' ${ADSENSE_HOSTS}; style-src 'self'; upgrade-insecure-requests`,
 	);
 	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

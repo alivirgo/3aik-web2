@@ -1,3 +1,4 @@
+import { ADSENSE_HOSTS } from "../adsense";
 import type { Env } from "../types";
 import { publishingEnabled, siteOrigin } from "./config";
 import {
@@ -42,6 +43,7 @@ function normalizePath(pathname: string): string {
  * Image responses themselves cannot load anything.
  */
 const PAGE_CSP = "default-src 'self'; base-uri 'self'; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'none'; style-src 'self'; upgrade-insecure-requests";
+const HTML_CSP = `default-src 'self'; base-uri 'self'; connect-src ${ADSENSE_HOSTS}; font-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' ${ADSENSE_HOSTS}; object-src 'none'; script-src ${ADSENSE_HOSTS}; style-src 'self'; upgrade-insecure-requests`;
 const IMAGE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'";
 
 function securityHeaders(contentType: string, cache: string, csp = PAGE_CSP): Headers {
@@ -58,7 +60,7 @@ function securityHeaders(contentType: string, cache: string, csp = PAGE_CSP): He
 }
 
 function htmlResponse(request: Request, body: string, status: number, cache: string): Response {
-	const headers = securityHeaders("text/html; charset=utf-8", cache);
+	const headers = securityHeaders("text/html; charset=utf-8", cache, HTML_CSP);
 	if (request.method === "HEAD") return new Response(null, { status, headers });
 	return new Response(body, { status, headers });
 }

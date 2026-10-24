@@ -56,7 +56,7 @@ describe("news pages", () => {
 		expect(html).toContain(DESK_DISCLOSURE);
 		expect(html).toContain(ACCURACY_DISCLAIMER);
 		expect(html).toContain('href="/ai-news.css"');
-		expect(html).not.toMatch(/<script[^>]+src=/i);
+		expect(html.replace('<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7587924838845990" crossorigin="anonymous"></script>', "")).not.toMatch(/<script[^>]+src=/i);
 
 		const about = await handleNewsRequest(new Request("https://3aik.test/ai-news/about"), env, { repo: null });
 		const aboutHtml = await about.text();
@@ -75,7 +75,8 @@ describe("news pages", () => {
 			{ repo },
 		);
 		const html = await response.text();
-		expect(response.headers.get("content-security-policy")).toContain("script-src 'none'");
+		expect(response.headers.get("content-security-policy")).toContain("script-src https://pagead2.googlesyndication.com");
+		expect(response.headers.get("content-security-policy")).not.toContain("script-src 'none'");
 		expect(response.headers.get("content-security-policy")).toContain("img-src 'self'");
 		expect(response.headers.get("content-security-policy")).not.toContain("jsdelivr");
 		expect(html).toContain(`https://3aik.com/ai-news/media/${COMMIT_SHA}/${IMAGE_PATH}`);

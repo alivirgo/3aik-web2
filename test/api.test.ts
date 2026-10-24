@@ -21,7 +21,7 @@ describe("worker API", () => {
     const env = environment(() => ({}));
     const response = await worker.fetch(new Request("https://3aik.test/privacy"), env);
     expect(response.status).toBe(200);
-    expect((env as any).ASSETS.fetch).toHaveBeenCalledWith(expect.objectContaining({ url: "https://3aik.test/privacy/index.html" }));
+    expect((env as any).ASSETS.fetch).toHaveBeenCalledWith(expect.objectContaining({ url: "https://3aik.test/privacy/" }));
     expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
     expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
   });
