@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { ADSENSE_SCRIPT } from "../src/adsense";
 import worker from "../src/index";
 import { ACCURACY_DISCLAIMER, DESK_DISCLOSURE } from "../src/news/config";
 import { authorInitials } from "../src/news/html";
@@ -10,6 +11,10 @@ import type { StoredArticle } from "../src/news/types";
 import { formatDateline, formatTimestamp, readingLabel, readingMinutes, relativeTime, TINY_JPEG } from "../src/news/text";
 
 const root = resolve(import.meta.dirname, "..");
+
+function withoutAdLoader(html: string): string {
+	return html.replaceAll(ADSENSE_SCRIPT, "");
+}
 const publishedAt = "2026-10-23T12:07:00.000Z";
 const COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567";
 const IMAGE_PATH = "images/2026/10/short-bulletin.jpg";
@@ -57,7 +62,7 @@ describe("news pages", () => {
 		expect(html).toContain(DESK_DISCLOSURE);
 		expect(html).toContain(ACCURACY_DISCLAIMER);
 		expect(html).toContain('href="/ai-news.css"');
-		expect(html.replace('<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7587924838845990" crossorigin="anonymous"></script>', "")).not.toMatch(/<script[^>]+src=/i);
+		expect(withoutAdLoader(html)).not.toMatch(/<script[^>]+src=/i);
 
 		const about = await handleNewsRequest(new Request("https://3aik.test/ai-news/about"), env, { repo: null });
 		const aboutHtml = await about.text();
@@ -297,7 +302,7 @@ describe("magazine pages", () => {
 		expect(html).toContain("More stories will show up here as the desk publishes.");
 		expect(html).not.toContain("No stories are published yet");
 		expect(html).not.toContain("\u2014");
-		expect(html).not.toMatch(/<script[^>]+src=/i);
+		expect(withoutAdLoader(html)).not.toMatch(/<script[^>]+src=/i);
 	});
 
 	it("renders the article with a hero, sources, a calm note, and plain share links", async () => {
@@ -332,7 +337,7 @@ describe("magazine pages", () => {
 		expect(html).toContain('<a href="https://3aik.com/ai-news/ai" aria-current="page">AI</a>');
 		expect(html).not.toContain('<a href="https://3aik.com/ai-news" aria-current="page">');
 		expect(html).toContain("class=\"story\"");
-		expect(html).not.toMatch(/<script[^>]+src=/i);
+		expect(withoutAdLoader(html)).not.toMatch(/<script[^>]+src=/i);
 		expect(html).not.toContain("jsdelivr");
 	});
 
