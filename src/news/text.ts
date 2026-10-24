@@ -260,6 +260,66 @@ export function formatDate(iso: string): string {
 	}).format(date);
 }
 
+/** Weekday dateline for the top bar. UTC so a render does not depend on the server zone. */
+export function formatDateline(now = Date.now()): { label: string; iso: string } {
+	const date = new Date(now);
+	const iso = Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+	const label = new Intl.DateTimeFormat("en-US", {
+		timeZone: "UTC",
+		weekday: "long",
+		month: "long",
+		day: "numeric",
+		year: "numeric",
+	}).format(date);
+	return { label, iso };
+}
+
+/** Compact timestamp for the Latest column. */
+export function formatTimestamp(iso: string, now = Date.now()): string {
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return iso;
+	const hours = date.getUTCHours();
+	const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+	const suffix = hours >= 12 ? "p.m." : "a.m.";
+	const hour12 = hours % 12 || 12;
+	const clock = `${hour12}:${minutes} ${suffix}`;
+	const sameDay = new Date(now).toISOString().slice(0, 10) === date.toISOString().slice(0, 10);
+	if (sameDay) return clock;
+	const day = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(date);
+	return `${day}, ${clock}`;
+}
+
+/** Words per minute used for the visible reading time. */
+const READING_WORDS_PER_MINUTE = 230;
+
+export function readingMinutes(text: string): number {
+	return Math.max(1, Math.round(wordCount(text) / READING_WORDS_PER_MINUTE));
+}
+
+export function readingLabel(text: string): string {
+	return `${readingMinutes(text)} min read`;
+}
+
+/** Relative time for a published timestamp. `now` is injectable so tests stay stable. */
+export function relativeTime(iso: string, now = Date.now()): string {
+	const then = Date.parse(iso);
+	if (!Number.isFinite(then)) return "recently";
+	const elapsed = Math.max(0, now - then);
+	if (elapsed < 60_000) return "just now";
+	const minutes = Math.floor(elapsed / 60_000);
+	if (minutes < 60) return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+	const days = Math.floor(hours / 24);
+	if (days < 7) return days === 1 ? "1 day ago" : `${days} days ago`;
+	const weeks = Math.floor(days / 7);
+	if (weeks < 5) return weeks === 1 ? "1 week ago" : `${weeks} weeks ago`;
+	const months = Math.floor(days / 30);
+	if (months < 12) return months === 1 ? "1 month ago" : `${months} months ago`;
+	const years = Math.floor(days / 365);
+	return years === 1 ? "1 year ago" : `${years} years ago`;
+}
+
 export function rfc822(iso: string): string {
 	return new Date(iso).toUTCString();
 }

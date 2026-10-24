@@ -266,7 +266,8 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				}
 			}
 			if (!article) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			return htmlResponse(request, renderArticle(origin, article), 200, "public, max-age=120");
+			const latest = await loadRecent(repo, 8);
+			return htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120");
 		}
 
 		return htmlResponse(request, renderNotFound(origin), 404, "no-store");
