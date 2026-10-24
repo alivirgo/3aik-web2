@@ -3,10 +3,11 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { ACCURACY_DISCLAIMER, DESK_DISCLOSURE } from "../src/news/config";
+import { authorInitials } from "../src/news/html";
 import { handleNewsRequest, newsCacheRequest } from "../src/news/routes";
 import { MemoryNewsRepository } from "../src/news/repository";
 import type { StoredArticle } from "../src/news/types";
-import { TINY_JPEG } from "../src/news/text";
+import { formatDateline, formatTimestamp, readingLabel, readingMinutes, relativeTime, TINY_JPEG } from "../src/news/text";
 
 const root = resolve(import.meta.dirname, "..");
 const publishedAt = "2026-10-23T12:07:00.000Z";
@@ -228,6 +229,201 @@ describe("existing routes stay in place", () => {
 		expect(first.url).toBe("https://3aik.com/ai-news/article/demo");
 	});
 });
+
+describe("magazine pages", () => {
+	function secondArticle(): StoredArticle {
+		return {
+			...article(),
+			id: "33333333-3333-4333-8333-333333333333",
+			slug: "second-brief",
+			title: "A second brief stays inside the same narrow note",
+			description: "Another outlet note, retold without adding a score or a price.",
+			category: "technology",
+			authorId: "caleb-ortiz",
+			publishedAt: "2026-10-22T12:07:00.000Z",
+			updatedAt: "2026-10-22T12:07:00.000Z",
+			imageKey: "images/2026/10/second-brief.jpg",
+			related: [{ slug: "short-bulletin", title: "A short bulletin, retold with the blanks left blank" }],
+		};
+	}
+
+	it("measures reading time and relative time from a fixed clock", () => {
+		expect(authorInitials("Mira Ellison")).toBe("ME");
+		expect(authorInitials("Caleb Ortiz")).toBe("CO");
+		expect(readingMinutes("word ".repeat(20))).toBe(1);
+		expect(readingMinutes("word ".repeat(460))).toBe(2);
+		expect(readingLabel("word")).toBe("1 min read");
+		const published = "2026-10-23T12:07:00.000Z";
+		const at = (iso: string) => Date.parse(iso);
+		expect(relativeTime(published, at("2026-10-23T12:07:30.000Z"))).toBe("just now");
+		expect(relativeTime(published, at("2026-10-23T12:12:00.000Z"))).toBe("5 minutes ago");
+		expect(relativeTime(published, at("2026-10-23T13:07:00.000Z"))).toBe("1 hour ago");
+		expect(relativeTime(published, at("2026-10-23T15:07:00.000Z"))).toBe("3 hours ago");
+		expect(relativeTime(published, at("2026-10-24T12:07:00.000Z"))).toBe("1 day ago");
+		expect(relativeTime(published, at("2026-10-26T12:07:00.000Z"))).toBe("3 days ago");
+		expect(relativeTime(published, at("2026-11-06T12:07:00.000Z"))).toBe("2 weeks ago");
+		expect(relativeTime(published, at("2027-01-23T12:07:00.000Z"))).toBe("3 months ago");
+		expect(relativeTime(published, at("2028-10-23T12:07:00.000Z"))).toBe("2 years ago");
+		expect(relativeTime("not-a-date", at(published))).toBe("recently");
+		expect(formatDateline(at("2026-10-24T03:00:00.000Z"))).toEqual({ label: "Saturday, October 24, 2026", iso: "2026-10-24" });
+		expect(formatTimestamp(published, at("2026-10-23T18:00:00.000Z"))).toBe("12:07 p.m.");
+		expect(formatTimestamp(published, at("2026-10-24T18:00:00.000Z"))).toBe("Oct 23, 12:07 p.m.");
+	});
+
+	it("renders a lead, a side stack, a Latest column, and a short-list note", async () => {
+		const repo = new MemoryNewsRepository();
+		repo.articles.push(article(), secondArticle());
+		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news"), { AI_NEWS_SITE_ORIGIN: "https://3aik.com" }, { repo });
+		const html = await index.text();
+		expect(html).toContain('<body class="desk">');
+		expect(html).toContain('href="#content">Skip to content</a>');
+		expect(html).toContain('class="dateline"');
+		expect(html).toContain('<a class="brand" href="https://3aik.com/ai-news">3aik News</a>');
+		expect(html).toContain('<a href="https://3aik.com/ai-news/ai">AI</a>');
+		expect(html).toContain('<a href="https://3aik.com/ai-news/technology">Tech</a>');
+		expect(html).toContain('<a href="https://3aik.com/ai-news/fashion">Fashion</a>');
+		expect(html).toContain('<a href="https://3aik.com/ai-news/showbiz">Showbiz</a>');
+		expect(html).not.toContain('aria-current="page">Latest</a>');
+		expect(html).toContain('class="lead"');
+		expect(html).toContain('class="side"');
+		expect(html).toContain('class="latest"');
+		expect(html).toContain('class="section-label">Latest</h2>');
+		expect(html).toContain('width="1600" height="900" loading="eager" fetchpriority="high"');
+		expect(html).toContain('width="240" height="160" loading="lazy"');
+		expect(html).toContain('class="avatar" aria-hidden="true">ME</span>');
+		expect(html).toContain("1 min read");
+		expect(html).toContain('class="rel"');
+		expect(html).toContain("October 23, 2026");
+		expect(html).toContain("More stories will show up here as the desk publishes.");
+		expect(html).not.toContain("No stories are published yet");
+		expect(html).not.toContain("\u2014");
+		expect(html).not.toMatch(/<script[^>]+src=/i);
+	});
+
+	it("renders the article with a hero, sources, a calm note, and plain share links", async () => {
+		const repo = new MemoryNewsRepository();
+		const story = article();
+		story.related = [{ slug: "second-brief", title: "A second brief stays inside the same narrow note" }];
+		repo.articles.push(story);
+		const response = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin"),
+			{ AI_NEWS_SITE_ORIGIN: "https://3aik.com" },
+			{ repo },
+		);
+		const html = await response.text();
+		expect(html).toContain('<nav class="crumbs" aria-label="Breadcrumb">');
+		expect(html).toContain('<figure class="hero">');
+		expect(html).toContain('alt="Abstract stack of paper rectangles in sand and ink blue on a warm gray field."');
+		expect(html).toContain('width="1600" height="900" loading="eager" fetchpriority="high"');
+		expect(html).not.toContain('loading="lazy"');
+		expect(html).toContain('<aside class="sources">');
+		expect(html).toContain('<aside class="note">');
+		expect(html.indexOf('<aside class="note">')).toBeLessThan(html.indexOf('<footer class="site-foot">'));
+		expect(html).toContain(ACCURACY_DISCLAIMER);
+		expect(html).toContain(">Related</h2>");
+		expect(html).toContain('class="rail"');
+		expect(html).toContain('class="kicker"');
+		expect(html).toContain('aria-label="Share this article"');
+		expect(html).toContain("https://x.com/intent/tweet?url=");
+		expect(html).toContain("https://www.linkedin.com/sharing/share-offsite/?url=");
+		expect(html).toContain("mailto:?subject=");
+		expect(html).toContain('rel="noopener noreferrer"');
+		expect(html).toContain('"timeRequired":"PT1M"');
+		expect(html).toContain('<a href="https://3aik.com/ai-news/ai" aria-current="page">AI</a>');
+		expect(html).not.toContain('<a href="https://3aik.com/ai-news" aria-current="page">');
+		expect(html).toContain("class=\"story\"");
+		expect(html).not.toMatch(/<script[^>]+src=/i);
+		expect(html).not.toContain("jsdelivr");
+	});
+
+	it("uses the same lead layout on category and author pages", async () => {
+		const repo = new MemoryNewsRepository();
+		repo.articles.push(article());
+		const env = { AI_NEWS_SITE_ORIGIN: "https://3aik.com" };
+		const category = await handleNewsRequest(new Request("https://3aik.test/ai-news/ai"), env, { repo });
+		const categoryHtml = await category.text();
+		expect(categoryHtml).toContain('<a href="https://3aik.com/ai-news/ai" aria-current="page">AI</a>');
+		expect(categoryHtml).toContain('class="section-row"');
+		expect(categoryHtml).toContain("More stories will show up here as the desk publishes.");
+		const emptyTech = await handleNewsRequest(new Request("https://3aik.test/ai-news/technology"), env, { repo });
+		expect(await emptyTech.text()).toContain("No Technology stories are published yet.");
+		const author = await handleNewsRequest(new Request("https://3aik.test/ai-news/author/mira-ellison"), env, { repo });
+		const authorHtml = await author.text();
+		expect(authorHtml).toContain('class="avatar avatar-lg" aria-hidden="true">ME</span>');
+		expect(authorHtml).toContain('class="section-row"');
+		expect(authorHtml).toContain("not a real person");
+		expect(authorHtml).toContain('"@type":"Organization"');
+		expect(authorHtml).not.toContain('"@type":"Person"');
+	});
+
+	it("keeps an empty desk explicit when nothing is published", async () => {
+		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news"), { AI_NEWS_SITE_ORIGIN: "https://3aik.com" }, { repo: null });
+		const html = await index.text();
+		expect(html).toContain("No stories are published yet");
+		expect(html).not.toContain("More stories will show up here");
+		expect(html).not.toContain('class="lead"');
+	});
+
+	it("scopes the stylesheet, stays on system fonts, and clears WCAG AA", () => {
+		const css = readFileSync(resolve(root, "public/ai-news.css"), "utf8");
+		expect(css).toContain("body.desk");
+		expect(css).not.toMatch(/^:root/m);
+		expect(css).not.toMatch(/^body \{/m);
+		expect(css).toContain("@media (prefers-color-scheme: dark)");
+		expect(css).toContain("@media (min-width: 700px)");
+		expect(css).toContain("@media (min-width: 1020px)");
+		expect(css).toContain("grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.05fr) 16.5rem");
+		expect(css).toContain("grid-template-columns: repeat(4, minmax(0, 1fr))");
+		expect(css).toContain("width: min(68ch, 100%)");
+		expect(css).toContain("aspect-ratio: 16 / 9");
+		expect(css).toContain("aspect-ratio: 3 / 2");
+		expect(css).toContain("text-transform: uppercase");
+		expect(css).toContain(":focus-visible");
+		expect(css).not.toContain("box-shadow:");
+		expect(css).not.toContain("@import");
+		expect(css).not.toContain("@font-face");
+		expect(css).not.toContain("fonts.google");
+		const darkAt = css.indexOf("@media (prefers-color-scheme: dark)");
+		expect(contrastPasses(css.slice(0, darkAt))).toBe(true);
+		expect(contrastPasses(css.slice(darkAt))).toBe(true);
+	});
+});
+
+function contrastPasses(block: string): boolean {
+	const color = (name: string) => {
+		const match = block.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`));
+		if (!match?.[1]) throw new Error(`missing --${name}`);
+		return match[1];
+	};
+	const pairs = [
+		["ink", "bg"],
+		["ink", "paper"],
+		["ink", "card"],
+		["muted", "bg"],
+		["muted", "paper"],
+		["muted", "card"],
+		["accent", "paper"],
+		["accent", "bg"],
+		["avatar-fg", "avatar-bg"],
+		["ink", "accent-soft"],
+		["bg", "ink"],
+	];
+	return pairs.every(([fore, back]) => contrastRatio(color(fore), color(back)) >= 4.5);
+}
+
+function contrastRatio(foreground: string, background: string): number {
+	const luminance = (hex: string) => {
+		const channels = [1, 3, 5].map((start) => {
+			const value = Number.parseInt(hex.slice(start, start + 2), 16) / 255;
+			return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+		});
+		return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+	};
+	const left = luminance(foreground);
+	const right = luminance(background);
+	const [hi, lo] = left > right ? [left, right] : [right, left];
+	return (hi + 0.05) / (lo + 0.05);
+}
 
 describe("crawler files", () => {
 	it("adds news discovery without removing the original robots and sitemap rules", () => {
