@@ -9,6 +9,7 @@ import {
 	imageTimeoutMs,
 	lockTtlMs,
 	maxFailuresPerRun,
+	newsGenerator,
 	publishingEnabled,
 	rejectTtlHours,
 	retentionDays,
@@ -352,6 +353,10 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 	const failures: string[] = [];
 	try {
 		const retentionPaused = await pruneDesk(deps, nowIso);
+		if (newsGenerator(deps.env) !== "workers-ai") {
+			console.log(JSON.stringify({ message: "ai-news generator off" }));
+			return { published, skipped: "generator-off", failures };
+		}
 		const already = await deps.repo.countPublishedSince(hourStartIso(deps.now));
 		const slots = slotsThisRun(rate, already);
 		if (slots <= 0) return { published, skipped: "quota", failures };

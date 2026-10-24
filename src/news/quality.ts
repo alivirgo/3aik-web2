@@ -61,6 +61,12 @@ export interface QualityInput {
 	category: Category;
 	sources: SourceRef[];
 	recent: QualityCorpusItem[];
+	/**
+	 * `generated` checks the illustration prompt the model must return.
+	 * `uploaded` checks alt text only. `none` skips illustration rules.
+	 * Word count, dashes, slop, copying, and attribution always run.
+	 */
+	illustration?: "generated" | "uploaded" | "none";
 }
 
 export function slopHits(text: string): string[] {
@@ -227,9 +233,15 @@ export function assessDraft(input: QualityInput): { ok: true } | { ok: false; re
 		if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag) || tag.length > 24) reasons.push("tag_shape");
 	}
 
-	if (wordCount(draft.imageAlt) < 8 || wordCount(draft.imageAlt) > 32) reasons.push("image_alt");
-	if (IMAGE_FORBIDDEN.test(draft.imageAlt) || IMAGE_FORBIDDEN.test(draft.imagePrompt)) reasons.push("image_prompt");
-	if (draft.imagePrompt.trim().length < 40 || draft.imagePrompt.trim().length > 500) reasons.push("image_prompt_length");
+	const illustration = input.illustration ?? "generated";
+	if (illustration !== "none") {
+		if (wordCount(draft.imageAlt) < 8 || wordCount(draft.imageAlt) > 32) reasons.push("image_alt");
+		const promptBanned = illustration === "generated" && IMAGE_FORBIDDEN.test(draft.imagePrompt);
+		if (IMAGE_FORBIDDEN.test(draft.imageAlt) || promptBanned) reasons.push("image_prompt");
+	}
+	if (illustration === "generated" && (draft.imagePrompt.trim().length < 40 || draft.imagePrompt.trim().length > 500)) {
+		reasons.push("image_prompt_length");
+	}
 
 	if (PERSONA_CLAIM.test(body)) reasons.push("persona_claim");
 

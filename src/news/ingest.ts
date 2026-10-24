@@ -1,0 +1,623 @@
+import { authorById, personaBriefs } from "./authors";
+import {
+	CATEGORY_LABEL,
+	COPY_WINDOW,
+	INGEST_IMAGE_MAX_BYTES,
+	INGEST_REQUESTS_PER_HOUR,
+	MAX_WORDS,
+	MIN_WORDS,
+	SIMILARITY_LIMIT,
+	hourStartIso,
+	siteOrigin,
+	type NewsEnv,
+} from "./config";
+import { readBodyCapped, sameSiteHost } from "./feeds";
+import {
+	GITHUB_IMAGE_MAX_BYTES,
+	commitImageFile,
+	deleteImageFile,
+	extensionForMime,
+	githubImagePath,
+} from "./github-images";
+import { pingIndexNow } from "./pipeline";
+import { SLOP_PATTERNS, assessDraft } from "./quality";
+import type { NewsRepository } from "./repository";
+import type { ArticleDraft, Category, FaqItem, SourceRef, StoredArticle } from "./types";
+import { CATEGORIES } from "./types";
+import {
+	decodeEntities,
+	detectImageType,
+	normalizeSourceUrl,
+	slugify,
+	stripHtml,
+	tokenJaccard,
+	wordCount,
+	words,
+} from "./text";
+
+const MAX_BODY_BYTES = 2_600_000;
+const MAX_SOURCE_BYTES = 200_000;
+const MAX_SOURCES = 4;
+const RECENT_SOURCE_LIMIT = 40;
+const USER_AGENT = "3aik-news/1.0 (+https://3aik.com/ai-news/about)";
+
+export interface IngestDeps {
+	repo: NewsRepository | null;
+	fetchImpl?: typeof fetch;
+	now?: Date;
+}
+
+export function ingestApiPath(pathname: string): "post" | "meta" | null {
+	const path = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+	if (path === "/ai-news/api/ingest") return "post";
+	if (path === "/ai-news/api/ingest/meta") return "meta";
+	return null;
+}
+
+function equalDigests(left: ArrayBuffer, right: ArrayBuffer): boolean {
+	const subtle = crypto.subtle as SubtleCrypto & {
+		timingSafeEqual?: (a: ArrayBuffer, b: ArrayBuffer) => boolean;
+	};
+	if (typeof subtle.timingSafeEqual === "function") return subtle.timingSafeEqual(left, right);
+	const a = new Uint8Array(left);
+	const b = new Uint8Array(right);
+	if (a.byteLength !== b.byteLength) return false;
+	let diff = 0;
+	for (let index = 0; index < a.byteLength; index += 1) diff |= (a[index] ?? 0) ^ (b[index] ?? 0);
+	return diff === 0;
+}
+
+export async function tokensMatch(provided: string, expected: string): Promise<boolean> {
+	const bounded = provided.length > 512 ? `${provided.slice(0, 512)}\n` : provided;
+	const encoder = new TextEncoder();
+	const [left, right] = await Promise.all([
+		crypto.subtle.digest("SHA-256", encoder.encode(bounded)),
+		crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+	]);
+	return equalDigests(left, right);
+}
+
+function bearerToken(header: string | null): string {
+	const match = /^Bearer\s+(\S+)\s*$/i.exec(header ?? "");
+	return match?.[1] ?? "";
+}
+
+function json(body: unknown, status: number, extra?: HeadersInit): Response {
+	const headers = new Headers(extra);
+	headers.set("content-type", "application/json; charset=utf-8");
+	headers.set("cache-control", "no-store");
+	headers.set("x-content-type-options", "nosniff");
+	return new Response(JSON.stringify(body), { status, headers });
+}
+
+function reasons(list: string[], status = 422): Response {
+	return json({ reasons: [...new Set(list)] }, status);
+}
+
+function methodNotAllowed(allowed: string[]): Response {
+	return json({ error: "method_not_allowed" }, 405, { allow: allowed.join(", ") });
+}
+
+function secondsUntilNextHour(now: Date): number {
+	const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours() + 1);
+	return Math.max(1, Math.ceil((next - now.getTime()) / 1000));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readString(record: Record<string, unknown>, ...keys: string[]): string {
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value === "string") return value.trim();
+	}
+	return "";
+}
+
+function categoryOf(raw: string): Category | null {
+	const value = raw.trim().toLowerCase();
+	if (value === "tech") return "technology";
+	if (value === "ai" || value === "technology" || value === "fashion" || value === "showbiz") return value;
+	return null;
+}
+
+function paragraphsFromMarkdown(markdown: string): string[] {
+	return markdown
+		.replace(/\r\n/g, "\n")
+		.split(/\n\s*\n/)
+		.map((paragraph) => paragraph.replace(/[ \t]*\n[ \t]*/g, " ").replace(/[ \t]+/g, " ").trim())
+		.filter(Boolean);
+}
+
+function paragraphsFromHtml(html: string): string[] {
+	const marked = html
+		.replace(/\r\n/g, "\n")
+		.replace(/<br\s*\/?>/gi, "\n")
+		.replace(/<\/(p|h1|h2|h3|h4|li|div|blockquote|section)>/gi, "\n\n");
+	const decoded = decodeEntities(marked.replace(/<[^>]+>/g, " "));
+	return decoded
+		.split(/\n\s*\n|\n/)
+		.map((paragraph) => paragraph.replace(/[ \t]+/g, " ").trim())
+		.filter(Boolean);
+}
+
+function stringList(value: unknown): string[] | null {
+	if (!Array.isArray(value)) return null;
+	if (!value.every((item) => typeof item === "string")) return null;
+	return value.map((item) => item.trim()).filter(Boolean);
+}
+
+function faqOf(value: unknown): FaqItem[] | null {
+	if (!Array.isArray(value)) return null;
+	const items: FaqItem[] = [];
+	for (const entry of value) {
+		if (!isRecord(entry) || typeof entry.question !== "string" || typeof entry.answer !== "string") return null;
+		items.push({ question: entry.question.trim(), answer: entry.answer.trim() });
+	}
+	return items;
+}
+
+function blockedHost(hostname: string): boolean {
+	const host = hostname.toLowerCase().replace(/\.$/, "");
+	if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+	if (host.includes(":")) return true;
+	return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+}
+
+function publicSourceUrl(raw: string): string | null {
+	let normalized: string;
+	try {
+		normalized = normalizeSourceUrl(raw);
+	} catch {
+		return null;
+	}
+	let url: URL;
+	try {
+		url = new URL(normalized);
+	} catch {
+		return null;
+	}
+	if (url.protocol !== "https:" || url.username || url.password || blockedHost(url.hostname)) return null;
+	return normalized;
+}
+
+function decodeBase64(input: string): Uint8Array | null {
+	const trimmed = input.trim().replace(/^data:[^,]+,/i, "").replace(/\s+/g, "");
+	if (!trimmed || trimmed.length > 2_300_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) return null;
+	try {
+		const binary = atob(trimmed);
+		const bytes = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+		return bytes;
+	} catch {
+		return null;
+	}
+}
+
+interface ParsedImage {
+	bytes: Uint8Array;
+	alt: string;
+}
+
+interface ParsedSource {
+	url: string;
+	publisher: string;
+	title: string;
+	excerpt: string;
+}
+
+interface ParsedIngest {
+	reasons: string[];
+	draft: ArticleDraft | null;
+	sources: ParsedSource[];
+	image: ParsedImage | null;
+	category: Category | null;
+	authorId: string | null;
+}
+
+function readImage(record: Record<string, unknown>): { reasons: string[]; image: ParsedImage | null } {
+	if (!("image" in record) || record.image == null) return { reasons: [], image: null };
+	const image = record.image;
+	let data = "";
+	let alt = readString(record, "image_alt", "imageAlt");
+	if (typeof image === "string") {
+		data = image.trim();
+	} else if (isRecord(image)) {
+		data = readString(image, "data", "base64");
+		alt = readString(image, "alt") || alt;
+	} else {
+		return { reasons: ["image_encoding"], image: null };
+	}
+	if (!data) return { reasons: ["image_encoding"], image: null };
+	if (data.replace(/^data:[^,]+,/i, "").replace(/\s+/g, "").length > 2_300_000) return { reasons: ["image_bytes"], image: null };
+	const bytes = decodeBase64(data);
+	if (!bytes) return { reasons: ["image_encoding"], image: null };
+	if (bytes.byteLength > INGEST_IMAGE_MAX_BYTES) return { reasons: ["image_bytes"], image: null };
+	const detected = detectImageType(bytes);
+	if (!detected || (detected.mime !== "image/jpeg" && detected.mime !== "image/png" && detected.mime !== "image/webp")) {
+		return { reasons: ["image_type"], image: null };
+	}
+	return { reasons: [], image: { bytes, alt } };
+}
+
+function parseIngest(value: unknown): ParsedIngest {
+	const problems: string[] = [];
+	if (!isRecord(value)) return { reasons: ["invalid_json"], draft: null, sources: [], image: null, category: null, authorId: null };
+	const title = readString(value, "title");
+	const description = readString(value, "dek", "summary", "description");
+	const category = categoryOf(readString(value, "category"));
+	const authorId = readString(value, "author_slug", "authorSlug");
+	if (!title) problems.push("title");
+	if (!description) problems.push("dek");
+	if (!category) problems.push("category");
+	const author = authorId ? authorById(authorId) : null;
+	if (!author) problems.push("author_slug");
+	else if (category && author.category !== category) problems.push("author_category");
+
+	const markdown = readString(value, "body_markdown", "bodyMarkdown");
+	const html = readString(value, "body_html", "html", "bodyHtml");
+	const paragraphs = markdown ? paragraphsFromMarkdown(markdown) : html ? paragraphsFromHtml(html) : [];
+	if (!paragraphs.length) problems.push("body");
+	if ((markdown || html).length > 60_000) problems.push("body_too_large");
+
+	const tags = stringList(value.tags ?? value.tag);
+	if (value.tags != null && tags === null) problems.push("tags");
+	const keyPoints = stringList(value.key_points ?? value.keyPoints);
+	if ((value.key_points != null || value.keyPoints != null) && keyPoints === null) problems.push("key_points");
+	const faq = faqOf(value.faq ?? []);
+	if (value.faq != null && faq === null) problems.push("faq");
+
+	const sources: ParsedSource[] = [];
+	if (!Array.isArray(value.sources)) problems.push("sources");
+	else {
+		if (value.sources.length < 1) problems.push(category === "showbiz" ? "showbiz_source" : "sources");
+		if (value.sources.length > MAX_SOURCES) problems.push("sources");
+		const seen = new Set<string>();
+		for (const entry of value.sources) {
+			if (!isRecord(entry)) {
+				problems.push("source_shape");
+				continue;
+			}
+			const url = publicSourceUrl(readString(entry, "url"));
+			const publisher = readString(entry, "publisher", "outlet");
+			const sourceTitle = readString(entry, "title");
+			if (!url) problems.push("source_url");
+			if (!publisher) problems.push("source_publisher");
+			if (!sourceTitle) problems.push("source_title");
+			if (!url || !publisher || !sourceTitle) continue;
+			if (seen.has(url)) problems.push("duplicate_source");
+			seen.add(url);
+			sources.push({
+				url,
+				publisher: publisher.slice(0, 80),
+				title: sourceTitle.slice(0, 300),
+				excerpt: readString(entry, "excerpt").slice(0, 8_000),
+			});
+		}
+	}
+
+	const image = readImage(value);
+	problems.push(...image.reasons);
+
+	const draft: ArticleDraft = {
+		title,
+		description,
+		tags: (tags ?? []).map((tag) => tag.toLowerCase()),
+		keyPoints: keyPoints ?? [],
+		faq: faq ?? [],
+		paragraphs,
+		imageAlt: image.image?.alt ?? "",
+		imagePrompt: "",
+	};
+	return {
+		reasons: [...new Set(problems)],
+		draft: problems.length ? null : draft,
+		sources,
+		image: image.image,
+		category,
+		authorId: author?.id ?? null,
+	};
+}
+
+async function fetchSourceText(url: string, fetchImpl: typeof fetch): Promise<string> {
+	let current = url;
+	const originalHost = new URL(url).hostname;
+	for (let hop = 0; hop < 3; hop += 1) {
+		let response: Response;
+		try {
+			response = await fetchImpl(current, {
+				redirect: "manual",
+				headers: { accept: "text/html, text/plain;q=0.5", "user-agent": USER_AGENT },
+				signal: AbortSignal.timeout(8_000),
+			});
+		} catch {
+			return "";
+		}
+		if (response.status >= 300 && response.status < 400) {
+			const location = response.headers.get("location");
+			await response.body?.cancel();
+			if (!location) return "";
+			let next: URL;
+			try {
+				next = new URL(location, current);
+			} catch {
+				return "";
+			}
+			if (next.protocol !== "https:" || !sameSiteHost(next.hostname, originalHost) || blockedHost(next.hostname)) return "";
+			current = next.toString();
+			continue;
+		}
+		if (!response.ok) {
+			await response.body?.cancel();
+			return "";
+		}
+		const type = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+		if (type && type !== "text/html" && type !== "text/plain" && type !== "application/xhtml+xml") {
+			await response.body?.cancel();
+			return "";
+		}
+		const body = await readBodyCapped(response, MAX_SOURCE_BYTES);
+		if (!body) return "";
+		return stripHtml(body).slice(0, 8_000);
+	}
+	return "";
+}
+
+async function sourceRefs(sources: ParsedSource[], fetchImpl: typeof fetch): Promise<{ refs: SourceRef[]; reasons: string[] }> {
+	const reasons: string[] = [];
+	const refs: SourceRef[] = [];
+	for (const source of sources) {
+		const fetched = await fetchSourceText(source.url, fetchImpl);
+		const excerpt = [source.excerpt, fetched].filter(Boolean).join("\n");
+		if (words(excerpt).length < COPY_WINDOW && words(source.title).length < COPY_WINDOW) {
+			reasons.push(`source_unread:${new URL(source.url).host}`);
+		}
+		refs.push({ url: source.url, title: source.title, outlet: source.publisher, excerpt });
+	}
+	return { refs, reasons };
+}
+
+async function storeImage(
+	env: NewsEnv,
+	image: ParsedImage,
+	slug: string,
+	suffix: string,
+	publishedAt: string,
+	fetchImpl: typeof fetch,
+): Promise<{ imageKey: string; imageCommit: string; imageType: string }> {
+	const empty = { imageKey: "", imageCommit: "", imageType: "" };
+	const token = env.GITHUB_IMAGES_TOKEN?.trim() ?? "";
+	const detected = detectImageType(image.bytes);
+	const extension = detected ? extensionForMime(detected.mime) : null;
+	if (!token || !detected || !extension || image.bytes.byteLength > GITHUB_IMAGE_MAX_BYTES) {
+		if (image.bytes.byteLength) {
+			console.log(JSON.stringify({ message: "ai-news ingest image skipped", reason: token ? "type-or-size" : "no-token" }));
+		}
+		return empty;
+	}
+	const path = githubImagePath(publishedAt, slug, extension, suffix);
+	if (!path) return empty;
+	const committed = await commitImageFile(token, path, image.bytes, fetchImpl);
+	if (!committed.ok || !committed.commitSha) {
+		console.log(JSON.stringify({ message: "ai-news ingest image skipped", reason: "github" }));
+		return empty;
+	}
+	return { imageKey: path, imageCommit: committed.commitSha, imageType: detected.mime };
+}
+
+function qualityRules() {
+	return {
+		min_words: MIN_WORDS,
+		max_words: MAX_WORDS,
+		min_sentences: 8,
+		short_sentence_max_words: 12,
+		long_sentence_min_words: 25,
+		paragraphs: { min: 5, max: 10 },
+		title_chars: { min: 20, max: 110 },
+		description_chars: { min: 90, max: 170 },
+		key_points: { min: 3, max: 5, min_words: 8, max_words: 40 },
+		faq: { count: 3, answer_min_words: 20, answer_max_words: 90 },
+		tags: { min: 2, max: 4 },
+		copy_window_words: COPY_WINDOW,
+		slop: SLOP_PATTERNS.map((entry) => entry.id),
+		dashes: "No em dash, no en dash used as a clause break, and no --- or spaced double hyphen.",
+		attribution: "Fashion and showbiz copy must attribute claims. A dispute needs the outlet name or a reporting verb in the same sentence.",
+		sources: "At least one https source is required. Showbiz requires one. Name the publisher in the body. An 8-word copy of the source title or text is rejected.",
+		image: {
+			optional: true,
+			accepted: ["image/jpeg", "image/png", "image/webp"],
+			max_bytes: INGEST_IMAGE_MAX_BYTES,
+			alt_words: { min: 8, max: 32 },
+			stored: ["image/jpeg", "image/webp"],
+			stored_max_bytes: GITHUB_IMAGE_MAX_BYTES,
+			note: "Send image.data as base64 or a data URL. PNG and files over the stored cap still publish, without a picture.",
+		},
+	};
+}
+
+async function metaResponse(request: Request, env: NewsEnv, repo: NewsRepository | null): Promise<Response> {
+	let recent: string[] = [];
+	if (repo) {
+		try {
+			recent = await repo.listRecentSourceUrls(RECENT_SOURCE_LIMIT);
+		} catch (error) {
+			console.error(JSON.stringify({
+				message: "ai-news ingest meta failed",
+				error: error instanceof Error ? error.message : String(error),
+			}));
+			recent = [];
+		}
+	}
+	const body = {
+		personas: personaBriefs(),
+		categories: CATEGORIES.map((id) => ({
+			id,
+			label: CATEGORY_LABEL[id],
+			aliases: id === "technology" ? ["tech"] : [],
+		})),
+		quality: qualityRules(),
+		limits: {
+			requests_per_hour: INGEST_REQUESTS_PER_HOUR,
+			sources_min: 1,
+			sources_max: MAX_SOURCES,
+			showbiz_sources_min: 1,
+			image_max_bytes: INGEST_IMAGE_MAX_BYTES,
+		},
+		recent_source_urls: recent,
+	};
+	const headers = new Headers();
+	headers.set("content-type", "application/json; charset=utf-8");
+	headers.set("cache-control", "no-store");
+	headers.set("x-content-type-options", "nosniff");
+	if (request.method === "HEAD") return new Response(null, { status: 200, headers });
+	return new Response(JSON.stringify(body), { status: 200, headers });
+}
+
+async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now: Date): Promise<Response> {
+	const repo = deps.repo;
+	if (!repo) return json({ error: "unavailable" }, 503);
+	let allowed = false;
+	try {
+		allowed = await repo.consumeIngest(hourStartIso(now), INGEST_REQUESTS_PER_HOUR);
+	} catch (error) {
+		console.error(JSON.stringify({
+			message: "ai-news ingest limit failed",
+			error: error instanceof Error ? error.message : String(error),
+		}));
+		await request.body?.cancel();
+		return json({ error: "unavailable" }, 503);
+	}
+	if (!allowed) {
+		await request.body?.cancel();
+		const retry = secondsUntilNextHour(now);
+		return json({ error: "rate_limited", retry_after: retry }, 429, { "retry-after": String(retry) });
+	}
+
+	const contentType = request.headers.get("content-type") ?? "";
+	if (!contentType.toLowerCase().includes("application/json")) {
+		await request.body?.cancel();
+		return reasons(["content_type"]);
+	}
+	const declared = Number(request.headers.get("content-length") ?? "");
+	if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+		await request.body?.cancel();
+		return reasons(["body_too_large"]);
+	}
+	const raw = await readBodyCapped(new Response(request.body), MAX_BODY_BYTES);
+	if (raw == null) return reasons(["body_too_large"]);
+	let payload: unknown;
+	try {
+		payload = JSON.parse(raw);
+	} catch {
+		return reasons(["invalid_json"]);
+	}
+
+	const parsed = parseIngest(payload);
+	if (parsed.reasons.length || !parsed.draft || !parsed.category || !parsed.authorId) return reasons(parsed.reasons);
+
+	const fetchImpl = deps.fetchImpl ?? fetch;
+	const loaded = await sourceRefs(parsed.sources, fetchImpl);
+	if (loaded.reasons.length) return reasons(loaded.reasons);
+
+	const author = authorById(parsed.authorId);
+	if (!author) return reasons(["author_slug"]);
+	const origin = siteOrigin(env, request);
+	let draft = parsed.draft;
+	const slug = slugify(draft.title);
+	const conflicts: Array<{ field: "slug" | "source_url"; value: string }> = [];
+	if (await repo.hasSlug(slug)) conflicts.push({ field: "slug", value: slug });
+	for (const source of loaded.refs) {
+		if (await repo.hasSource(source.url)) conflicts.push({ field: "source_url", value: source.url });
+	}
+	if (conflicts.length) return json({ error: "duplicate", conflicts }, 409);
+	const recentArticles = await repo.listRecent(30, parsed.category);
+	const related = recentArticles
+		.map((article) => ({ article, score: tokenJaccard(draft.title, article.title) }))
+		.sort((left, right) => right.score - left.score || right.article.publishedAt.localeCompare(left.article.publishedAt))
+		.slice(0, 2);
+	const first = related[0];
+	const relatedHref = first ? `${origin}/ai-news/article/${first.article.slug}` : "";
+	if (first && !draft.paragraphs.join("\n").includes(relatedHref)) {
+		const line = author.relatedLine(first.article.title, relatedHref);
+		draft = draft.paragraphs.length >= 10
+			? { ...draft, paragraphs: [...draft.paragraphs.slice(0, -1), `${draft.paragraphs.at(-1)} ${line}`] }
+			: { ...draft, paragraphs: [...draft.paragraphs, line] };
+	}
+
+	const corpus = await repo.similarityCorpus(SIMILARITY_LIMIT);
+	const verdict = assessDraft({
+		draft,
+		category: parsed.category,
+		sources: loaded.refs,
+		recent: corpus,
+		illustration: parsed.image ? "uploaded" : "none",
+	});
+	if (!verdict.ok) return reasons(verdict.reasons);
+
+	const id = crypto.randomUUID();
+	const nowIso = now.toISOString();
+	const suffix = id.slice(0, 8);
+	const picture = parsed.image
+		? await storeImage(env, parsed.image, slug, suffix, nowIso, fetchImpl)
+		: { imageKey: "", imageCommit: "", imageType: "" };
+	const article: StoredArticle = {
+		id,
+		slug,
+		title: draft.title,
+		description: draft.description,
+		category: parsed.category,
+		tags: draft.tags,
+		authorId: author.id,
+		bodyHtml: "",
+		bodyText: draft.paragraphs.join("\n\n"),
+		keyPoints: draft.keyPoints,
+		faq: draft.faq,
+		sources: loaded.refs.map(({ url, title, outlet }) => ({ url, title, outlet })),
+		related: related.map(({ article: prior }) => ({ slug: prior.slug, title: prior.title })),
+		imageKey: picture.imageKey,
+		imageCommit: picture.imageCommit,
+		imageAlt: picture.imageKey ? draft.imageAlt : "",
+		imageType: picture.imageType,
+		publishedAt: nowIso,
+		updatedAt: nowIso,
+	};
+	try {
+		await repo.insert(article);
+	} catch (error) {
+		if (picture.imageKey) await deleteImageFile(env.GITHUB_IMAGES_TOKEN?.trim() ?? "", picture.imageKey, fetchImpl);
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(JSON.stringify({ message: "ai-news ingest insert failed", error: message }));
+		if (/duplicate|unique/i.test(message)) return json({ error: "duplicate", conflicts: [{ field: "slug", value: slug }] }, 409);
+		return json({ error: "unavailable" }, 503);
+	}
+	const url = `${origin}/ai-news/article/${slug}`;
+	await pingIndexNow(env, [url], fetchImpl);
+	console.log(JSON.stringify({
+		message: "ai-news ingested",
+		slug,
+		category: parsed.category,
+		authorId: author.id,
+		image: Boolean(picture.imageKey),
+		words: wordCount(article.bodyText),
+	}));
+	return json({ url, slug }, 201);
+}
+
+export async function handleIngestRequest(request: Request, env: NewsEnv, deps: IngestDeps): Promise<Response> {
+	const secret = env.AI_NEWS_INGEST_TOKEN?.trim() ?? "";
+	if (!secret) return json({ error: "not_found" }, 404);
+	const matches = await tokensMatch(bearerToken(request.headers.get("authorization")), secret);
+	if (!matches) return json({ error: "unauthorized" }, 401, { "www-authenticate": "Bearer" });
+
+	const kind = ingestApiPath(new URL(request.url).pathname);
+	if (kind === "meta") {
+		if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+		return metaResponse(request, env, deps.repo);
+	}
+	if (kind === "post") {
+		if (request.method !== "POST") return methodNotAllowed(["POST"]);
+		return postArticle(request, env, deps, deps.now ?? new Date());
+	}
+	return json({ error: "not_found" }, 404);
+}

@@ -12,6 +12,10 @@ INDEXNOW_KEY=
 # Leave blank to publish articles without images. Never commit a real token.
 GITHUB_IMAGES_TOKEN=
 
+# Bearer token for POST /ai-news/api/ingest and GET /ai-news/api/ingest/meta.
+# Production already has this secret. Leave blank locally to hide the route (404).
+AI_NEWS_INGEST_TOKEN=
+
 POLLINATIONS_API_KEY=
 OPENAI_API_KEY=
 AIORNOT_API_KEY=

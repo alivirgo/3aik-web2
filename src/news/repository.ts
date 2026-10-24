@@ -21,6 +21,9 @@ export interface NewsRepository {
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
+	listRecentSourceUrls(limit: number): Promise<string[]>;
+	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
+	consumeIngest(bucket: string, limit: number): Promise<boolean>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -298,6 +301,44 @@ export class D1NewsRepository implements NewsRepository {
 		const contentType = record ? readString(record, "image_type") : "";
 		return contentType ? { contentType } : null;
 	}
+
+	async listRecentSourceUrls(limit: number): Promise<string[]> {
+		const result = await this.db
+			.prepare(
+				`SELECT article_sources.source_url AS source_url
+				 FROM article_sources
+				 INNER JOIN articles ON articles.id = article_sources.article_id
+				 ORDER BY articles.published_at DESC
+				 LIMIT ?`,
+			)
+			.bind(limit)
+			.all<Record<string, unknown>>();
+		const urls: string[] = [];
+		const seen = new Set<string>();
+		for (const row of result.results ?? []) {
+			const url = readString(row, "source_url");
+			if (!url || seen.has(url)) continue;
+			seen.add(url);
+			urls.push(url);
+		}
+		return urls;
+	}
+
+	async consumeIngest(bucket: string, limit: number): Promise<boolean> {
+		const name = `ingest:${bucket}`;
+		const cutoff = new Date(Date.parse(bucket) - 48 * 60 * 60 * 1000).toISOString();
+		const results = await this.db.batch([
+			this.db.prepare("DELETE FROM runtime_lock WHERE name LIKE 'ingest:%' AND name < ?").bind(`ingest:${cutoff}`),
+			this.db
+				.prepare(
+					`INSERT INTO runtime_lock (name, locked_until) VALUES (?, '1')
+					 ON CONFLICT(name) DO UPDATE SET locked_until = CAST((CAST(runtime_lock.locked_until AS INTEGER) + 1) AS TEXT)
+					 WHERE CAST(runtime_lock.locked_until AS INTEGER) < ?`,
+				)
+				.bind(name, limit),
+		]);
+		return (results[1]?.meta?.changes ?? 0) > 0;
+	}
 }
 
 export class MemoryNewsRepository implements NewsRepository {
@@ -425,5 +466,33 @@ export class MemoryNewsRepository implements NewsRepository {
 	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
 		const article = this.articles.find((entry) => entry.imageKey === imageKey && entry.imageCommit === imageCommit);
 		return article?.imageType ? { contentType: article.imageType } : null;
+	}
+
+	async listRecentSourceUrls(limit: number): Promise<string[]> {
+		const urls: string[] = [];
+		const seen = new Set<string>();
+		const ordered = this.articles.slice().sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+		for (const article of ordered) {
+			for (const source of article.sources) {
+				if (seen.has(source.url)) continue;
+				seen.add(source.url);
+				urls.push(source.url);
+				if (urls.length >= limit) return urls;
+			}
+		}
+		return urls;
+	}
+
+	private ingestHits = new Map<string, number>();
+
+	async consumeIngest(bucket: string, limit: number): Promise<boolean> {
+		const cutoffMs = Date.parse(bucket) - 48 * 60 * 60 * 1000;
+		for (const key of this.ingestHits.keys()) {
+			if (Date.parse(key) < cutoffMs) this.ingestHits.delete(key);
+		}
+		const hits = this.ingestHits.get(bucket) ?? 0;
+		if (hits >= limit) return false;
+		this.ingestHits.set(bucket, hits + 1);
+		return true;
 	}
 }

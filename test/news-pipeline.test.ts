@@ -57,7 +57,7 @@ function rss() {
 </item></channel></rss>`;
 }
 
-function harness(options: { publishing?: string; rate?: string; indexNow?: string; token?: string; githubStatus?: number } = {}) {
+function harness(options: { publishing?: string; rate?: string; indexNow?: string; token?: string; githubStatus?: number; generator?: string; omitGenerator?: boolean } = {}) {
 	const repo = new MemoryNewsRepository();
 	const writeDraft = vi.fn(async () => ({ text: JSON.stringify(draft()), model: "dry-run" }));
 	const paint = vi.fn(async () => ({ bytes: TINY_JPEG, contentType: "image/jpeg", model: "dry-run" }));
@@ -101,6 +101,7 @@ function harness(options: { publishing?: string; rate?: string; indexNow?: strin
 		deps: {
 			env: {
 				AI_NEWS_PUBLISHING: options.publishing ?? "on",
+				...(options.omitGenerator ? {} : { AI_NEWS_GENERATOR: options.generator ?? "workers-ai" }),
 				AI_NEWS_ARTICLES_PER_HOUR: options.rate ?? "1",
 				AI_NEWS_SITE_ORIGIN: "https://3aik.com",
 				INDEXNOW_KEY: options.indexNow,
@@ -177,6 +178,23 @@ describe("publish cycle", () => {
 		expect(report.published).toHaveLength(1);
 		expect(writeDraft).toHaveBeenCalledTimes(2);
 		expect(deps.repo.articles[0]?.bodyText).not.toContain("delve");
+	});
+
+	it("prunes and does not call Workers AI when the generator is off or unset", async () => {
+		for (const mode of ["off", "unset"] as const) {
+			const run = harness(mode === "unset" ? { omitGenerator: true } : { generator: "off" });
+			const old = existing("https://example.com/aged-generator", "2026-01-01T00:00:00.000Z");
+			old.imageKey = "";
+			run.repo.articles.push(old);
+			const report = await runPublishCycle(run.deps);
+			expect(report.skipped).toBe("generator-off");
+			expect(report.published).toEqual([]);
+			expect(run.writeDraft).not.toHaveBeenCalled();
+			expect(run.paint).not.toHaveBeenCalled();
+			expect(run.fetchImpl).not.toHaveBeenCalled();
+			expect(run.repo.articles.find((article) => article.id === old.id)).toBeUndefined();
+			expect(await run.repo.tryLock("2026-10-23T13:00:00.000Z", now.toISOString())).toBe(true);
+		}
 	});
 
 	it("does not call the writer when publishing is paused or the hourly quota is full", async () => {

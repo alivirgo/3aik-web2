@@ -176,6 +176,13 @@ export interface NewsEnv {
 	INDEXNOW_KEY?: string;
 	/** Fine-grained token with contents:write on alivirgo/3aik-ai-news-images. Never commit it. */
 	GITHUB_IMAGES_TOKEN?: string;
+	/**
+	 * `workers-ai` lets the cron call Workers AI. `off` (the default) skips those
+	 * calls so a tick does not spend neurons. Cleanup still runs when publishing is on.
+	 */
+	AI_NEWS_GENERATOR?: string;
+	/** Bearer token for POST /ai-news/api/ingest. Never commit it. */
+	AI_NEWS_INGEST_TOKEN?: string;
 }
 
 export function articlesPerHour(env: NewsEnv): number {
@@ -190,6 +197,20 @@ export function publishingEnabled(env: NewsEnv): boolean {
 	const value = (env.AI_NEWS_PUBLISHING ?? "off").trim().toLowerCase();
 	return value === "on" || value === "true" || value === "yes" || value === "1";
 }
+
+export type NewsGenerator = "workers-ai" | "off";
+
+/** Missing, empty, or any value other than `workers-ai` keeps Workers AI off. */
+export function newsGenerator(env: NewsEnv): NewsGenerator {
+	const value = (env.AI_NEWS_GENERATOR ?? "off").trim().toLowerCase();
+	return value === "workers-ai" ? "workers-ai" : "off";
+}
+
+/** Authenticated ingest POSTs allowed per UTC hour. Counted in D1, not the 60 second rate-limit binding. */
+export const INGEST_REQUESTS_PER_HOUR = 10;
+
+/** Decoded ingest image cap. About 1.5 MB. The GitHub path still stores only WebP or JPEG at or under 1 MB. */
+export const INGEST_IMAGE_MAX_BYTES = 1_572_864;
 
 function clampedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
 	if (raw === undefined || raw.trim() === "") return fallback;
