@@ -1,6 +1,9 @@
-/** Raw reader events. Analytics Engine is on the Workers Free plan (100,000 points/day). */
+/**
+ * Optional raw points. The binding is absent until Analytics Engine deploys on
+ * this account. D1 rollups stay the source of truth either way.
+ */
 export function writeNewsEvent(
-	dataset: AnalyticsEngineDataset | undefined,
+	env: { AI_NEWS_EVENTS?: AnalyticsEngineDataset },
 	event: {
 		kind: string;
 		slug: string;
@@ -13,10 +16,10 @@ export function writeNewsEvent(
 	},
 	sampled: boolean,
 ): void {
-	if (!dataset) return;
+	if (!env.AI_NEWS_EVENTS) return;
 	if (sampled && !sampleTick()) return;
 	const clip = (value: string) => value.replace(/[\r\n]/g, " ").slice(0, 256);
-	dataset.writeDataPoint({
+	env.AI_NEWS_EVENTS?.writeDataPoint({
 		indexes: [clip(event.slug || event.kind || "news").slice(0, 96)],
 		blobs: [event.kind, event.slug, event.host, event.country, event.device, event.botName].map(clip),
 		doubles: [event.engagedMs, event.scrollPct],

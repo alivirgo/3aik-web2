@@ -8,7 +8,10 @@ export interface Env {
 	NEWS_STATS_RATE_LIMITER?: RateLimit;
 	/** SQLite Durable Object. Global cap of 25,000 D1 stats row writes per UTC day. */
 	NEWS_STATS_BUDGET?: DurableObjectNamespace;
-	/** Raw reader events. Write-only on the Free plan. */
+	/**
+	 * Optional raw points. Not bound in wrangler until this account's Analytics
+	 * Engine deploys. D1 rollups are the source of truth without it.
+	 */
 	AI_NEWS_EVENTS?: AnalyticsEngineDataset;
 	NUC7_STATS?: KVNamespace;
 	AI_NEWS_DB?: D1Database;

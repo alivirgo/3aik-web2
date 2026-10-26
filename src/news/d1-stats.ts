@@ -69,7 +69,7 @@ function whereSlug(column = "slug"): string {
 
 /**
  * Dashboard numbers come from daily and hourly rollups, each query LIMITed.
- * Raw events are in Analytics Engine. This function does not scan page_views.
+ * Those D1 rollups are the source of truth. This function does not scan page_views.
  */
 export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuery): Promise<NewsStatsReport> {
 	const report = emptyStatsReport(now);

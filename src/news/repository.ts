@@ -475,7 +475,7 @@ export class D1NewsRepository implements NewsRepository {
 		const aggregated = row.eventKind === "404" || row.eventKind === "feed" || row.bot === 1;
 		if (aggregated && row.eventKind === "404" && !/^\/ai-news\/article\/[a-z0-9-]{1,120}$/.test(row.page)) return;
 		const allowed = await this.budgetOpen(day);
-		writeNewsEvent(this.statsOptions.analytics, {
+		writeNewsEvent({ AI_NEWS_EVENTS: this.statsOptions.analytics }, {
 			kind: row.eventKind,
 			slug: row.slug,
 			host: row.referrerHost,

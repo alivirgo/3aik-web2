@@ -66,12 +66,6 @@
       "simple": { "limit": 30, "period": 60 }
     }
   ],
-  "analytics_engine_datasets": [
-    {
-      "binding": "AI_NEWS_EVENTS",
-      "dataset": "ai_news_events"
-    }
-  ],
   "durable_objects": {
     "bindings": [
       {
