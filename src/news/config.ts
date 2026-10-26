@@ -65,8 +65,10 @@ export const SITE_NAME = "3aik News";
 export const PUBLISHER_NAME = "3aik";
 export const ACCURACY_DISCLAIMER =
 	"3aik.com takes no responsibility for the accuracy of news. Readers should verify claims with the linked original sources.";
-export const DESK_DISCLOSURE =
-	"AI-assisted articles, automatically checked against source and quality rules before publishing. The named authors are editorial personas, not real people.";
+/** One calm line on an article, and the only disclosure on index pages. */
+export const ASSIST_LINE = "Written with AI assistance from cited reporting.";
+/** Publisher image fetch cap. JPEG and WebP at or under 1 MB are copied into the image repo. */
+export const SOURCE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 export const CATEGORY_LABEL: Record<Category, string> = {
 	ai: "AI",
@@ -181,7 +183,7 @@ export interface NewsEnv {
 	 * calls so a tick does not spend neurons. Cleanup still runs when publishing is on.
 	 */
 	AI_NEWS_GENERATOR?: string;
-	/** Bearer token for POST /ai-news/api/ingest. Never commit it. */
+	/** Bearer token for ingest and private /ai-news stats. Never commit it. */
 	AI_NEWS_INGEST_TOKEN?: string;
 }
 
@@ -313,6 +315,3 @@ export function hourStartIso(now: Date): string {
 	return copy.toISOString();
 }
 
-export function personaFooter(name: string): string {
-	return `${name} is an editorial persona, not a real person. This article was written with AI assistance and automatically checked against source and quality rules before publishing.`;
-}

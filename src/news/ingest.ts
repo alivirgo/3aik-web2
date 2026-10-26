@@ -7,6 +7,7 @@ import {
 	MAX_WORDS,
 	MIN_WORDS,
 	SIMILARITY_LIMIT,
+	SOURCE_IMAGE_MAX_BYTES,
 	hourStartIso,
 	siteOrigin,
 	type NewsEnv,
@@ -19,6 +20,7 @@ import {
 	extensionForMime,
 	githubImagePath,
 } from "./github-images";
+import { isBlockedHost, publicHttpsUrl } from "./net";
 import { pingIndexNow } from "./pipeline";
 import { SLOP_PATTERNS, assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
@@ -158,13 +160,6 @@ function faqOf(value: unknown): FaqItem[] | null {
 	return items;
 }
 
-function blockedHost(hostname: string): boolean {
-	const host = hostname.toLowerCase().replace(/\.$/, "");
-	if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
-	if (host.includes(":")) return true;
-	return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
-}
-
 function publicSourceUrl(raw: string): string | null {
 	let normalized: string;
 	try {
@@ -172,14 +167,7 @@ function publicSourceUrl(raw: string): string | null {
 	} catch {
 		return null;
 	}
-	let url: URL;
-	try {
-		url = new URL(normalized);
-	} catch {
-		return null;
-	}
-	if (url.protocol !== "https:" || url.username || url.password || blockedHost(url.hostname)) return null;
-	return normalized;
+	return publicHttpsUrl(normalized);
 }
 
 function decodeBase64(input: string): Uint8Array | null {
@@ -207,13 +195,47 @@ interface ParsedSource {
 	excerpt: string;
 }
 
+interface ParsedSourceImage {
+	url: string;
+	credit: string;
+}
+
 interface ParsedIngest {
 	reasons: string[];
 	draft: ArticleDraft | null;
 	sources: ParsedSource[];
 	image: ParsedImage | null;
+	sourceImage: ParsedSourceImage | null;
 	category: Category | null;
 	authorId: string | null;
+}
+
+const SOURCE_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+
+function validCredit(raw: string): boolean {
+	if (raw.length > 80) return false;
+	if (/[<>]/.test(raw) || /[\u0000-\u001f\u007f]/.test(raw)) return false;
+	return true;
+}
+
+function creditLine(raw: string, publisher: string): string {
+	const clean = raw.replace(/\s+/g, " ").trim();
+	const fallback = publisher ? `Image: ${publisher}` : "Image: Source";
+	if (!clean) return fallback.slice(0, 80);
+	const rest = clean.replace(/^image\s*:\s*/i, "").trim();
+	return (rest ? `Image: ${rest}` : fallback).slice(0, 80);
+}
+
+function readSourceImage(record: Record<string, unknown>, publisher: string): { reasons: string[]; sourceImage: ParsedSourceImage | null } {
+	const hasField = "image_source_url" in record || "imageSourceUrl" in record;
+	const rawUrl = readString(record, "image_source_url", "imageSourceUrl");
+	const rawCredit = readString(record, "image_credit", "imageCredit");
+	if (!hasField) return { reasons: [], sourceImage: null };
+	if (!rawUrl) return { reasons: ["image_source_url"], sourceImage: null };
+	const url = publicHttpsUrl(rawUrl);
+	if (!url) return { reasons: ["image_source_url"], sourceImage: null };
+	if (rawCredit && !validCredit(rawCredit)) return { reasons: ["image_credit"], sourceImage: null };
+	return { reasons: [], sourceImage: { url, credit: creditLine(rawCredit, publisher) } };
 }
 
 function readImage(record: Record<string, unknown>): { reasons: string[]; image: ParsedImage | null } {
@@ -243,7 +265,7 @@ function readImage(record: Record<string, unknown>): { reasons: string[]; image:
 
 function parseIngest(value: unknown): ParsedIngest {
 	const problems: string[] = [];
-	if (!isRecord(value)) return { reasons: ["invalid_json"], draft: null, sources: [], image: null, category: null, authorId: null };
+	if (!isRecord(value)) return { reasons: ["invalid_json"], draft: null, sources: [], image: null, sourceImage: null, category: null, authorId: null };
 	const title = readString(value, "title");
 	const description = readString(value, "dek", "summary", "description");
 	const category = categoryOf(readString(value, "category"));
@@ -297,8 +319,11 @@ function parseIngest(value: unknown): ParsedIngest {
 		}
 	}
 
-	const image = readImage(value);
+	const sourceImage = readSourceImage(value, sources[0]?.publisher ?? "");
+	problems.push(...sourceImage.reasons);
+	const image = sourceImage.sourceImage ? { reasons: [] as string[], image: null } : readImage(value);
 	problems.push(...image.reasons);
+	const alt = readString(value, "image_alt", "imageAlt") || image.image?.alt || "";
 
 	const draft: ArticleDraft = {
 		title,
@@ -307,7 +332,7 @@ function parseIngest(value: unknown): ParsedIngest {
 		keyPoints: keyPoints ?? [],
 		faq: faq ?? [],
 		paragraphs,
-		imageAlt: image.image?.alt ?? "",
+		imageAlt: sourceImage.sourceImage ? alt : (image.image?.alt ?? ""),
 		imagePrompt: "",
 	};
 	return {
@@ -315,6 +340,7 @@ function parseIngest(value: unknown): ParsedIngest {
 		draft: problems.length ? null : draft,
 		sources,
 		image: image.image,
+		sourceImage: sourceImage.sourceImage,
 		category,
 		authorId: author?.id ?? null,
 	};
@@ -344,7 +370,7 @@ async function fetchSourceText(url: string, fetchImpl: typeof fetch): Promise<st
 			} catch {
 				return "";
 			}
-			if (next.protocol !== "https:" || !sameSiteHost(next.hostname, originalHost) || blockedHost(next.hostname)) return "";
+			if (next.protocol !== "https:" || !sameSiteHost(next.hostname, originalHost) || isBlockedHost(next.hostname)) return "";
 			current = next.toString();
 			continue;
 		}
@@ -362,6 +388,99 @@ async function fetchSourceText(url: string, fetchImpl: typeof fetch): Promise<st
 		return stripHtml(body).slice(0, 8_000);
 	}
 	return "";
+}
+
+function mediaType(header: string | null): string {
+	return (header ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+async function readBytesCapped(response: Response, limit: number): Promise<Uint8Array | null> {
+	const reader = response.body?.getReader();
+	if (!reader) return null;
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			total += value.byteLength;
+			if (total > limit) {
+				await reader.cancel();
+				return null;
+			}
+			chunks.push(value);
+		}
+	} catch {
+		await reader.cancel().catch(() => undefined);
+		return null;
+	}
+	const merged = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		merged.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return merged;
+}
+
+interface FetchedImage {
+	bytes: Uint8Array;
+	mime: string;
+	finalUrl: string;
+}
+
+/** Fetch a publisher image. Redirects stay on public https. A failed fetch returns null. */
+async function fetchPublisherImage(url: string, fetchImpl: typeof fetch): Promise<FetchedImage | null> {
+	let current = url;
+	for (let hop = 0; hop < 3; hop += 1) {
+		let response: Response;
+		try {
+			response = await fetchImpl(current, {
+				redirect: "manual",
+				headers: { accept: "image/jpeg, image/png, image/webp, image/*;q=0.8", "user-agent": USER_AGENT },
+				signal: AbortSignal.timeout(8_000),
+			});
+		} catch {
+			return null;
+		}
+		if (response.status >= 300 && response.status < 400) {
+			const location = response.headers.get("location");
+			await response.body?.cancel().catch(() => undefined);
+			if (!location) return null;
+			let next: URL;
+			try {
+				next = new URL(location, current);
+			} catch {
+				return null;
+			}
+			next.hash = "";
+			if (next.protocol !== "https:" || next.username || next.password || isBlockedHost(next.hostname)) return null;
+			current = next.toString();
+			continue;
+		}
+		if (!response.ok) {
+			await response.body?.cancel().catch(() => undefined);
+			return null;
+		}
+		const declared = Number(response.headers.get("content-length") ?? "");
+		if (Number.isFinite(declared) && declared > SOURCE_IMAGE_MAX_BYTES) {
+			await response.body?.cancel().catch(() => undefined);
+			return null;
+		}
+		const type = mediaType(response.headers.get("content-type"));
+		if (!SOURCE_IMAGE_TYPES.has(type)) {
+			await response.body?.cancel().catch(() => undefined);
+			return null;
+		}
+		const bytes = await readBytesCapped(response, SOURCE_IMAGE_MAX_BYTES);
+		if (!bytes) return null;
+		const detected = detectImageType(bytes);
+		const normalized = type === "image/jpg" ? "image/jpeg" : type;
+		if (!detected || detected.mime !== normalized) return null;
+		return { bytes, mime: detected.mime, finalUrl: current };
+	}
+	return null;
 }
 
 async function sourceRefs(sources: ParsedSource[], fetchImpl: typeof fetch): Promise<{ refs: SourceRef[]; reasons: string[] }> {
@@ -432,6 +551,13 @@ function qualityRules() {
 			stored: ["image/jpeg", "image/webp"],
 			stored_max_bytes: GITHUB_IMAGE_MAX_BYTES,
 			note: "Send image.data as base64 or a data URL. PNG and files over the stored cap still publish, without a picture.",
+			source_url: {
+				field: "image_source_url",
+				credit: "image_credit",
+				max_bytes: SOURCE_IMAGE_MAX_BYTES,
+				accepted: ["image/jpeg", "image/png", "image/webp"],
+				note: "https URL of the publisher image, for example og:image. JPEG or WebP at or under the stored cap is copied into the image repo. A larger file or a PNG is hotlinked. A failed fetch publishes with no picture. Private hosts are rejected.",
+			},
 		},
 	};
 }
@@ -551,16 +677,27 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		category: parsed.category,
 		sources: loaded.refs,
 		recent: corpus,
-		illustration: parsed.image ? "uploaded" : "none",
+		illustration: parsed.sourceImage || parsed.image ? "uploaded" : "none",
 	});
 	if (!verdict.ok) return reasons(verdict.reasons);
 
 	const id = crypto.randomUUID();
 	const nowIso = now.toISOString();
 	const suffix = id.slice(0, 8);
-	const picture = parsed.image
-		? await storeImage(env, parsed.image, slug, suffix, nowIso, fetchImpl)
-		: { imageKey: "", imageCommit: "", imageType: "" };
+	let picture = { imageKey: "", imageCommit: "", imageType: "" };
+	let imageCredit = "";
+	let imageSourceUrl = "";
+	if (parsed.sourceImage) {
+		const fetched = await fetchPublisherImage(parsed.sourceImage.url, fetchImpl);
+		if (fetched) {
+			const stored = await storeImage(env, { bytes: fetched.bytes, alt: draft.imageAlt }, slug, suffix, nowIso, fetchImpl);
+			picture = stored.imageKey ? stored : { imageKey: "", imageCommit: "", imageType: fetched.mime };
+			imageCredit = parsed.sourceImage.credit;
+			imageSourceUrl = fetched.finalUrl;
+		}
+	} else if (parsed.image) {
+		picture = await storeImage(env, parsed.image, slug, suffix, nowIso, fetchImpl);
+	}
 	const article: StoredArticle = {
 		id,
 		slug,
@@ -577,8 +714,10 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		related: related.map(({ article: prior }) => ({ slug: prior.slug, title: prior.title })),
 		imageKey: picture.imageKey,
 		imageCommit: picture.imageCommit,
-		imageAlt: picture.imageKey ? draft.imageAlt : "",
+		imageAlt: picture.imageKey || imageSourceUrl ? draft.imageAlt : "",
 		imageType: picture.imageType,
+		imageCredit,
+		imageSourceUrl,
 		publishedAt: nowIso,
 		updatedAt: nowIso,
 	};
@@ -598,7 +737,7 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		slug,
 		category: parsed.category,
 		authorId: author.id,
-		image: Boolean(picture.imageKey),
+		image: Boolean(picture.imageKey || imageSourceUrl),
 		words: wordCount(article.bodyText),
 	}));
 	return json({ url, slug }, 201);

@@ -29,6 +29,8 @@ function article(): StoredArticle {
 		imageCommit: "0123456789abcdef0123456789abcdef01234567",
 		imageAlt: "Abstract stack of paper rectangles in sand and ink blue on a warm gray field.",
 		imageType: "image/jpeg",
+		imageCredit: "",
+		imageSourceUrl: "",
 		publishedAt: "2026-10-23T12:07:00.000Z",
 		updatedAt: "2026-10-23T12:07:00.000Z",
 	};

@@ -1,5 +1,5 @@
 import { AUTHORS, authorById } from "./authors";
-import { ACCURACY_DISCLAIMER, CATEGORY_LABEL, DESK_DISCLOSURE, SITE_NAME, personaFooter } from "./config";
+import { ASSIST_LINE, CATEGORY_LABEL, SITE_NAME } from "./config";
 import type { Category, SitemapEntry, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
 import { escapeMarkdown, rfc822, stripEditorialDashes, xmlEscape } from "./text";
@@ -13,14 +13,9 @@ export function renderRss(origin: string, articles: StoredArticle[], category?: 
 	const title = category ? `${SITE_NAME}: ${CATEGORY_LABEL[category]}` : SITE_NAME;
 	const items = articles.map((article) => {
 		const author = authorById(article.authorId);
-		const name = author?.name ?? "Desk persona";
+		const name = author?.name ?? "Desk";
 		const url = articleUrl(origin, article.slug);
-		const description = [
-			article.description,
-			article.keyPoints.join(" "),
-			personaFooter(name),
-			ACCURACY_DISCLAIMER,
-		].join(" ");
+		const description = article.description;
 		return `<item>
 <title>${xmlEscape(stripEditorialDashes(article.title))}</title>
 <link>${xmlEscape(url)}</link>
@@ -36,7 +31,7 @@ export function renderRss(origin: string, articles: StoredArticle[], category?: 
 <channel>
 <title>${xmlEscape(title)}</title>
 <link>${xmlEscape(link)}</link>
-<description>${xmlEscape(`${DESK_DISCLOSURE} ${ACCURACY_DISCLAIMER}`)}</description>
+<description>${xmlEscape(ASSIST_LINE)}</description>
 <language>en</language>
 <lastBuildDate>${xmlEscape(new Date().toUTCString())}</lastBuildDate>
 ${items}
@@ -50,9 +45,9 @@ export function renderAtom(origin: string, articles: StoredArticle[], category?:
 	const updated = articles[0]?.publishedAt ?? new Date().toISOString();
 	const entries = articles.map((article) => {
 		const author = authorById(article.authorId);
-		const name = author?.name ?? "Desk persona";
+		const name = author?.name ?? "Desk";
 		const url = articleUrl(origin, article.slug);
-		const summary = `${article.description} ${personaFooter(name)} ${ACCURACY_DISCLAIMER}`;
+		const summary = article.description;
 		return `<entry>
 <title>${xmlEscape(stripEditorialDashes(article.title))}</title>
 <link href="${xmlEscape(url)}" rel="alternate" type="text/html"/>
@@ -70,7 +65,7 @@ export function renderAtom(origin: string, articles: StoredArticle[], category?:
 <link href="${xmlEscape(`${link}${category ? "" : ""}/atom.xml`)}" rel="self"/>
 <id>${xmlEscape(link)}</id>
 <updated>${xmlEscape(updated)}</updated>
-<subtitle>${xmlEscape(`${DESK_DISCLOSURE} ${ACCURACY_DISCLAIMER}`)}</subtitle>
+<subtitle>${xmlEscape(ASSIST_LINE)}</subtitle>
 ${entries}
 </feed>`;
 }
@@ -118,7 +113,7 @@ export function renderLlmsTxt(origin: string, articles: StoredArticle[]): string
 	}).join("\n");
 	return `# 3aik News
 
-> News pages on 3aik.com are written with AI assistance by named editorial personas and checked before publishing. The personas are not real people. ${ACCURACY_DISCLAIMER}
+> ${ASSIST_LINE}
 
 ## Read this first
 

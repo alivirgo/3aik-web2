@@ -1,6 +1,7 @@
 import { ADSENSE_HOSTS } from "./adsense";
 import { ingestApiPath } from "./news/ingest";
-import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
+import { isNewsCollectPath } from "./news/collect";
+import { handleNewsRequest, isNewsRequestPath, isNewsStatsPath, publishScheduled } from "./news/routes";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -138,7 +139,7 @@ export default {
 
 		try {
 			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
-				if (!ingestApiPath(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
+				if (!ingestApiPath(url.pathname) && !isNewsStatsPath(url.pathname) && !isNewsCollectPath(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
 					return methodNotAllowed(["GET", "HEAD"]);
 				}
 				return handleNewsRequest(request, env, {}, ctx);

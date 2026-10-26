@@ -2,6 +2,7 @@ import { ADSENSE_HOSTS } from "../adsense";
 import type { Env } from "../types";
 import { publishingEnabled, siteOrigin } from "./config";
 import {
+	externalImageOrigins,
 	renderAbout,
 	renderArticle,
 	renderAuthor,
@@ -12,6 +13,9 @@ import {
 } from "./html";
 import { loadPublicImage, parseMediaRequest } from "./github-images";
 import { handleIngestRequest, ingestApiPath } from "./ingest";
+import { beaconScript, handleCollectRequest, isNewsCollectPath } from "./collect";
+import { dailyVisitorHash, isFeedPath, isTrackedMiss, pageViewFromRequest, trackedPage, type PageViewEvent } from "./pageviews";
+import { handleNewsStatsRequest, isNewsStatsPath } from "./stats";
 import { runPublishCycle } from "./pipeline";
 import { D1NewsRepository, type NewsRepository } from "./repository";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap } from "./syndication";
@@ -43,7 +47,19 @@ function normalizePath(pathname: string): string {
  * Image responses themselves cannot load anything.
  */
 const PAGE_CSP = "default-src 'self'; base-uri 'self'; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'none'; style-src 'self'; upgrade-insecure-requests";
-const HTML_CSP = `default-src 'self'; base-uri 'self'; connect-src ${ADSENSE_HOSTS}; font-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' ${ADSENSE_HOSTS}; object-src 'none'; script-src ${ADSENSE_HOSTS}; style-src 'self'; upgrade-insecure-requests`;
+const SITEMAP_ARTICLE_LIMIT = 50_000;
+const FEED_ARTICLE_LIMIT = 5_000;
+
+function freshNonce(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function htmlCsp(imageOrigins: string[], nonce: string): string {
+	const extra = imageOrigins.length ? ` ${imageOrigins.join(" ")}` : "";
+	return `default-src 'self'; base-uri 'self'; connect-src 'self' ${ADSENSE_HOSTS}; font-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' ${ADSENSE_HOSTS}${extra}; object-src 'none'; script-src ${ADSENSE_HOSTS} 'nonce-${nonce}'; style-src 'self'; upgrade-insecure-requests`;
+}
 const IMAGE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'";
 
 function securityHeaders(contentType: string, cache: string, csp = PAGE_CSP): Headers {
@@ -59,10 +75,14 @@ function securityHeaders(contentType: string, cache: string, csp = PAGE_CSP): He
 	return headers;
 }
 
-function htmlResponse(request: Request, body: string, status: number, cache: string): Response {
-	const headers = securityHeaders("text/html; charset=utf-8", cache, HTML_CSP);
+function htmlResponse(request: Request, body: string, status: number, cache: string, imageOrigins: string[] = []): Response {
+	const nonce = freshNonce();
+	const path = normalizePath(new URL(request.url).pathname);
+	const tracked = status === 200 ? trackedPage(path) : null;
+	const html = tracked ? body.replace("</body>", `${beaconScript(nonce, tracked.page, tracked.slug)}</body>`) : body;
+	const headers = securityHeaders("text/html; charset=utf-8", cache, htmlCsp(imageOrigins, nonce));
 	if (request.method === "HEAD") return new Response(null, { status, headers });
-	return new Response(body, { status, headers });
+	return new Response(html, { status, headers });
 }
 
 function xmlResponse(request: Request, body: string, contentType: string): Response {
@@ -141,28 +161,80 @@ async function loadSitemap(repo: NewsRepository | null, limit: number): Promise<
 	}
 }
 
+function resolveRepo(env: Env, override: NewsRequestDeps): NewsRepository | null {
+	if ("repo" in override) return override.repo ?? null;
+	return env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB) : null;
+}
+
+function scheduleAnalytics(ctx: ExecutionContext | undefined, request: Request, env: Env, override: NewsRequestDeps, path: string, status: number): void {
+	if (!ctx || request.method !== "GET") return;
+	const repo = resolveRepo(env, override);
+	if (!repo) return;
+	let siteHost = "3aik.com";
+	try {
+		siteHost = new URL(siteOrigin(env, request)).hostname;
+	} catch {
+		siteHost = "3aik.com";
+	}
+	const now = override.now ?? new Date();
+	let event: PageViewEvent | null = null;
+	if (status === 200) {
+		const tracked = trackedPage(path);
+		if (tracked) event = pageViewFromRequest(request, tracked, now, siteHost);
+		else if (isFeedPath(path)) {
+			event = pageViewFromRequest(request, { slug: "", page: path }, now, siteHost);
+			event.eventKind = "feed";
+		}
+	} else if (status === 404 && isTrackedMiss(path)) {
+		event = pageViewFromRequest(request, { slug: "", page: path }, now, siteHost);
+		event.eventKind = "404";
+	}
+	if (!event) return;
+	const address = request.headers.get("cf-connecting-ip") ?? "";
+	const userAgent = request.headers.get("user-agent") ?? "";
+	event.visitorHash = dailyVisitorHash(env.AI_NEWS_INGEST_TOKEN ?? "", address, userAgent, event.viewedAt.slice(0, 10));
+	const work = repo.recordPageView(event).catch((error: unknown) => {
+		console.error(JSON.stringify({
+			message: "ai-news pageview failed",
+			error: error instanceof Error ? error.message : "pageview",
+		}));
+	});
+	ctx.waitUntil(work);
+}
+
 export async function handleNewsRequest(request: Request, env: Env, override: NewsRequestDeps = {}, ctx?: ExecutionContext): Promise<Response> {
 	const earlyPath = normalizePath(new URL(request.url).pathname);
 	if (ingestApiPath(earlyPath)) {
-		const repo = "repo" in override ? (override.repo ?? null) : (env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB) : null);
 		return handleIngestRequest(request, env, {
-			repo,
+			repo: resolveRepo(env, override),
 			fetchImpl: override.fetchImpl ?? fetch,
 			now: override.now,
 		});
 	}
+	if (isNewsStatsPath(earlyPath)) {
+		return handleNewsStatsRequest(request, env, resolveRepo(env, override), siteOrigin(env, request), override.now);
+	}
+	if (isNewsCollectPath(earlyPath)) {
+		return handleCollectRequest(request, env, resolveRepo(env, override), siteOrigin(env, request), ctx, override.now);
+	}
 	const hit = await matchEdge(request);
-	if (hit) return hit;
+	if (hit) {
+		scheduleAnalytics(ctx, request, env, override, earlyPath, hit.status);
+		return hit;
+	}
 	const response = await buildNewsResponse(request, env, override);
+	scheduleAnalytics(ctx, request, env, override, earlyPath, response.status);
 	await putEdge(request, response, ctx);
 	return response;
 }
+
+export { isNewsStatsPath };
 
 async function buildNewsResponse(request: Request, env: Env, override: NewsRequestDeps): Promise<Response> {
 	const url = new URL(request.url);
 	const origin = siteOrigin(env, request);
 	const path = normalizePath(url.pathname);
-	const repo = "repo" in override ? (override.repo ?? null) : (env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB) : null);
+	const repo = resolveRepo(env, override);
 	const fetchImpl = override.fetchImpl ?? fetch;
 
 	try {
@@ -177,24 +249,24 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 
 		if (path === "/ai-news") {
 			const articles = await loadRecent(repo, 24);
-			return htmlResponse(request, renderIndex(origin, articles), 200, "public, max-age=60");
+			return htmlResponse(request, renderIndex(origin, articles), 200, "public, max-age=60", externalImageOrigins(origin, articles));
 		}
 		if (path === "/ai-news/about") return htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/disclaimer") return htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/sitemap.xml") {
-			const articles = await loadSitemap(repo, 1000);
+			const articles = await loadSitemap(repo, SITEMAP_ARTICLE_LIMIT);
 			return xmlResponse(request, renderSitemap(origin, articles), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/news-sitemap.xml") {
-			const articles = await loadSitemap(repo, 200);
+			const articles = await loadSitemap(repo, FEED_ARTICLE_LIMIT);
 			return xmlResponse(request, renderNewsSitemap(origin, articles, new Date()), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/feed.xml") {
-			const articles = await loadRecent(repo, 40);
+			const articles = await loadRecent(repo, FEED_ARTICLE_LIMIT);
 			return xmlResponse(request, renderRss(origin, articles), "application/rss+xml; charset=utf-8");
 		}
 		if (path === "/ai-news/atom.xml") {
-			const articles = await loadRecent(repo, 40);
+			const articles = await loadRecent(repo, FEED_ARTICLE_LIMIT);
 			return xmlResponse(request, renderAtom(origin, articles), "application/atom+xml; charset=utf-8");
 		}
 
@@ -237,7 +309,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 		const feedMatch = /^\/ai-news\/(ai|technology|fashion|showbiz)\/(feed\.xml|atom\.xml)$/.exec(path);
 		const feedCategory = feedMatch?.[1] ?? "";
 		if (feedMatch && isCategory(feedCategory)) {
-			const articles = await loadRecent(repo, 40, feedCategory);
+			const articles = await loadRecent(repo, FEED_ARTICLE_LIMIT, feedCategory);
 			if (feedMatch[2] === "atom.xml") {
 				return xmlResponse(request, renderAtom(origin, articles, feedCategory), "application/atom+xml; charset=utf-8");
 			}
@@ -248,7 +320,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const category = path.slice("/ai-news/".length);
 			if (isCategory(category)) {
 				const articles = await loadRecent(repo, 24, category);
-				return htmlResponse(request, renderCategory(origin, category, articles), 200, "public, max-age=60");
+				return htmlResponse(request, renderCategory(origin, category, articles), 200, "public, max-age=60", externalImageOrigins(origin, articles));
 			}
 		}
 
@@ -264,7 +336,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			}
 			const page = renderAuthor(origin, authorMatch[1], articles);
 			if (!page) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
-			return htmlResponse(request, page, 200, "public, max-age=120");
+			return htmlResponse(request, page, 200, "public, max-age=120", externalImageOrigins(origin, articles));
 		}
 
 		const articleMatch = /^\/ai-news\/article\/([a-z0-9-]{1,120})$/.exec(path);
@@ -280,7 +352,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			}
 			if (!article) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
 			const latest = await loadRecent(repo, 8);
-			return htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120");
+			return htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120", externalImageOrigins(origin, [article, ...latest]));
 		}
 
 		return htmlResponse(request, renderNotFound(origin), 404, "no-store");

@@ -481,6 +481,8 @@ function existing(url: string, publishedAt: string): StoredArticle {
 		imageCommit: "",
 		imageAlt: "Old abstract squares.",
 		imageType: "image/png",
+		imageCredit: "",
+		imageSourceUrl: "",
 		publishedAt,
 		updatedAt: publishedAt,
 	};

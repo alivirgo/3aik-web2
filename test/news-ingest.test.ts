@@ -339,6 +339,8 @@ describe("ingest publish", () => {
 			imageCommit: "",
 			imageAlt: "",
 			imageType: "",
+			imageCredit: "",
+			imageSourceUrl: "",
 			publishedAt: "2026-10-01T00:00:00.000Z",
 			updatedAt: "2026-10-01T00:00:00.000Z",
 		} satisfies StoredArticle;
@@ -402,5 +404,177 @@ describe("ingest publish", () => {
 			headers: { authorization: `Bearer ${TOKEN}` },
 		}), state.env, { repo: state.repo, now: NOW });
 		expect(wrong.status).toBe(405);
+	});
+});
+
+describe("publisher images", () => {
+	function imageFetch(routes: Record<string, Response | (() => Response)>) {
+		const seen: string[] = [];
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			seen.push(url);
+			if (url.startsWith("https://api.github.com/")) {
+				return new Response(JSON.stringify({ commit: { sha: COMMIT_SHA } }), {
+					status: 201,
+					headers: { "x-ratelimit-remaining": "4000" },
+				});
+			}
+			const match = routes[url];
+			if (match) return typeof match === "function" ? match() : match;
+			if (url.startsWith("https://example.com/")) {
+				return new Response(EXCERPT, { status: 200, headers: { "content-type": "text/plain" } });
+			}
+			return new Response("no", { status: 404, headers: { "content-type": "text/plain" } });
+		});
+		return { fetchImpl: fetchImpl as typeof fetch, seen };
+	}
+
+	function fields(overrides: Record<string, unknown> = {}) {
+		return articleFields({
+			image_alt: ALT,
+			body_markdown: [1, 2, 3, 4, 5, 6].map((index) => paragraph(index, "WWD")).join("\n\n"),
+			sources: [{
+				url: "https://example.com/source-photo",
+				publisher: "WWD",
+				title: "Vendor posts a short Thursday bulletin",
+				excerpt: EXCERPT,
+			}],
+			...overrides,
+		});
+	}
+
+	it("stores a publisher JPEG and keeps the credit", async () => {
+		const state = desk();
+		const imageUrl = "https://images.example.net/photo.jpg";
+		const { fetchImpl, seen } = imageFetch({
+			[imageUrl]: new Response(TINY_JPEG, { status: 200, headers: { "content-type": "image/jpeg" } }),
+		});
+		state.fetchImpl = fetchImpl;
+		const { response } = await send(post(fields({ image_source_url: imageUrl, image_credit: "Image: WWD" })), state);
+		expect(response.status).toBe(201);
+		const article = state.repo.articles[0];
+		expect(article?.imageKey.endsWith(".jpg")).toBe(true);
+		expect(article?.imageCommit).toBe(COMMIT_SHA);
+		expect(article?.imageCredit).toBe("Image: WWD");
+		expect(article?.imageSourceUrl).toBe(imageUrl);
+		expect(article?.imageAlt).toBe(ALT);
+		expect(seen.some((url) => url === imageUrl)).toBe(true);
+		const page = await handleNewsRequest(
+			new Request(`https://3aik.test/ai-news/article/${article?.slug}`),
+			state.env,
+			{ repo: state.repo },
+		);
+		const html = await page.text();
+		expect(html).toContain(`/ai-news/media/${COMMIT_SHA}/`);
+		expect(html).toContain("<figcaption>Image: WWD</figcaption>");
+		expect(html).not.toContain("images.example.net");
+		expect(page.headers.get("content-security-policy")).not.toContain("images.example.net");
+		expect(page.headers.get("content-security-policy")).toContain("pagead2.googlesyndication.com");
+	});
+
+	it("hotlinks when the file cannot be stored and drops the picture when the fetch fails", async () => {
+		const pngUrl = "https://images.example.net/photo.png";
+		const pngState = desk();
+		pngState.fetchImpl = imageFetch({
+			[pngUrl]: new Response(TINY_PNG, { status: 200, headers: { "content-type": "image/png" } }),
+		}).fetchImpl;
+		const png = await send(post(fields({ image_source_url: pngUrl, image_credit: "WWD" })), pngState);
+		expect(png.response.status).toBe(201);
+		expect(pngState.repo.articles[0]?.imageKey).toBe("");
+		expect(pngState.repo.articles[0]?.imageCredit).toBe("Image: WWD");
+		expect(pngState.repo.articles[0]?.imageSourceUrl).toBe(pngUrl);
+		const page = await handleNewsRequest(
+			new Request(`https://3aik.test/ai-news/article/${pngState.repo.articles[0]?.slug}`),
+			pngState.env,
+			{ repo: pngState.repo },
+		);
+		const html = await page.text();
+		expect(html).toContain(`src="${pngUrl}"`);
+		expect(html).toContain("<figcaption>Image: WWD</figcaption>");
+		expect(page.headers.get("content-security-policy")).toContain("https://images.example.net");
+
+		const missing = desk();
+		missing.fetchImpl = imageFetch({}).fetchImpl;
+		const missed = await send(post(fields({
+			image_source_url: "https://images.example.net/missing.jpg",
+			sources: [{ url: "https://example.com/missing-photo", publisher: "WWD", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
+		})), missing);
+		expect(missed.response.status).toBe(201);
+		expect(missing.repo.articles[0]?.imageKey).toBe("");
+		expect(missing.repo.articles[0]?.imageSourceUrl).toBe("");
+		expect(missing.repo.articles[0]?.imageCredit).toBe("");
+	});
+
+	it("rejects private and non-https image URLs and does not follow an internal redirect", async () => {
+		for (const imageUrl of [
+			"http://images.example.net/photo.jpg",
+			"https://127.0.0.1/photo.jpg",
+			"https://10.1.2.3/photo.jpg",
+			"https://169.254.169.254/latest/meta-data",
+			"https://localhost/photo.jpg",
+			"https://metadata.google.internal/computeMetadata/v1/",
+			"https://user:pass@images.example.net/photo.jpg",
+			"https://2130706433/photo.jpg",
+			"https://169.254.169.254.nip.io/photo.jpg",
+		]) {
+			const state = desk();
+			const { response } = await send(post(fields({ image_source_url: imageUrl })), state);
+			expect(response.status, imageUrl).toBe(422);
+			const body = await response.json() as { reasons: string[] };
+			expect(body.reasons, imageUrl).toContain("image_source_url");
+			expect(state.fetchImpl).not.toHaveBeenCalled();
+		}
+
+		const state = desk();
+		const seen: string[] = [];
+		state.fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			seen.push(url);
+			if (url === "https://images.example.net/jump") {
+				return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data" } });
+			}
+			if (url.startsWith("https://example.com/")) return new Response(EXCERPT, { headers: { "content-type": "text/plain" } });
+			return new Response("no", { status: 404 });
+		}) as typeof fetch;
+		const { response } = await send(post(fields({ image_source_url: "https://images.example.net/jump" })), state);
+		expect(response.status).toBe(201);
+		expect(state.repo.articles[0]?.imageSourceUrl).toBe("");
+		expect(seen.some((url) => url.includes("169.254.169.254"))).toBe(false);
+
+		const huge = desk();
+		huge.fetchImpl = imageFetch({
+			"https://images.example.net/huge.jpg": new Response(TINY_JPEG, {
+				status: 200,
+				headers: { "content-type": "image/jpeg", "content-length": String(5 * 1024 * 1024 + 1) },
+			}),
+		}).fetchImpl;
+		const oversized = await send(post(fields({
+			image_source_url: "https://images.example.net/huge.jpg",
+			sources: [{ url: "https://example.com/huge-photo", publisher: "WWD", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
+		})), huge);
+		expect(oversized.response.status).toBe(201);
+		expect(huge.repo.articles[0]?.imageKey).toBe("");
+		expect(huge.repo.articles[0]?.imageSourceUrl).toBe("");
+	});
+
+	it("prefers the publisher image over uploaded bytes and still checks alt text", async () => {
+		const state = desk();
+		const imageUrl = "https://images.example.net/chosen.jpg";
+		state.fetchImpl = imageFetch({
+			[imageUrl]: new Response(TINY_JPEG, { status: 200, headers: { "content-type": "image/jpeg" } }),
+		}).fetchImpl;
+		const { response } = await send(post(fields({
+			image_source_url: imageUrl,
+			image: { data: Buffer.from(TINY_PNG).toString("base64"), alt: ALT },
+		})), state);
+		expect(response.status).toBe(201);
+		expect(state.repo.articles[0]?.imageKey.endsWith(".jpg")).toBe(true);
+
+		const short = desk();
+		const rejected = await send(post(fields({ image_source_url: imageUrl, image_alt: "too short" })), short);
+		expect(rejected.response.status).toBe(422);
+		const reasons = await rejected.response.json() as { reasons: string[] };
+		expect(reasons.reasons).toContain("image_alt");
+		expect(short.repo.articles).toHaveLength(0);
 	});
 });

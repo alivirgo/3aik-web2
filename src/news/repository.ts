@@ -1,5 +1,8 @@
+import { authorById } from "./authors";
+import type { ArticleCatalogEntry, NewsStatsReport, PageViewEvent, StatsQuery } from "./pageviews";
+import { emptyStatsReport, normalizeEvent, rawRetentionCutoff, summarizePageViews } from "./pageviews";
 import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
-import { isCategory } from "./text";
+import { isCategory, wordCount } from "./text";
 
 export interface NewsRepository {
 	listRecent(limit: number, category?: Category): Promise<StoredArticle[]>;
@@ -24,6 +27,8 @@ export interface NewsRepository {
 	listRecentSourceUrls(limit: number): Promise<string[]>;
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
 	consumeIngest(bucket: string, limit: number): Promise<boolean>;
+	recordPageView(event: PageViewEvent): Promise<void>;
+	pageViewReport(now: Date, query?: StatsQuery): Promise<NewsStatsReport>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -66,49 +71,84 @@ export function articleFromRow(row: Record<string, unknown>): StoredArticle | nu
 		imageCommit: readString(row, "image_commit"),
 		imageAlt: readString(row, "image_alt"),
 		imageType: readString(row, "image_type"),
+		imageCredit: readString(row, "image_credit"),
+		imageSourceUrl: readString(row, "image_source_url"),
 		publishedAt: readString(row, "published_at"),
 		updatedAt: readString(row, "updated_at"),
 	};
 }
 
-const ARTICLE_COLUMNS = `id, slug, title, description, category, tags_json, author_id, body_html, body_text,
+const ARTICLE_COLUMNS_FULL = `id, slug, title, description, category, tags_json, author_id, body_html, body_text,
+	key_points_json, faq_json, sources_json, related_json, image_key, image_commit, image_alt, image_type,
+	image_credit, image_source_url, published_at, updated_at`;
+
+const ARTICLE_COLUMNS_LEGACY = `id, slug, title, description, category, tags_json, author_id, body_html, body_text,
 	key_points_json, faq_json, sources_json, related_json, image_key, image_commit, image_alt, image_type, published_at, updated_at`;
 
+function missingSchema(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /no such column|no such table/i.test(message);
+}
+
+function missingColumn(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /no such column/i.test(message);
+}
+
 export class D1NewsRepository implements NewsRepository {
+	private fullColumns: boolean | null = null;
+
 	constructor(private readonly db: D1Database) {}
 
+	private async articleColumns(): Promise<string> {
+		if (this.fullColumns === true) return ARTICLE_COLUMNS_FULL;
+		if (this.fullColumns === false) return ARTICLE_COLUMNS_LEGACY;
+		try {
+			await this.db.prepare("SELECT image_credit, image_source_url FROM articles LIMIT 1").first();
+			this.fullColumns = true;
+			return ARTICLE_COLUMNS_FULL;
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+			this.fullColumns = false;
+			return ARTICLE_COLUMNS_LEGACY;
+		}
+	}
+
 	private async rows(sql: string, ...bindings: unknown[]): Promise<StoredArticle[]> {
-		const result = await this.db.prepare(sql).bind(...bindings).all<Record<string, unknown>>();
+		const columns = await this.articleColumns();
+		const result = await this.db.prepare(sql.replaceAll("{{columns}}", columns)).bind(...bindings).all<Record<string, unknown>>();
 		return (result.results ?? []).map((row) => articleFromRow(row)).filter((article): article is StoredArticle => Boolean(article));
 	}
 
 	async listRecent(limit: number, category?: Category): Promise<StoredArticle[]> {
 		if (category) {
 			return this.rows(
-				`SELECT ${ARTICLE_COLUMNS} FROM articles WHERE category = ? ORDER BY published_at DESC LIMIT ?`,
+				`SELECT {{columns}} FROM articles WHERE category = ? ORDER BY published_at DESC LIMIT ?`,
 				category,
 				limit,
 			);
 		}
-		return this.rows(`SELECT ${ARTICLE_COLUMNS} FROM articles ORDER BY published_at DESC LIMIT ?`, limit);
+		return this.rows(`SELECT {{columns}} FROM articles ORDER BY published_at DESC LIMIT ?`, limit);
 	}
 
 	async listByAuthor(authorId: string, limit: number): Promise<StoredArticle[]> {
 		return this.rows(
-			`SELECT ${ARTICLE_COLUMNS} FROM articles WHERE author_id = ? ORDER BY published_at DESC LIMIT ?`,
+			`SELECT {{columns}} FROM articles WHERE author_id = ? ORDER BY published_at DESC LIMIT ?`,
 			authorId,
 			limit,
 		);
 	}
 
 	async getBySlug(slug: string): Promise<StoredArticle | null> {
-		const row = await this.db.prepare(`SELECT ${ARTICLE_COLUMNS} FROM articles WHERE slug = ?`).bind(slug).first<Record<string, unknown>>();
+		const columns = await this.articleColumns();
+		const row = await this.db.prepare(`SELECT ${columns} FROM articles WHERE slug = ?`).bind(slug).first<Record<string, unknown>>();
 		const record = asRecord(row);
 		return record ? articleFromRow(record) : null;
 	}
 
 	async getById(id: string): Promise<StoredArticle | null> {
-		const row = await this.db.prepare(`SELECT ${ARTICLE_COLUMNS} FROM articles WHERE id = ?`).bind(id).first<Record<string, unknown>>();
+		const columns = await this.articleColumns();
+		const row = await this.db.prepare(`SELECT ${columns} FROM articles WHERE id = ?`).bind(id).first<Record<string, unknown>>();
 		const record = asRecord(row);
 		return record ? articleFromRow(record) : null;
 	}
@@ -165,9 +205,9 @@ export class D1NewsRepository implements NewsRepository {
 		return { authors: authorMap, categories: categoryMap };
 	}
 
-	async insert(article: StoredArticle): Promise<void> {
-		const statements = [
-			this.db
+	private articleInsert(article: StoredArticle, full: boolean): D1PreparedStatement {
+		if (!full) {
+			return this.db
 				.prepare(
 					`INSERT INTO articles (
 						id, slug, title, description, category, tags_json, author_id, body_html, body_text,
@@ -195,7 +235,44 @@ export class D1NewsRepository implements NewsRepository {
 					article.imageType,
 					article.publishedAt,
 					article.updatedAt,
-				),
+				);
+		}
+		return this.db
+			.prepare(
+				`INSERT INTO articles (
+					id, slug, title, description, category, tags_json, author_id, body_html, body_text,
+					key_points_json, faq_json, sources_json, related_json, image_key, image_commit, image_alt, image_type,
+					image_credit, image_source_url, published_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.bind(
+				article.id,
+				article.slug,
+				article.title,
+				article.description,
+				article.category,
+				JSON.stringify(article.tags),
+				article.authorId,
+				article.bodyHtml,
+				article.bodyText,
+				JSON.stringify(article.keyPoints),
+				JSON.stringify(article.faq),
+				JSON.stringify(article.sources),
+				JSON.stringify(article.related),
+				article.imageKey,
+				article.imageCommit,
+				article.imageAlt,
+				article.imageType,
+				article.imageCredit,
+				article.imageSourceUrl,
+				article.publishedAt,
+				article.updatedAt,
+			);
+	}
+
+	private insertBatch(article: StoredArticle, full: boolean): D1PreparedStatement[] {
+		return [
+			this.articleInsert(article, full),
 			...article.sources.map((source) =>
 				this.db
 					.prepare("INSERT INTO article_sources (source_url, article_id, outlet, source_title) VALUES (?, ?, ?, ?)")
@@ -218,7 +295,18 @@ export class D1NewsRepository implements NewsRepository {
 				)
 				.bind(article.category, article.publishedAt),
 		];
-		await this.db.batch(statements);
+	}
+
+	async insert(article: StoredArticle): Promise<void> {
+		const full = this.fullColumns !== false;
+		try {
+			await this.db.batch(this.insertBatch(article, full));
+			if (full) this.fullColumns = true;
+		} catch (error) {
+			if (!full || !missingSchema(error)) throw error;
+			this.fullColumns = false;
+			await this.db.batch(this.insertBatch(article, false));
+		}
 	}
 
 	async tryLock(untilIso: string, nowIso: string): Promise<boolean> {
@@ -339,10 +427,355 @@ export class D1NewsRepository implements NewsRepository {
 		]);
 		return (results[1]?.meta?.changes ?? 0) > 0;
 	}
+
+	async recordPageView(event: PageViewEvent): Promise<void> {
+		const row = normalizeEvent(event);
+		try {
+			await this.insertPageView(row, true);
+		} catch (error) {
+			if (!missingColumn(error)) throw error;
+			await this.insertPageView(row, false);
+		}
+		try {
+			await this.rollupPageView(row);
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
+		try {
+			await this.pruneRawEvents(new Date());
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
+	}
+
+	private async insertPageView(event: ReturnType<typeof normalizeEvent>, full: boolean): Promise<void> {
+		if (!full) {
+			await this.db
+				.prepare(
+					`INSERT INTO page_views (
+						viewed_at, slug, page, referrer_host, referrer_path, source_class, search_engine, search_query,
+						utm_source, utm_medium, utm_campaign, utm_term, country, device_class, bot
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.bind(
+					event.viewedAt,
+					event.slug,
+					event.page,
+					event.referrerHost,
+					event.referrerPath,
+					event.sourceClass,
+					event.searchEngine,
+					event.searchQuery,
+					event.utmSource,
+					event.utmMedium,
+					event.utmCampaign,
+					event.utmTerm,
+					event.country,
+					event.deviceClass,
+					event.bot,
+				)
+				.run();
+			return;
+		}
+		await this.db
+			.prepare(
+				`INSERT INTO page_views (
+					viewed_at, slug, page, referrer_host, referrer_path, source_class, search_engine, search_query,
+					utm_source, utm_medium, utm_campaign, utm_term, country, region, city, continent, device_class,
+					browser, os, screen, lang, bot, bot_name, visitor_hash, hour_utc, hour_karachi, event_kind,
+					engaged_ms, scroll_pct, seen_before, click_host, click_path, click_kind
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.bind(
+				event.viewedAt,
+				event.slug,
+				event.page,
+				event.referrerHost,
+				event.referrerPath,
+				event.sourceClass,
+				event.searchEngine,
+				event.searchQuery,
+				event.utmSource,
+				event.utmMedium,
+				event.utmCampaign,
+				event.utmTerm,
+				event.country,
+				event.region,
+				event.city,
+				event.continent,
+				event.deviceClass,
+				event.browser,
+				event.os,
+				event.screen,
+				event.lang,
+				event.bot,
+				event.botName,
+				event.visitorHash,
+				event.hourUtc,
+				event.hourKarachi,
+				event.eventKind,
+				event.engagedMs,
+				event.scrollPct,
+				event.returning,
+				event.clickHost,
+				event.clickPath,
+				event.clickKind,
+			)
+			.run();
+	}
+
+	private async rollupPageView(event: ReturnType<typeof normalizeEvent>): Promise<void> {
+		const day = event.viewedAt.slice(0, 10);
+		if (event.eventKind === "view") {
+			let uniques = 0;
+			if (event.bot === 0 && event.visitorHash) {
+				const inserted = await this.db
+					.prepare(`INSERT OR IGNORE INTO stats_visitor_day (day, visitor_hash) VALUES (?, ?)`)
+					.bind(day, event.visitorHash)
+					.run();
+				uniques = inserted.meta?.changes ?? 0;
+			}
+			await this.db
+				.prepare(
+					`INSERT INTO stats_daily (day, views, uniques, bots, engaged_ms, engage_n)
+					 VALUES (?, ?, ?, ?, 0, 0)
+					 ON CONFLICT(day) DO UPDATE SET
+					 views = views + excluded.views,
+					 uniques = uniques + excluded.uniques,
+					 bots = bots + excluded.bots`,
+				)
+				.bind(day, event.bot === 0 ? 1 : 0, uniques, event.bot === 1 ? 1 : 0)
+				.run();
+			return;
+		}
+		if (event.eventKind === "engage" && event.bot === 0) {
+			await this.db
+				.prepare(
+					`INSERT INTO stats_daily (day, views, uniques, bots, engaged_ms, engage_n)
+					 VALUES (?, 0, 0, 0, ?, 1)
+					 ON CONFLICT(day) DO UPDATE SET
+					 engaged_ms = engaged_ms + excluded.engaged_ms,
+					 engage_n = engage_n + 1`,
+				)
+				.bind(day, event.engagedMs)
+				.run();
+		}
+	}
+
+	private async pruneRawEvents(now: Date): Promise<void> {
+		const until = new Date(now.getTime() + 60_000).toISOString();
+		const lock = await this.db
+			.prepare(
+				`INSERT INTO runtime_lock (name, locked_until) VALUES ('stats-prune', ?)
+				 ON CONFLICT(name) DO UPDATE SET locked_until = excluded.locked_until
+				 WHERE runtime_lock.locked_until <= ?`,
+			)
+			.bind(until, now.toISOString())
+			.run();
+		if ((lock.meta?.changes ?? 0) < 1) return;
+		await this.db
+			.prepare(`DELETE FROM page_views WHERE id IN (SELECT id FROM page_views WHERE viewed_at < ? LIMIT 200)`)
+			.bind(rawRetentionCutoff(now))
+			.run();
+	}
+
+	async pageViewReport(now: Date, query: StatsQuery = { from: null, to: null, slug: null }): Promise<NewsStatsReport> {
+		try {
+			return await this.pageViewReportDetailed(now, query);
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+			const report = emptyStatsReport(now);
+			report.ready = false;
+			return report;
+		}
+	}
+
+	private async pageViewReportDetailed(now: Date, query: StatsQuery): Promise<NewsStatsReport> {
+		const bounds = reportBounds(query, now);
+		const rows = await this.db
+			.prepare(
+				`SELECT viewed_at, slug, page, referrer_host, referrer_path, source_class, search_engine, search_query,
+					utm_source, utm_medium, utm_campaign, utm_term, country, region, city, continent, device_class,
+					browser, os, screen, lang, bot, bot_name, visitor_hash, hour_utc, hour_karachi, event_kind,
+					engaged_ms, scroll_pct, seen_before, click_host, click_path, click_kind
+				 FROM page_views
+				 WHERE (? IS NULL OR viewed_at >= ?) AND (? IS NULL OR viewed_at <= ?)
+				 ORDER BY viewed_at DESC
+				 LIMIT 20000`,
+			)
+			.bind(bounds.start, bounds.start, bounds.end, bounds.end)
+			.all<Record<string, unknown>>();
+		const articles = await this.db
+			.prepare(
+				`SELECT slug, title, category, tags_json, author_id, body_text, published_at
+				 FROM articles
+				 ORDER BY published_at DESC
+				 LIMIT 500`,
+			)
+			.all<Record<string, unknown>>();
+		const events = (rows.results ?? []).map(eventFromRow).reverse();
+		const report = summarizePageViews(events, now, catalogFromRows(articles.results ?? []), query);
+		report.truncated = (rows.results ?? []).length >= 20000;
+		try {
+			const daily = await this.db
+				.prepare(`SELECT day, views, uniques, bots FROM stats_daily`)
+				.all<Record<string, unknown>>();
+			const seen = new Set(events.map((event) => event.viewedAt.slice(0, 10)));
+			for (const row of daily.results ?? []) {
+				const day = readString(row, "day");
+				if (!day || seen.has(day)) continue;
+				if (query.from && day < query.from) continue;
+				if (query.to && day > query.to) continue;
+				if (query.slug) continue;
+				report.totals.views += numberOf(row, "views");
+				report.totals.botHitsExcluded += numberOf(row, "bots");
+				report.audience.uniques += numberOf(row, "uniques");
+				report.series.day.push({ label: day, views: numberOf(row, "views"), uniques: numberOf(row, "uniques") });
+			}
+			report.series.day.sort((left, right) => left.label.localeCompare(right.label));
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
+		return report;
+	}
+
+}
+
+function numberOf(row: Record<string, unknown> | null, key: string): number {
+	if (!row) return 0;
+	const value = Number(row[key]);
+	return Number.isFinite(value) ? value : 0;
+}
+
+function reportBounds(query: StatsQuery, now: Date): { start: string | null; end: string | null } {
+	if (!query.from && !query.to) return { start: null, end: null };
+	const endDay = query.to ?? now.toISOString().slice(0, 10);
+	const startDay = query.from ?? endDay;
+	const endMs = Date.parse(`${endDay}T00:00:00.000Z`) + 24 * 60 * 60 * 1000;
+	const startMs = Date.parse(`${startDay}T00:00:00.000Z`);
+	const length = Math.max(24 * 60 * 60 * 1000, endMs - startMs);
+	return {
+		start: new Date(startMs - length).toISOString(),
+		end: new Date(endMs - 1).toISOString(),
+	};
+}
+
+function asSource(value: string): PageViewEvent["sourceClass"] {
+	if (value === "search" || value === "social" || value === "direct" || value === "internal" || value === "other") return value;
+	return "other";
+}
+
+function asDevice(value: string): PageViewEvent["deviceClass"] {
+	if (value === "desktop" || value === "mobile" || value === "tablet" || value === "other") return value;
+	return "other";
+}
+
+function asKind(value: string): PageViewEvent["eventKind"] {
+	if (value === "view" || value === "engage" || value === "click" || value === "404" || value === "feed") return value;
+	return "view";
+}
+
+function asScreen(value: string): PageViewEvent["screen"] {
+	if (value === "xs" || value === "sm" || value === "md" || value === "lg") return value;
+	return "";
+}
+
+function asClick(value: string): PageViewEvent["clickKind"] {
+	if (value === "outbound" || value === "source") return value;
+	return "";
+}
+
+function eventFromRow(row: Record<string, unknown>): PageViewEvent {
+	const returning = numberOf(row, "seen_before");
+	return {
+		viewedAt: readString(row, "viewed_at"),
+		slug: readString(row, "slug"),
+		page: readString(row, "page"),
+		referrerHost: readString(row, "referrer_host"),
+		referrerPath: readString(row, "referrer_path"),
+		sourceClass: asSource(readString(row, "source_class")),
+		searchEngine: readString(row, "search_engine"),
+		searchQuery: readString(row, "search_query"),
+		utmSource: readString(row, "utm_source"),
+		utmMedium: readString(row, "utm_medium"),
+		utmCampaign: readString(row, "utm_campaign"),
+		utmTerm: readString(row, "utm_term"),
+		country: readString(row, "country"),
+		region: readString(row, "region"),
+		city: readString(row, "city"),
+		continent: readString(row, "continent"),
+		deviceClass: asDevice(readString(row, "device_class")),
+		browser: readString(row, "browser"),
+		os: readString(row, "os"),
+		screen: asScreen(readString(row, "screen")),
+		lang: readString(row, "lang"),
+		bot: numberOf(row, "bot") ? 1 : 0,
+		botName: readString(row, "bot_name"),
+		visitorHash: readString(row, "visitor_hash"),
+		hourUtc: numberOf(row, "hour_utc"),
+		hourKarachi: numberOf(row, "hour_karachi"),
+		eventKind: asKind(readString(row, "event_kind")),
+		engagedMs: numberOf(row, "engaged_ms"),
+		scrollPct: numberOf(row, "scroll_pct"),
+		returning: returning === 0 || returning === 1 ? returning : -1,
+		clickHost: readString(row, "click_host"),
+		clickPath: readString(row, "click_path"),
+		clickKind: asClick(readString(row, "click_kind")),
+	};
+}
+
+function catalogFromArticles(articles: StoredArticle[]): Map<string, ArticleCatalogEntry> {
+	const map = new Map<string, ArticleCatalogEntry>();
+	for (const article of articles) {
+		map.set(article.slug, {
+			slug: article.slug,
+			title: article.title,
+			category: article.category,
+			tags: article.tags,
+			authorId: article.authorId,
+			authorName: authorById(article.authorId)?.name ?? article.authorId,
+			publishedAt: article.publishedAt,
+			words: wordCount(article.bodyText),
+		});
+	}
+	return map;
+}
+
+function catalogFromRows(rows: Record<string, unknown>[]): Map<string, ArticleCatalogEntry> {
+	const articles: StoredArticle[] = [];
+	for (const row of rows) {
+		const category = readString(row, "category");
+		if (!isCategory(category)) continue;
+		articles.push({
+			id: "",
+			slug: readString(row, "slug"),
+			title: readString(row, "title"),
+			description: "",
+			category,
+			tags: readJson<string[]>(row, "tags_json", []),
+			authorId: readString(row, "author_id"),
+			bodyHtml: "",
+			bodyText: readString(row, "body_text"),
+			keyPoints: [],
+			faq: [],
+			sources: [],
+			related: [],
+			imageKey: "",
+			imageCommit: "",
+			imageAlt: "",
+			imageType: "",
+			imageCredit: "",
+			imageSourceUrl: "",
+			publishedAt: readString(row, "published_at"),
+			updatedAt: readString(row, "published_at"),
+		});
+	}
+	return catalogFromArticles(articles);
 }
 
 export class MemoryNewsRepository implements NewsRepository {
 	articles: StoredArticle[] = [];
+	pageViews: PageViewEvent[] = [];
 	private lockUntil = 0;
 	private rejections = new Map<string, { reason: string; expiresAt: string }>();
 
@@ -494,5 +927,13 @@ export class MemoryNewsRepository implements NewsRepository {
 		if (hits >= limit) return false;
 		this.ingestHits.set(bucket, hits + 1);
 		return true;
+	}
+
+	async recordPageView(event: PageViewEvent): Promise<void> {
+		this.pageViews.push(event);
+	}
+
+	async pageViewReport(now: Date, query?: StatsQuery): Promise<NewsStatsReport> {
+		return summarizePageViews(this.pageViews, now, catalogFromArticles(this.articles), query);
 	}
 }

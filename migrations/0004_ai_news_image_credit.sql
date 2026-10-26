@@ -1,0 +1,2 @@
+ALTER TABLE articles ADD COLUMN image_credit TEXT NOT NULL DEFAULT '';
+ALTER TABLE articles ADD COLUMN image_source_url TEXT NOT NULL DEFAULT '';

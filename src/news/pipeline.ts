@@ -432,6 +432,8 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 				imageCommit: picture.imageCommit,
 				imageAlt: picture.imageKey ? drafted.draft.imageAlt : "",
 				imageType: picture.imageType,
+				imageCredit: "",
+				imageSourceUrl: "",
 				publishedAt: nowIso,
 				updatedAt: nowIso,
 			};
