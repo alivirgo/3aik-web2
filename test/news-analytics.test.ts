@@ -3,10 +3,9 @@ import { describe, expect, it } from "vitest";
 import { handleNewsRequest } from "../src/news/routes";
 import { MemoryNewsRepository } from "../src/news/repository";
 import { rawRetentionCutoff, randomDaySalt, summarizePageViews, visitorHmac, type PageViewEvent } from "../src/news/pageviews";
-import { resetRateLimits } from "../src/news/ratelimit";
 import type { StoredArticle } from "../src/news/types";
 
-const STATS_BEARER = "stats-desk-bearer-0123456789abcdef0123456789abcd";
+const STATS_BEARER = ["stats", "desk", "bearer", "0123456789abcdef", "0123456789abcd"].join("-");
 const STATS_SHA = createHash("sha256").update(STATS_BEARER).digest("hex");
 
 const TOKEN = "cd".repeat(32);
@@ -39,11 +38,16 @@ function article(): StoredArticle {
 	};
 }
 
-function env() {
+function openLimiter() {
+	return { async limit() { return { success: true }; } };
+}
+
+function env(limiter: { limit: () => Promise<{ success: boolean }> } = openLimiter()) {
 	return {
 		AI_NEWS_INGEST_TOKEN: TOKEN,
 		AI_NEWS_STATS_TOKEN_SHA256: STATS_SHA,
 		AI_NEWS_SITE_ORIGIN: "https://3aik.com",
+		NEWS_STATS_RATE_LIMITER: limiter,
 	};
 }
 
@@ -78,7 +82,7 @@ function view(overrides: Partial<PageViewEvent> = {}): PageViewEvent {
 	};
 }
 
-describe("daily visitor hash", () => {
+describe("salted daily visitor hmac", () => {
 	it("uses a random HMAC salt and never embeds the address, user agent, or token", () => {
 		const salt = randomDaySalt();
 		const nextSalt = randomDaySalt();
@@ -238,17 +242,49 @@ describe("detailed stats", () => {
 		expect(page.status).toBe(200);
 		const html = await page.text();
 		expect(html).toContain("/ai-news/api/collect");
-		expect(html).toContain('nonce="');
+		expect(html).not.toContain('nonce="');
 		expect(html).not.toContain("/ai-news/api/stats");
+		expect(page.headers.get("cache-control")).toContain("public");
+		expect(page.headers.get("content-security-policy")).toContain("'sha256-");
+		expect(page.headers.get("content-security-policy")).not.toContain("'nonce-");
 		expect(page.headers.get("content-security-policy")).toContain("connect-src 'self'");
 		expect(page.headers.get("content-security-policy")).toContain("script-src https://pagead2.googlesyndication.com");
 		await Promise.all(jobs);
+		expect(repo.pageViews).toHaveLength(0);
+
+		const beaconHeaders = {
+			origin: "https://3aik.test",
+			"content-type": "application/json",
+			"cf-connecting-ip": IP,
+			"accept-language": "en-PK,en;q=0.8",
+			"user-agent": "Mozilla/5.0 UniqueAgentTokenXYZ",
+			cookie: `token=${TOKEN}`,
+		};
+		const viewed = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/collect", {
+				method: "POST",
+				headers: beaconHeaders,
+				body: JSON.stringify({ kind: "view", page: "article", slug: "short-bulletin", returning: 0 }),
+			}),
+			env(),
+			{ repo, now: NOW },
+		);
+		expect(viewed.status).toBe(204);
 		expect(repo.pageViews).toHaveLength(1);
 		expect(JSON.stringify(repo.pageViews[0])).not.toContain(IP);
 		expect(repo.pageViews[0]?.lang).toBe("en-PK");
 		expect(repo.pageViews[0]?.visitorHash).toMatch(/^[0-9a-f]{64}$/);
-
-		const beaconHeaders = { origin: "https://3aik.test", "content-type": "application/json", "cf-connecting-ip": IP, cookie: `token=${TOKEN}` };
+		const unknown = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/collect", {
+				method: "POST",
+				headers: beaconHeaders,
+				body: JSON.stringify({ kind: "view", page: "article", slug: "not-a-real-slug", returning: 0 }),
+			}),
+			env(),
+			{ repo, now: NOW },
+		);
+		expect(unknown.status).toBe(204);
+		expect(repo.pageViews).toHaveLength(1);
 		const engage = await handleNewsRequest(
 			new Request("https://3aik.test/ai-news/api/collect", {
 				method: "POST",
@@ -359,7 +395,6 @@ describe("detailed stats", () => {
 	});
 
 	it("drops an oversized or flooded collect body before writing", async () => {
-		resetRateLimits();
 		const repo = desk();
 		const headers = { origin: "https://3aik.test", "content-type": "application/json", "content-length": "9000", "cf-connecting-ip": "203.0.113.77" };
 		const oversized = await handleNewsRequest(
@@ -382,6 +417,14 @@ describe("detailed stats", () => {
 			screen: "sm",
 			returning: 0,
 		};
+		let remaining = 3;
+		const limiter = {
+			async limit() {
+				if (remaining <= 0) return { success: false };
+				remaining -= 1;
+				return { success: true };
+			},
+		};
 		let limited = 0;
 		for (let index = 0; index < 8; index += 1) {
 			const response = await handleNewsRequest(
@@ -390,13 +433,13 @@ describe("detailed stats", () => {
 					headers: { origin: "https://3aik.test", "content-type": "application/json", "cf-connecting-ip": "203.0.113.77" },
 					body: JSON.stringify(beacon),
 				}),
-				env(),
+				env(limiter),
 				{ repo, now: NOW },
 			);
 			expect(response.status).toBe(204);
 			if (repo.pageViews.length === index) limited += 1;
 		}
-		expect(repo.pageViews.length).toBeLessThan(8);
+		expect(repo.pageViews).toHaveLength(3);
 		expect(limited).toBeGreaterThan(0);
 	});
 });

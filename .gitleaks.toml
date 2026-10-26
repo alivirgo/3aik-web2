@@ -1,0 +1,16 @@
+title = "3aik gitleaks allowlist"
+
+[extend]
+useDefault = true
+
+# The stats desk compares SHA-256(bearer) with this digest. The bearer is not
+# in git. The test fixture string below only appears in older commits.
+[[allowlists]]
+description = "Committed news stats digest"
+paths = ['''(?:^|/)src/news/stats\.ts$''', '''(?:^|/)\.gitleaks\.toml$''']
+regexes = ['''e5c04756be85b8c5d0bcbe3d32ec3778d56a356ce90c2c27faf32536b2c8ba42''']
+
+[[allowlists]]
+description = "Historical stats test bearer fixture"
+paths = ['''(?:^|/)test/news-(?:stats|analytics)\.test\.ts$''']
+regexes = ['''stats-desk-bearer-0123456789abcdef0123456789abcd''']

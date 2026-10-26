@@ -1,7 +1,7 @@
 -- Reader analytics for /ai-news. No IP address, user agent, cookie, or client id column.
--- visitor_hash is a daily salted SHA-256. The raw address and user agent are discarded.
--- Raw rows are pruned after 90 days. stats_daily and stats_visitor_day keep the rollup.
--- Free-plan D1: one raw insert, one daily upsert, and one visitor-day insert per human view.
+-- visitor_hash is an HMAC-SHA256 of a random daily salt. The salt is not derived from a token.
+-- New events roll up in later migrations. This raw table is legacy and the cron prunes it.
+-- The cron also deletes stats_visitor_day with the raw rows, and deletes the daily salt after the UTC day.
 CREATE TABLE IF NOT EXISTS page_views (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   viewed_at TEXT NOT NULL,

@@ -4,11 +4,12 @@ import worker from "../src/index";
 import { handleNewsRequest } from "../src/news/routes";
 import { D1NewsRepository, MemoryNewsRepository } from "../src/news/repository";
 import { emptyStatsReport, pageViewFromRequest } from "../src/news/pageviews";
-import { formatDuration, formatPercent, renderStatsCsv, renderStatsDashboard } from "../src/news/stats";
+import { expectedStatsDigest, formatDuration, formatPercent, NEWS_STATS_DIGEST, renderStatsCsv, renderStatsDashboard, resetStatsDigestWarning } from "../src/news/stats";
+import { NewsStatsBudget, STATS_DAILY_WRITE_CAP } from "../src/news/budget";
 import { resetAggregates } from "../src/news/aggregates";
 import type { StoredArticle } from "../src/news/types";
 
-const STATS_BEARER = "stats-desk-bearer-0123456789abcdef0123456789abcd";
+const STATS_BEARER = ["stats", "desk", "bearer", "0123456789abcdef", "0123456789abcd"].join("-");
 const STATS_SHA = createHash("sha256").update(STATS_BEARER).digest("hex");
 
 const TOKEN = "cd".repeat(32);
@@ -47,6 +48,7 @@ function env() {
 		AI_NEWS_INGEST_TOKEN: TOKEN,
 		AI_NEWS_STATS_TOKEN_SHA256: STATS_SHA,
 		AI_NEWS_SITE_ORIGIN: "https://3aik.com",
+		NEWS_STATS_RATE_LIMITER: { async limit() { return { success: true }; } },
 	};
 }
 
@@ -202,7 +204,7 @@ describe("private stats", () => {
 		expect((await open.text())).not.toContain(SECRET_TITLE);
 	});
 
-	it("serves JSON and HTML to the ingest bearer and excludes bots", async () => {
+	it("serves JSON and HTML to the stats bearer and excludes bots", async () => {
 		const repo = desk();
 		const now = new Date("2026-10-26T13:00:00.000Z");
 		await repo.recordPageView({
@@ -301,7 +303,7 @@ describe("private stats", () => {
 		expect(await page.text()).not.toContain("/ai-news/api/stats");
 	});
 
-	it("records a pageview after the response and never stores the IP or user agent", async () => {
+	it("records a beacon view after the response and never stores the IP or user agent", async () => {
 		const repo = desk();
 		let release: () => void = () => {};
 		const gate = new Promise<void>((resolve) => {
@@ -317,19 +319,38 @@ describe("private stats", () => {
 		};
 		const jobs: Array<Promise<unknown>> = [];
 		const ctx = { waitUntil(job: Promise<unknown>) { jobs.push(job); } } as ExecutionContext;
-		const request = new Request("https://3aik.test/ai-news/article/short-bulletin?fbclid=SECRETCLICK", {
+		const page = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin?fbclid=SECRETCLICK", {
+				headers: {
+					referer: "https://www.google.com/search?q=robot+hands&oq=SECRET_OQ",
+					"user-agent": AGENT,
+					"cf-connecting-ip": IP,
+				},
+			}),
+			env(),
+			{ repo },
+			ctx,
+		);
+		expect(page.status).toBe(200);
+		expect(started).toBe(false);
+		expect(jobs).toHaveLength(0);
+		const request = new Request("https://3aik.test/ai-news/api/collect?fbclid=SECRETCLICK", {
+			method: "POST",
 			headers: {
+				origin: "https://3aik.test",
+				"content-type": "application/json",
 				referer: "https://www.google.com/search?q=robot+hands&oq=SECRET_OQ",
 				"user-agent": AGENT,
 				"cf-connecting-ip": IP,
 			},
+			body: JSON.stringify({ kind: "view", page: "article", slug: "short-bulletin", returning: 0 }),
 		});
 		const pending = handleNewsRequest(request, env(), { repo }, ctx);
 		const response = await Promise.race([
 			pending,
 			new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("handler waited on the pageview write")), 400)),
 		]);
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(204);
 		expect(started).toBe(true);
 		expect(stored).toHaveLength(0);
 		release();
@@ -359,23 +380,24 @@ describe("private stats", () => {
 				};
 			},
 		};
-		const repo = new D1NewsRepository(db as unknown as D1Database);
+		const repo = new D1NewsRepository(db as unknown as D1Database, { budget: { async take() { return true; } } });
 		const request = new Request("https://3aik.test/ai-news/article/short-bulletin", {
 			headers: { "user-agent": AGENT, "cf-connecting-ip": IP },
 		});
 		const event = pageViewFromRequest(request, { slug: "short-bulletin", page: "article" }, new Date("2026-10-26T13:00:00.000Z"), "3aik.com");
+		event.visitorHash = "ab".repeat(32);
 		await repo.recordPageView(event);
-		const insert = calls.find((call) => call.sql.toLowerCase().includes("insert into page_views"));
-		expect(insert).toBeTruthy();
 		const packedSql = calls.map((call) => call.sql.toLowerCase()).join("\n");
-		expect(packedSql).toContain("insert into page_views");
-		expect(packedSql).toContain("stats_daily");
+		expect(packedSql).toContain("stats_visitor_day");
+		expect(packedSql).toContain("stats_article_hour");
+		expect(packedSql).not.toContain("insert into page_views");
+		expect(packedSql).not.toContain("stats_daily");
 		expect(packedSql).not.toMatch(/user_agent|cf_connecting_ip|\bip\b|cookie/);
 		const packed = JSON.stringify(calls.flatMap((call) => call.binds));
 		expect(packed).not.toContain(IP);
 		expect(packed).not.toContain("UniqueAgentTokenXYZ");
-		expect(packedSql).toContain("delete from stats_visitor_day");
-		expect(packedSql).toContain("delete from stats_day_salt");
+		expect(packedSql).not.toContain("delete from stats_visitor_day");
+		expect(packedSql).not.toContain("delete from stats_day_salt");
 	});
 
 	it("rejects the ingest token on every stats route", async () => {
@@ -467,7 +489,7 @@ describe("private stats", () => {
 				};
 			},
 		};
-		const repo = new D1NewsRepository(db as unknown as D1Database);
+		const repo = new D1NewsRepository(db as unknown as D1Database, { budget: { async take() { return true; } } });
 		const base = pageViewFromRequest(
 			new Request("https://3aik.test/ai-news/article/missing", { headers: { "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1)" } }),
 			{ slug: "", page: "/ai-news/article/missing" },
@@ -479,11 +501,21 @@ describe("private stats", () => {
 		const botSql = calls.map((call) => call.sql.toLowerCase()).join("\n");
 		expect(botSql).toContain("stats_bot_daily");
 		expect(botSql).not.toContain("insert into page_views");
+		expect(botSql).not.toContain("stats_daily");
 		calls.length = 0;
 		resetAggregates();
-		const miss = pageViewFromRequest(
+		const ignored = pageViewFromRequest(
 			new Request("https://3aik.test/ai-news/nope", { headers: { "user-agent": "Mozilla/5.0" } }),
 			{ slug: "", page: "/ai-news/nope" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		ignored.eventKind = "404";
+		await repo.recordPageView(ignored);
+		expect(calls).toHaveLength(0);
+		const miss = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/article/missing-note", { headers: { "user-agent": "Mozilla/5.0" } }),
+			{ slug: "", page: "/ai-news/article/missing-note" },
 			new Date("2026-10-26T13:00:00.000Z"),
 			"3aik.com",
 		);
@@ -494,15 +526,141 @@ describe("private stats", () => {
 		expect(missSql).not.toContain("insert into page_views");
 	});
 
-	it("strips email and phone strings from stored queries", () => {
+	it("strips email, phone, and long digit runs, and keeps one referrer segment", () => {
 		const event = pageViewFromRequest(
-			new Request("https://3aik.test/ai-news/article/short-bulletin?utm_term=reach+ada%40example.com+or+%2B1+202+555+0143"),
+			new Request("https://3aik.test/ai-news/article/short-bulletin?utm_term=reach+ada%40example.com+or+%2B1+202+555+0143+id+123456789012", {
+				headers: { referer: "https://news.example.com/section/very/long/path?q=ada@example.com" },
+			}),
 			{ slug: "short-bulletin", page: "article" },
 			new Date("2026-10-26T13:00:00.000Z"),
 			"3aik.com",
 		);
 		expect(event.utmTerm).not.toContain("ada@example.com");
 		expect(event.utmTerm).not.toContain("202");
+		expect(event.utmTerm).not.toContain("123456789012");
 		expect(event.utmTerm.toLowerCase()).toContain("redacted");
+		expect(event.utmTerm.length).toBeLessThanOrEqual(80);
+		expect(event.referrerHost).toBe("news.example.com");
+		expect(event.referrerPath).toBe("/section");
+		const long = pageViewFromRequest(
+			new Request(`https://3aik.test/ai-news/article/short-bulletin?utm_source=${"a".repeat(200)}`),
+			{ slug: "short-bulletin", page: "article" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		expect(long.utmSource).toHaveLength(80);
+	});
+
+	it("prunes salts and daily rollups from the cron path", async () => {
+		const calls: string[] = [];
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind() {
+						return {
+							async run() {
+								calls.push(sql.toLowerCase());
+								return { meta: { changes: 1 } };
+							},
+						};
+					},
+				};
+			},
+		};
+		const repo = new D1NewsRepository(db as unknown as D1Database);
+		await repo.pruneStatsRetention(new Date("2026-10-26T13:00:00.000Z"));
+		const packed = calls.join("\n");
+		expect(packed).toContain("delete from stats_visitor_day");
+		expect(packed).toContain("delete from stats_day_salt");
+		expect(packed).toContain("delete from stats_article_hour");
+		expect(packed).toContain("delete from stats_bot_daily");
+		expect(packed).toContain("delete from stats_miss_daily");
+		expect(packed).toContain("delete from stats_feed_daily");
+		expect(packed).toContain("delete from stats_click_daily");
+		expect(packed).toContain("delete from stats_write_budget");
+		expect(packed).toContain("stats-prune");
+	});
+
+	it("drops rollups when the daily budget is exhausted and still accepts a point sample", async () => {
+		const calls: string[] = [];
+		let points = 0;
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind() {
+						return {
+							async run() {
+								calls.push(sql.toLowerCase());
+								return { meta: { changes: 1 } };
+							},
+						};
+					},
+				};
+			},
+		};
+		const repo = new D1NewsRepository(db as unknown as D1Database, {
+			budget: { async take() { return false; } },
+			analytics: { writeDataPoint() { points += 1; } },
+		});
+		const event = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin"),
+			{ slug: "short-bulletin", page: "article" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		event.visitorHash = "ab".repeat(32);
+		for (let index = 0; index < 19; index += 1) await repo.recordPageView(event);
+		expect(points).toBe(0);
+		await repo.recordPageView(event);
+		expect(points).toBe(1);
+		expect(calls.join("\n")).not.toContain("stats_article_hour");
+		expect(calls.join("\n")).not.toContain("page_views");
+	});
+
+	it("rejects a malformed stats digest override and keeps the committed digest", () => {
+		resetStatsDigestWarning();
+		const errors: string[] = [];
+		const spy = vi.spyOn(console, "error").mockImplementation((message?: unknown) => {
+			errors.push(String(message));
+		});
+		expect(expectedStatsDigest("not-a-digest")).toBe(NEWS_STATS_DIGEST);
+		expect(errors.join("\n")).toContain("ai-news stats digest override rejected");
+		expect(expectedStatsDigest("ab".repeat(32))).toBe("ab".repeat(32));
+		spy.mockRestore();
+	});
+
+	it("stops the durable object counter at the daily cap", async () => {
+		const rows = new Map<string, number>();
+		const sql = {
+			exec(query: string, ...bindings: unknown[]) {
+				if (query.startsWith("CREATE")) return { next: () => ({ done: true }) };
+				if (query.startsWith("SELECT")) {
+					const writes = rows.get(String(bindings[0]));
+					return { next: () => (writes == null ? { done: true } : { done: false, value: { writes } }) };
+				}
+				const day = String(bindings[0]);
+				const amount = Number(bindings[1]);
+				rows.set(day, (rows.get(day) ?? 0) + amount);
+				return { next: () => ({ done: true }) };
+			},
+		};
+		const state = {
+			blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
+			storage: { sql },
+		};
+		const budget = new NewsStatsBudget(state as never, {} as never);
+		const day = "2026-10-26";
+		const full = await budget.fetch(new Request("https://stats-budget.internal/take", {
+			method: "POST",
+			body: JSON.stringify({ cost: 2, day }),
+		}));
+		expect(await full.json()).toEqual({ ok: true });
+		rows.set(day, STATS_DAILY_WRITE_CAP);
+		const blocked = await budget.fetch(new Request("https://stats-budget.internal/take", {
+			method: "POST",
+			body: JSON.stringify({ cost: 1, day }),
+		}));
+		expect(await blocked.json()).toEqual({ ok: false });
+		expect(rows.get(day)).toBe(STATS_DAILY_WRITE_CAP);
 	});
 });

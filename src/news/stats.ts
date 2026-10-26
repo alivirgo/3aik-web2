@@ -6,8 +6,26 @@ import { publicNotFoundResponse } from "./responses";
 import type { NewsRepository } from "./repository";
 import { escapeHtml } from "./text";
 
-/** SHA-256 of the stats bearer. The bearer itself is held offline and is not the ingest token. */
-export const STATS_TOKEN_SHA256 = "e5c04756be85b8c5d0bcbe3d32ec3778d56a356ce90c2c27faf32536b2c8ba42";
+/** SHA-256 hex of the stats bearer. The bearer itself is held offline and is not the ingest token. */
+export const NEWS_STATS_DIGEST = "e5c04756be85b8c5d0bcbe3d32ec3778d56a356ce90c2c27faf32536b2c8ba42";
+
+let digestWarned = false;
+
+export function resetStatsDigestWarning(): void {
+	digestWarned = false;
+}
+
+/** Log once when an override is present but not 64 hex characters, then keep the committed digest. */
+export function noteStatsDigest(env: { AI_NEWS_STATS_TOKEN_SHA256?: string }): void {
+	const value = env.AI_NEWS_STATS_TOKEN_SHA256?.trim().toLowerCase() ?? "";
+	if (!value || /^[0-9a-f]{64}$/.test(value)) return;
+	if (digestWarned) return;
+	digestWarned = true;
+	console.error(JSON.stringify({
+		message: "ai-news stats digest override rejected",
+		reason: "malformed",
+	}));
+}
 
 const CREDENTIAL_KEYS = new Set(["token", "access_token", "auth", "key", "secret", "bearer", "password", "apikey", "api_key"]);
 
@@ -24,9 +42,11 @@ function bearerToken(header: string | null): string {
 	return match?.[1] ?? "";
 }
 
-function expectedStatsDigest(override: string | undefined): string {
+export function expectedStatsDigest(override: string | undefined): string {
 	const value = override?.trim().toLowerCase() ?? "";
-	return /^[0-9a-f]{64}$/.test(value) ? value : STATS_TOKEN_SHA256;
+	if (/^[0-9a-f]{64}$/.test(value)) return value;
+	if (value) noteStatsDigest({ AI_NEWS_STATS_TOKEN_SHA256: value });
+	return NEWS_STATS_DIGEST;
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -79,7 +99,7 @@ function statsHeaders(contentType: string): Headers {
 	return headers;
 }
 
-function hiddenNotFound(request: Request, origin: string): Response {
+function hiddenNotFound(request: Request, origin: string): Promise<Response> {
 	return publicNotFoundResponse(request, origin);
 }
 
@@ -426,7 +446,7 @@ function articleSlug(pathname: string): string | null {
 
 export async function handleNewsStatsRequest(request: Request, env: NewsEnv, repo: NewsRepository | null, origin: string, now = new Date()): Promise<Response> {
 	const allowed = await statsAuthorized(request, env);
-	if (!allowed || (request.method !== "GET" && request.method !== "HEAD")) return hiddenNotFound(request, origin);
+	if (!allowed || (request.method !== "GET" && request.method !== "HEAD")) return await hiddenNotFound(request, origin);
 	const url = new URL(request.url);
 	const path = url.pathname.replace(/\/$/, "") || "/";
 	const slug = articleSlug(path);

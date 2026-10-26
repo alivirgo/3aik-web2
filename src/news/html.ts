@@ -227,7 +227,7 @@ function byline(origin: string, article: StoredArticle, now: number): string {
 	return `<p class="byline">
 <span class="avatar" aria-hidden="true">${escapeHtml(authorInitials(name))}</span>
 <span class="byline-copy">
-<span class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a> · <a href="${origin}/ai-news/about">Persona</a></span>
+<span class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a> · <a class="persona" href="${origin}/ai-news/about">AI persona</a></span>
 <span class="times"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time><span class="rel">${escapeHtml(relativeTime(article.publishedAt, now))}</span><span class="read">${escapeHtml(readingLabel(article.bodyText))}</span></span>
 </span>
 </p>`;
@@ -237,21 +237,6 @@ export function articleImage(origin: string, article: StoredArticle): { src: str
 	const stored = readerImageUrl(origin, article.imageKey, article.imageCommit);
 	if (!stored) return null;
 	return { src: stored, external: false };
-}
-
-export function externalImageOrigins(origin: string, articles: StoredArticle[]): string[] {
-	const origins: string[] = [];
-	for (const article of articles) {
-		const image = articleImage(origin, article);
-		if (!image?.external) continue;
-		try {
-			const value = new URL(image.src).origin;
-			if (value.startsWith("https://") && !/[\s;]/.test(value) && !origins.includes(value)) origins.push(value);
-		} catch {
-			continue;
-		}
-	}
-	return origins;
 }
 
 function heroImg(article: StoredArticle, image: string): string {
@@ -514,10 +499,9 @@ ${latestList(origin, others, now)}
 		articleSection: CATEGORY_LABEL[article.category],
 		keywords: article.tags.join(", "),
 		author: {
-			"@type": "Person",
+			"@type": "Organization",
 			name,
 			url: `${origin}/ai-news/about`,
-			description: "Editorial persona on the 3aik news desk. Not a real person.",
 		},
 		creditText: ASSIST_LINE,
 		disclaimer: ASSIST_LINE,

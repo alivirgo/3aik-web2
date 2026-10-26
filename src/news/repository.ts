@@ -1,8 +1,10 @@
 import { authorById } from "./authors";
 import type { ArticleCatalogEntry, NewsStatsReport, PageViewEvent, StatsQuery } from "./pageviews";
 import { flushAggregates, queueAggregate } from "./aggregates";
+import { STATS_DAILY_WRITE_CAP, type StatsBudget } from "./budget";
 import { loadD1StatsReport } from "./d1-stats";
-import { emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, summarizePageViews } from "./pageviews";
+import { writeNewsEvent } from "./events";
+import { emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, saltToHex, summarizePageViews } from "./pageviews";
 import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
 import { isCategory, wordCount } from "./text";
 
@@ -31,7 +33,7 @@ export interface NewsRepository {
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
 	consumeIngest(bucket: string, limit: number): Promise<boolean>;
 	recordPageView(event: PageViewEvent): Promise<void>;
-	persistDaySalt(day: string, saltHex: string): Promise<void>;
+	persistDaySalt(day: string, saltHex: string): Promise<string>;
 	pageViewReport(now: Date, query?: StatsQuery): Promise<NewsStatsReport>;
 }
 
@@ -99,10 +101,15 @@ function missingColumn(error: unknown): boolean {
 	return /no such column/i.test(message);
 }
 
+export interface NewsStatsOptions {
+	budget?: StatsBudget;
+	analytics?: AnalyticsEngineDataset;
+}
+
 export class D1NewsRepository implements NewsRepository {
 	private fullColumns: boolean | null = null;
 
-	constructor(private readonly db: D1Database) {}
+	constructor(private readonly db: D1Database, private readonly statsOptions: NewsStatsOptions = {}) {}
 
 	private async articleColumns(): Promise<string> {
 		if (this.fullColumns === true) return ARTICLE_COLUMNS_FULL;
@@ -432,22 +439,27 @@ export class D1NewsRepository implements NewsRepository {
 		return (results[1]?.meta?.changes ?? 0) > 0;
 	}
 
-	async persistDaySalt(day: string, saltHex: string): Promise<void> {
-		if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^[0-9a-f]{64}$/i.test(saltHex)) return;
+	async persistDaySalt(day: string, saltHex: string): Promise<string> {
+		const proposed = saltHex.toLowerCase();
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^[0-9a-f]{64}$/.test(proposed)) return "";
 		try {
 			await this.db
 				.prepare(`INSERT INTO stats_day_salt (day, salt) VALUES (?, ?) ON CONFLICT(day) DO NOTHING`)
-				.bind(day, saltHex.toLowerCase())
+				.bind(day, proposed)
 				.run();
 			const row = await this.db
 				.prepare(`SELECT salt FROM stats_day_salt WHERE day = ?`)
 				.bind(day)
 				.first<Record<string, unknown>>();
-			const stored = typeof row?.salt === "string" ? row.salt : "";
+			const stored = typeof row?.salt === "string" && /^[0-9a-f]{64}$/.test(row.salt) ? row.salt : proposed;
 			const salt = hexToSalt(stored);
 			if (salt) rememberDaySalt(day, salt);
+			return stored;
 		} catch (error) {
+			const salt = hexToSalt(proposed);
+			if (salt) rememberDaySalt(day, salt);
 			if (!missingSchema(error)) throw error;
+			return proposed;
 		}
 	}
 
@@ -459,152 +471,106 @@ export class D1NewsRepository implements NewsRepository {
 
 	async recordPageView(event: PageViewEvent): Promise<void> {
 		const row = normalizeEvent(event);
+		const day = row.viewedAt.slice(0, 10);
 		const aggregated = row.eventKind === "404" || row.eventKind === "feed" || row.bot === 1;
+		if (aggregated && row.eventKind === "404" && !/^\/ai-news\/article\/[a-z0-9-]{1,120}$/.test(row.page)) return;
+		const cost = writeCost(row, aggregated);
+		const allowed = await this.reserveWrites(cost, day);
+		writeNewsEvent(this.statsOptions.analytics, {
+			kind: row.eventKind,
+			slug: row.slug,
+			host: row.referrerHost,
+			country: row.country,
+			device: row.deviceClass,
+			botName: row.botName,
+			engagedMs: row.engagedMs,
+			scrollPct: row.scrollPct,
+		}, !allowed);
+		if (!allowed) return;
 		if (aggregated) {
-			const day = row.viewedAt.slice(0, 10);
-			if (row.eventKind === "404") queueAggregate("miss", day, row.page || "/ai-news");
+			if (row.eventKind === "404") queueAggregate("miss", day, row.page || "/ai-news/article");
 			if (row.eventKind === "feed") queueAggregate("feed", day, row.page || "/ai-news");
 			if (row.bot === 1) queueAggregate("bot", day, row.botName || "bot");
 			try {
-				await flushAggregates(this.db);
+				await flushAggregates(this.db, true);
 			} catch (error) {
 				if (!missingSchema(error)) throw error;
 			}
 			return;
 		}
 		try {
-			await this.insertPageView(row, true);
-		} catch (error) {
-			if (!missingColumn(error)) throw error;
-			await this.insertPageView(row, false);
-		}
-		try {
-			await this.rollupPageView(row);
-		} catch (error) {
-			if (!missingSchema(error)) throw error;
-		}
-		try {
-			await this.pruneRawEvents(new Date());
+			if (row.eventKind === "view") await this.rollupView(row, day);
+			else if (row.eventKind === "engage") await this.rollupEngage(row, day);
+			else if (row.eventKind === "click" && row.clickHost) await this.rollupClick(row, day);
 		} catch (error) {
 			if (!missingSchema(error)) throw error;
 		}
 	}
 
-	private async insertPageView(event: ReturnType<typeof normalizeEvent>, full: boolean): Promise<void> {
-		if (!full) {
-			await this.db
+	private async reserveWrites(cost: number, day: string): Promise<boolean> {
+		if (this.statsOptions.budget) return this.statsOptions.budget.take(cost, day);
+		try {
+			const result = await this.db
 				.prepare(
-					`INSERT INTO page_views (
-						viewed_at, slug, page, referrer_host, referrer_path, source_class, search_engine, search_query,
-						utm_source, utm_medium, utm_campaign, utm_term, country, device_class, bot
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					`INSERT INTO stats_write_budget (day, writes) VALUES (?, ?)
+					 ON CONFLICT(day) DO UPDATE SET writes = writes + excluded.writes
+					 WHERE stats_write_budget.writes + excluded.writes <= ?`,
 				)
-				.bind(
-					event.viewedAt,
-					event.slug,
-					event.page,
-					event.referrerHost,
-					event.referrerPath,
-					event.sourceClass,
-					event.searchEngine,
-					event.searchQuery,
-					event.utmSource,
-					event.utmMedium,
-					event.utmCampaign,
-					event.utmTerm,
-					event.country,
-					event.deviceClass,
-					event.bot,
-				)
+				.bind(day, cost + 1, STATS_DAILY_WRITE_CAP)
 				.run();
-			return;
+			return (result.meta?.changes ?? 0) > 0;
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+			return false;
+		}
+	}
+
+	private async rollupView(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
+		let uniques = 0;
+		if (event.visitorHash) {
+			const inserted = await this.db
+				.prepare(`INSERT OR IGNORE INTO stats_visitor_day (day, visitor_hash) VALUES (?, ?)`)
+				.bind(day, event.visitorHash)
+				.run();
+			uniques = inserted.meta?.changes ?? 0;
 		}
 		await this.db
 			.prepare(
-				`INSERT INTO page_views (
-					viewed_at, slug, page, referrer_host, referrer_path, source_class, search_engine, search_query,
-					utm_source, utm_medium, utm_campaign, utm_term, country, region, city, continent, device_class,
-					browser, os, screen, lang, bot, bot_name, visitor_hash, hour_utc, hour_karachi, event_kind,
-					engaged_ms, scroll_pct, seen_before, click_host, click_path, click_kind
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
+				 VALUES (?, ?, ?, 1, ?, 0, 0, 0)
+				 ON CONFLICT(day, hour_utc, slug) DO UPDATE SET
+				 views = views + 1,
+				 uniques = uniques + excluded.uniques`,
 			)
-			.bind(
-				event.viewedAt,
-				event.slug,
-				event.page,
-				event.referrerHost,
-				event.referrerPath,
-				event.sourceClass,
-				event.searchEngine,
-				event.searchQuery,
-				event.utmSource,
-				event.utmMedium,
-				event.utmCampaign,
-				event.utmTerm,
-				event.country,
-				event.region,
-				event.city,
-				event.continent,
-				event.deviceClass,
-				event.browser,
-				event.os,
-				event.screen,
-				event.lang,
-				event.bot,
-				event.botName,
-				event.visitorHash,
-				event.hourUtc,
-				event.hourKarachi,
-				event.eventKind,
-				event.engagedMs,
-				event.scrollPct,
-				event.returning,
-				event.clickHost,
-				event.clickPath,
-				event.clickKind,
-			)
+			.bind(day, event.hourUtc, event.slug || event.page || "article", uniques)
 			.run();
 	}
 
-	private async rollupPageView(event: ReturnType<typeof normalizeEvent>): Promise<void> {
-		const day = event.viewedAt.slice(0, 10);
-		if (event.eventKind === "view") {
-			let uniques = 0;
-			if (event.bot === 0 && event.visitorHash) {
-				const inserted = await this.db
-					.prepare(`INSERT OR IGNORE INTO stats_visitor_day (day, visitor_hash) VALUES (?, ?)`)
-					.bind(day, event.visitorHash)
-					.run();
-				uniques = inserted.meta?.changes ?? 0;
-			}
-			await this.db
-				.prepare(
-					`INSERT INTO stats_daily (day, views, uniques, bots, engaged_ms, engage_n)
-					 VALUES (?, ?, ?, ?, 0, 0)
-					 ON CONFLICT(day) DO UPDATE SET
-					 views = views + excluded.views,
-					 uniques = uniques + excluded.uniques,
-					 bots = bots + excluded.bots`,
-				)
-				.bind(day, event.bot === 0 ? 1 : 0, uniques, event.bot === 1 ? 1 : 0)
-				.run();
-			return;
-		}
-		if (event.eventKind === "engage" && event.bot === 0) {
-			await this.db
-				.prepare(
-					`INSERT INTO stats_daily (day, views, uniques, bots, engaged_ms, engage_n)
-					 VALUES (?, 0, 0, 0, ?, 1)
-					 ON CONFLICT(day) DO UPDATE SET
-					 engaged_ms = engaged_ms + excluded.engaged_ms,
-					 engage_n = engage_n + 1`,
-				)
-				.bind(day, event.engagedMs)
-				.run();
-		}
+	private async rollupEngage(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
+		await this.db
+			.prepare(
+				`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
+				 VALUES (?, ?, ?, 0, 0, ?, 1, ?)
+				 ON CONFLICT(day, hour_utc, slug) DO UPDATE SET
+				 engaged_ms = engaged_ms + excluded.engaged_ms,
+				 engage_n = engage_n + 1,
+				 scroll_sum = scroll_sum + excluded.scroll_sum`,
+			)
+			.bind(day, event.hourUtc, event.slug || "article", event.engagedMs, event.scrollPct)
+			.run();
 	}
 
-	private async pruneRawEvents(now: Date): Promise<void> {
+	private async rollupClick(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
+		await this.db
+			.prepare(
+				`INSERT INTO stats_click_daily (day, slug, kind, host, path, hits) VALUES (?, ?, ?, ?, ?, 1)
+				 ON CONFLICT(day, slug, kind, host, path) DO UPDATE SET hits = hits + 1`,
+			)
+			.bind(day, event.slug || "article", event.clickKind, event.clickHost, event.clickPath || "/")
+			.run();
+	}
+
+	async pruneStatsRetention(now: Date): Promise<void> {
 		const until = new Date(now.getTime() + 60_000).toISOString();
 		const lock = await this.db
 			.prepare(
@@ -616,17 +582,29 @@ export class D1NewsRepository implements NewsRepository {
 			.run();
 		if ((lock.meta?.changes ?? 0) < 1) return;
 		const cutoff = rawRetentionCutoff(now);
-		await this.db
-			.prepare(`DELETE FROM page_views WHERE id IN (SELECT id FROM page_views WHERE viewed_at < ? LIMIT 200)`)
-			.bind(cutoff)
-			.run();
-		await this.db.prepare(`DELETE FROM stats_visitor_day WHERE day < ?`).bind(cutoff.slice(0, 10)).run();
-		try {
-			await this.db.prepare(`DELETE FROM stats_day_salt WHERE day < ?`).bind(now.toISOString().slice(0, 10)).run();
-		} catch (error) {
-			if (!missingSchema(error)) throw error;
+		const today = now.toISOString().slice(0, 10);
+		const keepDaily = new Date(now.getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+		const statements = [
+			[`DELETE FROM page_views WHERE id IN (SELECT id FROM page_views WHERE viewed_at < ? LIMIT 200)`, cutoff],
+			[`DELETE FROM stats_visitor_day WHERE day < ?`, cutoff.slice(0, 10)],
+			[`DELETE FROM stats_day_salt WHERE day < ?`, today],
+			[`DELETE FROM stats_article_hour WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_bot_daily WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_miss_daily WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_feed_daily WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_daily WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_click_daily WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_write_budget WHERE day < ?`, keepDaily],
+		] as const;
+		for (const [sql, bind] of statements) {
+			try {
+				await this.db.prepare(sql).bind(bind).run();
+			} catch (error) {
+				if (!missingSchema(error)) throw error;
+			}
 		}
 	}
+
 
 	async pageViewReport(now: Date, query: StatsQuery = { from: null, to: null, slug: null }): Promise<NewsStatsReport> {
 		try {
@@ -643,6 +621,16 @@ export class D1NewsRepository implements NewsRepository {
 		return loadD1StatsReport(this.db, now, query);
 	}
 
+}
+
+function writeCost(row: ReturnType<typeof normalizeEvent>, aggregated: boolean): number {
+	if (!aggregated && row.eventKind === "view" && row.visitorHash) return 2;
+	if (!aggregated) return 1;
+	let writes = 0;
+	if (row.eventKind === "404") writes += 1;
+	if (row.eventKind === "feed") writes += 1;
+	if (row.bot === 1) writes += 1;
+	return Math.min(2, Math.max(1, writes));
 }
 
 function numberOf(row: Record<string, unknown> | null, key: string): number {
@@ -892,9 +880,11 @@ export class MemoryNewsRepository implements NewsRepository {
 		return this.articles.length;
 	}
 
-	async persistDaySalt(day: string, saltHex: string): Promise<void> {
+	async persistDaySalt(day: string, saltHex: string): Promise<string> {
 		const salt = hexToSalt(saltHex);
-		if (salt) rememberDaySalt(day, salt);
+		if (!salt) return "";
+		rememberDaySalt(day, salt);
+		return saltToHex(salt);
 	}
 
 	async expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>> {

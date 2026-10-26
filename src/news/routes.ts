@@ -1,7 +1,6 @@
 import type { Env } from "../types";
 import { publishingEnabled, siteOrigin } from "./config";
 import {
-	externalImageOrigins,
 	renderAbout,
 	renderArticle,
 	renderAuthor,
@@ -12,13 +11,14 @@ import {
 } from "./html";
 import { loadPublicImage, parseMediaRequest } from "./github-images";
 import { handleIngestRequest, ingestApiPath } from "./ingest";
-import { beaconScript, handleCollectRequest, isNewsCollectPath } from "./collect";
-import { cachedDaySalt, isFeedPath, isTrackedMiss, pageViewFromRequest, saltToHex, trackedPage, visitorHmac, type PageViewEvent } from "./pageviews";
-import { allowView } from "./ratelimit";
-import { freshNonce, htmlCsp, publicNotFoundResponse, securityHeaders } from "./responses";
+import { beaconSource, handleCollectRequest, isNewsCollectPath } from "./collect";
+import { takeStatsBudget } from "./budget";
+import { isFeedPath, isTrackedMiss, pageViewFromRequest, trackedPage, type PageViewEvent } from "./pageviews";
+import { allowStatsLane } from "./ratelimit";
+import { htmlCsp, inlineScriptHashes, publicNotFoundResponse, securityHeaders } from "./responses";
+import { D1NewsRepository, type NewsRepository, type NewsStatsOptions } from "./repository";
 import { handleNewsStatsRequest, isNewsStatsPath } from "./stats";
 import { runPublishCycle } from "./pipeline";
-import { D1NewsRepository, type NewsRepository } from "./repository";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap, renderSitemapIndex } from "./syndication";
 import type { SitemapEntry, StoredArticle } from "./types";
 import { isCategory } from "./text";
@@ -53,13 +53,12 @@ export const SITEMAP_PAGE_SIZE = 1000;
 const FEED_ARTICLE_LIMIT = 100;
 const IMAGE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'";
 
-function htmlResponse(request: Request, body: string, status: number, _cache: string, imageOrigins: string[] = []): Response {
-	const nonce = freshNonce();
+async function htmlResponse(request: Request, body: string, status: number, cache: string): Promise<Response> {
 	const path = normalizePath(new URL(request.url).pathname);
 	const tracked = status === 200 ? trackedPage(path) : null;
-	const html = tracked ? body.replace("</body>", `${beaconScript(nonce, tracked.page, tracked.slug)}</body>`) : body;
-	// A nonce must not be stored at the edge. HTML is private even when the caller asked for a public TTL.
-	const headers = securityHeaders("text/html; charset=utf-8", "private, no-store", htmlCsp(imageOrigins, nonce));
+	const source = tracked?.slug ? beaconSource(tracked.page, tracked.slug) : "";
+	const html = source ? body.replace("</body>", `<script>${source}</script></body>`) : body;
+	const headers = securityHeaders("text/html; charset=utf-8", cache, htmlCsp(await inlineScriptHashes(html)));
 	if (request.method === "HEAD") return new Response(null, { status, headers });
 	return new Response(html, { status, headers });
 }
@@ -152,9 +151,18 @@ async function countArticles(repo: NewsRepository | null): Promise<number> {
 	}
 }
 
+function statsOptions(env: Env): NewsStatsOptions {
+	return {
+		budget: env.NEWS_STATS_BUDGET
+			? { take: (cost, day) => takeStatsBudget(env.NEWS_STATS_BUDGET as DurableObjectNamespace, cost, day) }
+			: undefined,
+		analytics: env.AI_NEWS_EVENTS,
+	};
+}
+
 function resolveRepo(env: Env, override: NewsRequestDeps): NewsRepository | null {
 	if ("repo" in override) return override.repo ?? null;
-	return env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB) : null;
+	return env.AI_NEWS_DB ? new D1NewsRepository(env.AI_NEWS_DB, statsOptions(env)) : null;
 }
 
 function scheduleAnalytics(ctx: ExecutionContext | undefined, request: Request, env: Env, override: NewsRequestDeps, path: string, status: number): void {
@@ -170,34 +178,28 @@ function scheduleAnalytics(ctx: ExecutionContext | undefined, request: Request, 
 	const now = override.now ?? new Date();
 	let event: PageViewEvent | null = null;
 	if (status === 200) {
-		const tracked = trackedPage(path);
-		if (tracked) event = pageViewFromRequest(request, tracked, now, siteHost);
-		else if (isFeedPath(path)) {
+		if (isFeedPath(path)) {
 			event = pageViewFromRequest(request, { slug: "", page: path }, now, siteHost);
 			event.eventKind = "feed";
+		} else {
+			const tracked = trackedPage(path);
+			if (!tracked) return;
+			const draft = pageViewFromRequest(request, tracked, now, siteHost);
+			if (draft.bot !== 1) return;
+			event = draft;
 		}
 	} else if (status === 404 && isTrackedMiss(path)) {
 		event = pageViewFromRequest(request, { slug: "", page: path }, now, siteHost);
 		event.eventKind = "404";
 	}
 	if (!event) return;
+	const recorded = event;
 	const address = request.headers.get("cf-connecting-ip") ?? "";
-	const userAgent = request.headers.get("user-agent") ?? "";
-	const humanView = event.bot !== 1 && event.eventKind !== "404" && event.eventKind !== "feed";
-	if (humanView && !allowView(address || "anon")) return;
-	if (humanView && address) {
-		const day = event.viewedAt.slice(0, 10);
-		const salt = cachedDaySalt(day);
-		event.visitorHash = visitorHmac(salt, address, userAgent);
-		const saltWork = repo.persistDaySalt(day, saltToHex(salt)).catch((error: unknown) => {
-			console.error(JSON.stringify({
-				message: "ai-news salt failed",
-				error: error instanceof Error ? error.message : "salt",
-			}));
-		});
-		ctx.waitUntil(saltWork);
-	}
-	const work = repo.recordPageView(event).catch((error: unknown) => {
+	const lane = recorded.bot === 1 || recorded.eventKind === "404" || recorded.eventKind === "feed" ? "counter" : "view";
+	const work = allowStatsLane(env.NEWS_STATS_RATE_LIMITER, address, lane).then((allowed) => {
+		if (!allowed) return;
+		return repo.recordPageView(recorded);
+	}).catch((error: unknown) => {
 		console.error(JSON.stringify({
 			message: "ai-news pageview failed",
 			error: error instanceof Error ? error.message : "pageview",
@@ -253,10 +255,10 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 
 		if (path === "/ai-news") {
 			const articles = await loadRecent(repo, 24);
-			return htmlResponse(request, renderIndex(origin, articles), 200, "public, max-age=60", externalImageOrigins(origin, articles));
+			return await htmlResponse(request, renderIndex(origin, articles), 200, "public, max-age=60");
 		}
-		if (path === "/ai-news/about") return htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
-		if (path === "/ai-news/disclaimer") return htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
+		if (path === "/ai-news/about") return await htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
+		if (path === "/ai-news/disclaimer") return await htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
 		const sitemapPage = /^\/ai-news\/sitemap\/([1-9]\d{0,2})\.xml$/.exec(path);
 		if (path === "/ai-news/sitemap.xml" || sitemapPage) {
 			const count = await countArticles(repo);
@@ -294,7 +296,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 					known = await repo.findImage(media.repoPath, media.commitSha);
 				} catch (error) {
 					logReadError(path, error);
-					return publicNotFoundResponse(request, origin);
+					return await publicNotFoundResponse(request, origin);
 				}
 			}
 			if (!known) return miss();
@@ -332,7 +334,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const category = path.slice("/ai-news/".length);
 			if (isCategory(category)) {
 				const articles = await loadRecent(repo, 24, category);
-				return htmlResponse(request, renderCategory(origin, category, articles), 200, "public, max-age=60", externalImageOrigins(origin, articles));
+				return await htmlResponse(request, renderCategory(origin, category, articles), 200, "public, max-age=60");
 			}
 		}
 
@@ -347,8 +349,8 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				}
 			}
 			const page = renderAuthor(origin, authorMatch[1], articles);
-			if (!page) return publicNotFoundResponse(request, origin);
-			return htmlResponse(request, page, 200, "public, max-age=120", externalImageOrigins(origin, articles));
+			if (!page) return await publicNotFoundResponse(request, origin);
+			return await htmlResponse(request, page, 200, "public, max-age=120");
 		}
 
 		const articleMatch = /^\/ai-news\/article\/([a-z0-9-]{1,120})$/.exec(path);
@@ -359,37 +361,47 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 					article = await repo.getBySlug(articleMatch[1]);
 				} catch (error) {
 					logReadError(path, error);
-					return publicNotFoundResponse(request, origin);
+					return await publicNotFoundResponse(request, origin);
 				}
 			}
-			if (!article) return publicNotFoundResponse(request, origin);
+			if (!article) return await publicNotFoundResponse(request, origin);
 			const latest = await loadRecent(repo, 8);
-			return htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120", externalImageOrigins(origin, [article, ...latest]));
+			return await htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120");
 		}
 
-		return publicNotFoundResponse(request, origin);
+		return await publicNotFoundResponse(request, origin);
 	} catch (error) {
 		console.error(JSON.stringify({
 			message: "ai-news request failed",
 			path,
 			error: error instanceof Error ? error.message : String(error),
 		}));
-		return htmlResponse(request, renderNotFound(origin), 500, "no-store");
+		return await htmlResponse(request, renderNotFound(origin), 500, "no-store");
 	}
 }
 
 export async function publishScheduled(env: Env, controller: ScheduledController): Promise<void> {
+	const now = new Date(controller.scheduledTime || Date.now());
+	if (env.AI_NEWS_DB) {
+		const repo = new D1NewsRepository(env.AI_NEWS_DB, statsOptions(env));
+		try {
+			await repo.pruneStatsRetention(now);
+		} catch (error) {
+			console.error(JSON.stringify({
+				message: "ai-news stats prune failed",
+				error: error instanceof Error ? error.message : "prune",
+			}));
+		}
+		if (!publishingEnabled(env)) {
+			console.log(JSON.stringify({ message: "ai-news publishing paused" }));
+			return;
+		}
+		await runPublishCycle({ env, repo, now });
+		return;
+	}
 	if (!publishingEnabled(env)) {
 		console.log(JSON.stringify({ message: "ai-news publishing paused" }));
 		return;
 	}
-	if (!env.AI_NEWS_DB) {
-		console.error(JSON.stringify({ message: "ai-news bindings missing" }));
-		return;
-	}
-	await runPublishCycle({
-		env,
-		repo: new D1NewsRepository(env.AI_NEWS_DB),
-		now: new Date(controller.scheduledTime || Date.now()),
-	});
+	console.error(JSON.stringify({ message: "ai-news bindings missing" }));
 }

@@ -1,8 +1,7 @@
-import type { ArticleCatalogEntry, NamedCount, NewsStatsReport, PageCount, PageViewEvent, SeriesPoint, StatsQuery } from "./pageviews";
-import { emptyStatsReport, STATS_NOTE, summarizePageViews } from "./pageviews";
+import type { ArticleCatalogEntry, NamedCount, NewsStatsReport, PageCount, SeriesPoint, StatsQuery } from "./pageviews";
+import { emptyStatsReport, STATS_NOTE } from "./pageviews";
 import { authorById } from "./authors";
 import { isCategory, wordCount } from "./text";
-import type { StoredArticle } from "./types";
 
 interface StatsDb {
 	prepare(sql: string): {
@@ -12,8 +11,6 @@ interface StatsDb {
 		};
 	};
 }
-
-const SAMPLE_CAP = 400;
 
 function num(row: Record<string, unknown> | null, key: string): number {
 	if (!row) return 0;
@@ -71,8 +68,8 @@ function whereSlug(column = "slug"): string {
 }
 
 /**
- * Dashboard numbers come from indexed GROUP BY queries and daily rollups.
- * The only raw pull is a capped sample used to sessionize bounces.
+ * Dashboard numbers come from daily and hourly rollups, each query LIMITed.
+ * Raw events are in Analytics Engine. This function does not scan page_views.
  */
 export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuery): Promise<NewsStatsReport> {
 	const report = emptyStatsReport(now);
@@ -83,23 +80,20 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 	const endMs = Date.parse(`${endDay}T00:00:00.000Z`) + 24 * 60 * 60 * 1000;
 	const startMs = Date.parse(`${startDay}T00:00:00.000Z`);
 	const length = Math.max(24 * 60 * 60 * 1000, endMs - startMs);
-	const startIso = new Date(startMs).toISOString();
-	const endIso = new Date(endMs - 1).toISOString();
-	const prevStartIso = new Date(startMs - length).toISOString();
-	const prevEndIso = new Date(startMs - 1).toISOString();
-	const prevStartDay = prevStartIso.slice(0, 10);
+	const prevStartDay = new Date(startMs - length).toISOString().slice(0, 10);
 	const prevEndDay = new Date(startMs - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 	const slug = query.slug ?? "";
-	const span = [prevStartIso, endIso, slug, slug];
-	const current = [startIso, endIso, slug, slug];
-	const human = `bot = 0 AND event_kind = 'view' AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}`;
+	const hour = now.getUTCHours();
+	const today = now.toISOString().slice(0, 10);
+	const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+	const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-	const dayRows = await rows(
+	const dayRows = await optionalRows(
 		db,
-		`SELECT substr(viewed_at, 1, 10) AS label, COUNT(*) AS views, COUNT(DISTINCT visitor_hash) AS uniques
-		 FROM page_views WHERE ${human}
-		 GROUP BY label ORDER BY label LIMIT 120`,
-		span,
+		`SELECT day AS label, SUM(views) AS views, SUM(uniques) AS uniques
+		 FROM stats_article_hour WHERE day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY day ORDER BY day LIMIT 120`,
+		[prevStartDay, endDay, slug, slug],
 	);
 	const days: SeriesPoint[] = dayRows.map((row) => ({
 		label: text(row, "label"),
@@ -112,12 +106,12 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 	report.series.week = bucketDays(report.series.day, false);
 	report.series.month = bucketDays(report.series.day, true);
 
-	const hourRows = await rows(
+	const hourRows = await optionalRows(
 		db,
-		`SELECT substr(viewed_at, 1, 13) AS label, COUNT(*) AS views, COUNT(DISTINCT visitor_hash) AS uniques
-		 FROM page_views WHERE bot = 0 AND event_kind = 'view' AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}
-		 GROUP BY label ORDER BY label DESC LIMIT 48`,
-		[new Date(endMs - 48 * 60 * 60 * 1000).toISOString(), endIso, slug, slug],
+		`SELECT printf('%sT%02d', day, hour_utc) AS label, SUM(views) AS views, SUM(uniques) AS uniques
+		 FROM stats_article_hour WHERE day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY day, hour_utc ORDER BY day DESC, hour_utc DESC LIMIT 48`,
+		[yesterday, endDay, slug, slug],
 	);
 	report.series.hour = hourRows.map((row) => ({
 		label: text(row, "label"),
@@ -125,150 +119,92 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 		uniques: num(row, "uniques"),
 	})).reverse();
 
-	const countBetween = async (fromIso: string, toIso: string): Promise<number> => {
-		const row = await db.prepare(
-			`SELECT COUNT(*) AS views FROM page_views WHERE bot = 0 AND event_kind = 'view' AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}`,
-		).bind(fromIso, toIso, slug, slug).first<Record<string, unknown>>();
-		return num(row, "views");
+	const sumViews = async (fromDay: string, toDay: string): Promise<number> => {
+		const list = await optionalRows(
+			db,
+			`SELECT COALESCE(SUM(views), 0) AS views FROM stats_article_hour WHERE day >= ? AND day <= ? AND ${whereSlug()}`,
+			[fromDay, toDay, slug, slug],
+		);
+		return num(list[0] ?? null, "views");
 	};
-	const rawViews = slug
-		? await countBetween("1970-01-01T00:00:00.000Z", "9999-12-31T00:00:00.000Z")
-		: num(await db.prepare(
-			`SELECT COUNT(*) AS views FROM page_views WHERE bot = 0 AND event_kind = 'view'`,
-		).bind().first<Record<string, unknown>>(), "views");
-	const rolled = slug ? null : await optionalRows(db, `SELECT COALESCE(SUM(views), 0) AS views, COALESCE(SUM(uniques), 0) AS uniques, COALESCE(SUM(bots), 0) AS bots FROM stats_daily`, []);
-	const roll = rolled?.[0] ?? null;
-	report.totals.views = Math.max(rawViews, num(roll, "views"));
-	report.totals.last24h = await countBetween(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), now.toISOString());
-	report.totals.last7d = await countBetween(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), now.toISOString());
-	report.totals.botHitsExcluded = num(roll, "bots");
+	const lastDay = await optionalRows(
+		db,
+		`SELECT COALESCE(SUM(views), 0) AS views FROM stats_article_hour
+		 WHERE ${whereSlug()} AND ((day = ? AND hour_utc >= ?) OR day = ?)`,
+		[slug, slug, yesterday, hour, today],
+	);
+	report.totals.views = await sumViews("1970-01-01", "9999-12-31");
+	report.totals.last24h = num(lastDay[0] ?? null, "views");
+	report.totals.last7d = await sumViews(weekAgo, today);
+	report.audience.uniques = report.series.day.reduce((sum, point) => sum + point.uniques, 0);
+
 	const botRows = await optionalRows(
 		db,
 		`SELECT bot_name AS name, SUM(hits) AS views FROM stats_bot_daily WHERE day >= ? AND day <= ? GROUP BY bot_name ORDER BY views DESC LIMIT 30`,
 		[startDay, endDay],
 	);
 	report.bots = named(botRows, "name");
-	if (!report.totals.botHitsExcluded) {
-		report.totals.botHitsExcluded = report.bots.reduce((sum, row) => sum + row.views, 0);
-	}
-	report.audience.uniques = num(roll, "uniques") || report.series.day.reduce((sum, point) => sum + point.uniques, 0);
-
-	const currentViews = report.series.day.reduce((sum, point) => sum + point.views, 0);
-	const currentUniques = report.series.day.reduce((sum, point) => sum + point.uniques, 0);
-	const previousDays = days.filter((point) => inPrevious(point.label));
-	const previousViews = previousDays.reduce((sum, point) => sum + point.views, 0);
-	const previousUniques = previousDays.reduce((sum, point) => sum + point.uniques, 0);
 	const botWindow = async (fromDay: string, toDay: string) => {
-		const list = await optionalRows(db, `SELECT COALESCE(SUM(bots), 0) AS bots FROM stats_daily WHERE day >= ? AND day <= ?`, [fromDay, toDay]);
+		const list = await optionalRows(
+			db,
+			`SELECT COALESCE(SUM(hits), 0) AS bots FROM stats_bot_daily WHERE day >= ? AND day <= ?`,
+			[fromDay, toDay],
+		);
 		return num(list[0] ?? null, "bots");
 	};
-	const engageWindow = async (fromIso: string, toIso: string) => {
-		const row = await db.prepare(
-			`SELECT AVG(engaged_ms) AS avg_ms, AVG(scroll_pct) AS avg_scroll, COUNT(*) AS n
-			 FROM page_views WHERE bot = 0 AND event_kind = 'engage' AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}`,
-		).bind(fromIso, toIso, slug, slug).first<Record<string, unknown>>();
+	report.totals.botHitsExcluded = await botWindow(startDay, endDay);
+
+	const engageOf = async (fromDay: string, toDay: string) => {
+		const list = await optionalRows(
+			db,
+			`SELECT COALESCE(SUM(engaged_ms), 0) AS ms, COALESCE(SUM(engage_n), 0) AS n, COALESCE(SUM(scroll_sum), 0) AS scroll
+			 FROM stats_article_hour WHERE day >= ? AND day <= ? AND ${whereSlug()}`,
+			[fromDay, toDay, slug, slug],
+		);
+		const row = list[0] ?? null;
+		const n = num(row, "n");
 		return {
-			avgEngagedMs: row && num(row, "n") ? Math.round(num(row, "avg_ms")) : 0,
-			avgScrollPct: row && num(row, "n") ? Math.round(num(row, "avg_scroll")) : 0,
+			avgEngagedMs: n ? Math.round(num(row, "ms") / n) : 0,
+			avgScrollPct: n ? Math.round(num(row, "scroll") / n) : 0,
 		};
 	};
-	const currentEngage = await engageWindow(startIso, endIso);
-	const previousEngage = await engageWindow(prevStartIso, prevEndIso);
-
-	const sample = await rows(
-		db,
-		`SELECT viewed_at, slug, page, visitor_hash, seen_before, hour_utc, hour_karachi
-		 FROM page_views WHERE ${human}
-		 ORDER BY viewed_at DESC LIMIT ${SAMPLE_CAP}`,
-		current,
-	);
-	report.truncated = sample.length >= SAMPLE_CAP;
-	const sampleEvents: PageViewEvent[] = sample.map((row) => ({
-		viewedAt: text(row, "viewed_at"),
-		slug: text(row, "slug"),
-		page: text(row, "page"),
-		referrerHost: "",
-		referrerPath: "",
-		sourceClass: "direct",
-		searchEngine: "",
-		searchQuery: "",
-		utmSource: "",
-		utmMedium: "",
-		utmCampaign: "",
-		utmTerm: "",
-		country: "",
-		deviceClass: "other",
-		bot: 0,
-		visitorHash: text(row, "visitor_hash"),
-		hourUtc: num(row, "hour_utc"),
-		hourKarachi: num(row, "hour_karachi"),
-		eventKind: "view",
-		returning: num(row, "seen_before") === 0 || num(row, "seen_before") === 1 ? num(row, "seen_before") as 0 | 1 : -1,
-	}));
-	const bounced = summarizePageViews(sampleEvents, now, new Map(), { from: startDay, to: endDay, slug: query.slug });
-	report.audience.sessions = bounced.audience.sessions;
-	report.audience.bounces = bounced.audience.bounces;
-	report.audience.bounceRate = bounced.audience.bounceRate;
-	report.audience.newVisitors = bounced.audience.newVisitors;
-	report.audience.returningVisitors = bounced.audience.returningVisitors;
-	report.landing = bounced.landing;
-	report.exit = bounced.exit;
-	report.heatmap = bounced.heatmap;
-
-	const previousBounce = summarizePageViews(
-		sampleEvents.filter((event) => event.viewedAt >= prevStartIso && event.viewedAt <= prevEndIso),
-		now,
-		new Map(),
-		{ from: prevStartDay, to: prevEndDay, slug: query.slug },
-	);
+	const currentEngage = await engageOf(startDay, endDay);
+	const previousEngage = await engageOf(prevStartDay, prevEndDay);
+	const previousDays = days.filter((point) => inPrevious(point.label));
 	report.comparison = {
 		current: {
 			from: startDay,
 			to: endDay,
-			views: currentViews,
-			uniques: currentUniques,
-			bots: await botWindow(startDay, endDay),
+			views: report.series.day.reduce((sum, point) => sum + point.views, 0),
+			uniques: report.audience.uniques,
+			bots: report.totals.botHitsExcluded,
 			avgEngagedMs: currentEngage.avgEngagedMs,
 			avgScrollPct: currentEngage.avgScrollPct,
-			bounceRate: bounced.audience.bounceRate,
+			bounceRate: 0,
 		},
 		previous: {
 			from: prevStartDay,
 			to: prevEndDay,
-			views: previousViews,
-			uniques: previousUniques,
+			views: previousDays.reduce((sum, point) => sum + point.views, 0),
+			uniques: previousDays.reduce((sum, point) => sum + point.uniques, 0),
 			bots: await botWindow(prevStartDay, prevEndDay),
 			avgEngagedMs: previousEngage.avgEngagedMs,
 			avgScrollPct: previousEngage.avgScrollPct,
-			bounceRate: previousBounce.audience.bounceRate,
+			bounceRate: 0,
 		},
 	};
 	report.audience.avgEngagedMs = currentEngage.avgEngagedMs;
 	report.audience.avgScrollPct = currentEngage.avgScrollPct;
 
-	const articleRows = await rows(
+	const articleRows = await optionalRows(
 		db,
-		`SELECT slug,
-			SUM(CASE WHEN event_kind = 'view' AND bot = 0 THEN 1 ELSE 0 END) AS views,
-			COUNT(DISTINCT CASE WHEN event_kind = 'view' AND bot = 0 AND visitor_hash != '' THEN visitor_hash END) AS uniques,
-			SUM(CASE WHEN event_kind = 'view' AND bot = 0 AND viewed_at >= ? THEN 1 ELSE 0 END) AS last24h,
-			SUM(CASE WHEN event_kind = 'view' AND bot = 0 AND viewed_at >= ? THEN 1 ELSE 0 END) AS last7d,
-			AVG(CASE WHEN event_kind = 'engage' AND bot = 0 THEN engaged_ms END) AS avg_ms,
-			AVG(CASE WHEN event_kind = 'engage' AND bot = 0 THEN scroll_pct END) AS avg_scroll
-		 FROM page_views
-		 WHERE viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}
-		 GROUP BY slug
-		 HAVING views > 0
-		 ORDER BY views DESC
-		 LIMIT 40`,
-		[
-			new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
-			new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-			startIso,
-			endIso,
-			slug,
-			slug,
-		],
+		`SELECT slug, SUM(views) AS views, SUM(uniques) AS uniques,
+			SUM(CASE WHEN day >= ? THEN views ELSE 0 END) AS last24h,
+			SUM(CASE WHEN day >= ? THEN views ELSE 0 END) AS last7d,
+			SUM(engaged_ms) AS ms, SUM(engage_n) AS n, SUM(scroll_sum) AS scroll
+		 FROM stats_article_hour WHERE day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY slug HAVING views > 0 ORDER BY views DESC LIMIT 40`,
+		[yesterday, weekAgo, startDay, endDay, slug, slug],
 	);
 	const catalogRows = await optionalRows(
 		db,
@@ -276,7 +212,6 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 		[],
 	);
 	const catalog = new Map<string, ArticleCatalogEntry>();
-	const stored: StoredArticle[] = [];
 	for (const row of catalogRows) {
 		const category = text(row, "category");
 		if (!isCategory(category)) continue;
@@ -298,32 +233,10 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 			words: wordCount(text(row, "body_text")),
 		};
 		catalog.set(entry.slug, entry);
-		stored.push({
-			id: "",
-			slug: entry.slug,
-			title: entry.title,
-			description: "",
-			category,
-			tags,
-			authorId: entry.authorId,
-			bodyHtml: "",
-			bodyText: text(row, "body_text"),
-			keyPoints: [],
-			faq: [],
-			sources: [],
-			related: [],
-			imageKey: "",
-			imageCommit: "",
-			imageAlt: "",
-			imageType: "",
-			imageCredit: "",
-			imageSourceUrl: "",
-			publishedAt: entry.publishedAt,
-			updatedAt: entry.publishedAt,
-		});
 	}
 	report.articles = articleRows.map((row) => {
 		const articleSlug = text(row, "slug");
+		const n = num(row, "n");
 		return {
 			slug: articleSlug,
 			title: catalog.get(articleSlug)?.title ?? "",
@@ -331,8 +244,8 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 			uniques: num(row, "uniques"),
 			last24h: num(row, "last24h"),
 			last7d: num(row, "last7d"),
-			avgEngagedMs: Math.round(num(row, "avg_ms")),
-			avgScrollPct: Math.round(num(row, "avg_scroll")),
+			avgEngagedMs: n ? Math.round(num(row, "ms") / n) : 0,
+			avgScrollPct: n ? Math.round(num(row, "scroll") / n) : 0,
 		};
 	});
 	const categoryCounts = new Map<string, number>();
@@ -352,48 +265,42 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 	report.categories = asNamed(categoryCounts);
 	report.tags = asNamed(tagCounts);
 	report.authors = asNamed(authorCounts);
-	report.publishLog = stored.slice(0, 30).map((article) => ({
+	report.publishLog = [...catalog.values()].slice(0, 30).map((article) => ({
 		slug: article.slug,
 		title: article.title,
 		publishedAt: article.publishedAt,
-		words: wordCount(article.bodyText),
+		words: article.words,
 		category: article.category,
-		author: authorById(article.authorId)?.name ?? article.authorId,
+		author: article.authorName,
 		tags: article.tags.join(", "),
 	}));
-
-	const pageRows = await rows(
-		db,
-		`SELECT page, slug, COUNT(*) AS views FROM page_views WHERE ${human} GROUP BY page, slug ORDER BY views DESC LIMIT 40`,
-		current,
-	);
-	report.pages = pageRows.map((row): PageCount => ({
-		page: text(row, "page"),
-		slug: text(row, "slug"),
-		label: text(row, "slug") || text(row, "page"),
-		views: num(row, "views"),
+	report.pages = report.articles.slice(0, 40).map((row): PageCount => ({
+		page: "article",
+		slug: row.slug,
+		label: row.slug,
+		views: row.views,
 	}));
-	const liveRows = await rows(
+	const liveRows = await optionalRows(
 		db,
-		`SELECT page, slug, COUNT(*) AS views FROM page_views
-		 WHERE bot = 0 AND event_kind = 'view' AND viewed_at >= ? AND ${whereSlug()}
-		 GROUP BY page, slug ORDER BY views DESC LIMIT 20`,
-		[new Date(now.getTime() - 30 * 60 * 1000).toISOString(), slug, slug],
+		`SELECT slug, SUM(views) AS views FROM stats_article_hour
+		 WHERE day = ? AND hour_utc = ? AND ${whereSlug()}
+		 GROUP BY slug ORDER BY views DESC LIMIT 20`,
+		[today, hour, slug, slug],
 	);
 	report.realtime.pages = liveRows.map((row): PageCount => ({
-		page: text(row, "page"),
+		page: "article",
 		slug: text(row, "slug"),
-		label: text(row, "slug") || text(row, "page"),
+		label: text(row, "slug"),
 		views: num(row, "views"),
 	}));
 	report.realtime.views = report.realtime.pages.reduce((sum, row) => sum + row.views, 0);
 
-	const topRows = await rows(
+	const topRows = await optionalRows(
 		db,
-		`SELECT substr(viewed_at, 1, 10) AS day, slug, COUNT(*) AS views
-		 FROM page_views WHERE ${human}
-		 GROUP BY day, slug ORDER BY day DESC, views DESC LIMIT 180`,
-		current,
+		`SELECT day, slug, SUM(views) AS views FROM stats_article_hour
+		 WHERE day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY day, slug ORDER BY day DESC, views DESC LIMIT 80`,
+		[startDay, endDay, slug, slug],
 	);
 	const seenDays = new Set<string>();
 	report.topByDay = [];
@@ -408,85 +315,15 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 			title: catalog.get(articleSlug)?.title ?? "",
 			views: num(row, "views"),
 		});
-		if (report.topByDay.length >= 45) break;
+		if (report.topByDay.length >= 14) break;
 	}
 
-	const grouped = async (sql: string, binds: unknown[]) => rows(db, sql, binds);
-	report.referrers = (await grouped(
-		`SELECT referrer_host AS host, referrer_path AS path, COUNT(*) AS views FROM page_views
-		 WHERE ${human} AND referrer_host != '' GROUP BY host, path ORDER BY views DESC LIMIT 30`,
-		current,
-	)).map((row) => ({ host: text(row, "host"), path: text(row, "path"), views: num(row, "views") }));
-	report.sources = (await grouped(
-		`SELECT source_class AS source, COUNT(*) AS views FROM page_views WHERE ${human} GROUP BY source_class ORDER BY views DESC LIMIT 8`,
-		current,
-	)).map((row) => ({ source: text(row, "source") as NewsStatsReport["sources"][number]["source"], views: num(row, "views") }));
-	report.referrerGroups = (await grouped(
-		`SELECT CASE source_class WHEN 'search' THEN 'Search' WHEN 'social' THEN 'Social' WHEN 'direct' THEN 'Direct' WHEN 'internal' THEN 'Direct' ELSE 'Other sites' END AS name,
-			COUNT(*) AS views FROM page_views WHERE ${human} GROUP BY name ORDER BY views DESC LIMIT 8`,
-		current,
-	)).map((row) => ({ name: text(row, "name"), views: num(row, "views") }));
-	report.queries = (await grouped(
-		`SELECT search_engine AS engine, search_query AS query, COUNT(*) AS views FROM page_views
-		 WHERE bot = 0 AND event_kind = 'view' AND search_query != '' AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}
-		 GROUP BY engine, query ORDER BY views DESC LIMIT 30`,
-		current,
-	)).map((row) => ({ engine: text(row, "engine"), query: text(row, "query"), views: num(row, "views") }));
-	report.countries = (await grouped(
-		`SELECT country, COUNT(*) AS views FROM page_views WHERE ${human} AND country != '' GROUP BY country ORDER BY views DESC LIMIT 30`,
-		current,
-	)).map((row) => ({ country: text(row, "country"), views: num(row, "views") }));
-	report.cities = named(await grouped(
-		`SELECT city AS name, COUNT(*) AS views FROM page_views WHERE ${human} AND city != '' GROUP BY city ORDER BY views DESC LIMIT 30`,
-		current,
-	), "name");
-	report.regions = named(await grouped(
-		`SELECT region AS name, COUNT(*) AS views FROM page_views WHERE ${human} AND region != '' GROUP BY region ORDER BY views DESC LIMIT 30`,
-		current,
-	), "name");
-	report.continents = named(await grouped(
-		`SELECT continent AS name, COUNT(*) AS views FROM page_views WHERE ${human} AND continent != '' GROUP BY continent ORDER BY views DESC LIMIT 12`,
-		current,
-	), "name");
-	report.devices = (await grouped(
-		`SELECT device_class AS device, COUNT(*) AS views FROM page_views WHERE ${human} GROUP BY device_class ORDER BY views DESC LIMIT 8`,
-		current,
-	)).map((row) => ({ device: text(row, "device") as NewsStatsReport["devices"][number]["device"], views: num(row, "views") }));
-	report.browsers = named(await grouped(
-		`SELECT browser AS name, COUNT(*) AS views FROM page_views WHERE ${human} AND browser != '' GROUP BY browser ORDER BY views DESC LIMIT 20`,
-		current,
-	), "name");
-	report.operatingSystems = named(await grouped(
-		`SELECT os AS name, COUNT(*) AS views FROM page_views WHERE ${human} AND os != '' GROUP BY os ORDER BY views DESC LIMIT 20`,
-		current,
-	), "name");
-	report.screens = named(await grouped(
-		`SELECT screen AS name, COUNT(*) AS views FROM page_views
-		 WHERE bot = 0 AND event_kind = 'engage' AND screen != '' AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}
-		 GROUP BY screen ORDER BY views DESC LIMIT 8`,
-		current,
-	), "name");
-	report.languages = named(await grouped(
-		`SELECT lang AS name, COUNT(*) AS views FROM page_views WHERE ${human} AND lang != '' GROUP BY lang ORDER BY views DESC LIMIT 20`,
-		current,
-	), "name");
-	report.campaigns = (await grouped(
-		`SELECT utm_source AS source, utm_medium AS medium, utm_campaign AS campaign, utm_term AS term, COUNT(*) AS views
-		 FROM page_views WHERE ${human} AND (utm_source != '' OR utm_medium != '' OR utm_campaign != '' OR utm_term != '')
-		 GROUP BY source, medium, campaign, term ORDER BY views DESC LIMIT 30`,
-		current,
-	)).map((row) => ({
-		source: text(row, "source"),
-		medium: text(row, "medium"),
-		campaign: text(row, "campaign"),
-		term: text(row, "term"),
-		views: num(row, "views"),
-	}));
-	const clicks = async (kind: string) => (await grouped(
-		`SELECT click_host AS host, click_path AS path, COUNT(*) AS views FROM page_views
-		 WHERE bot = 0 AND event_kind = 'click' AND click_kind = ? AND viewed_at >= ? AND viewed_at <= ? AND ${whereSlug()}
+	const clicks = async (kind: string) => (await optionalRows(
+		db,
+		`SELECT host, path, SUM(hits) AS views FROM stats_click_daily
+		 WHERE kind = ? AND day >= ? AND day <= ? AND ${whereSlug()}
 		 GROUP BY host, path ORDER BY views DESC LIMIT 30`,
-		[kind, startIso, endIso, slug, slug],
+		[kind, startDay, endDay, slug, slug],
 	)).map((row) => ({ host: text(row, "host"), path: text(row, "path"), views: num(row, "views") }));
 	report.outbound = await clicks("outbound");
 	report.sourceClicks = await clicks("source");
@@ -500,21 +337,12 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 		`SELECT path AS name, SUM(hits) AS views FROM stats_feed_daily WHERE day >= ? AND day <= ? GROUP BY path ORDER BY views DESC LIMIT 20`,
 		[startDay, endDay],
 	), "name");
-
-	const earliest = await db.prepare(
-		`SELECT MIN(viewed_at) AS since FROM page_views WHERE bot = 0 AND event_kind = 'view'`,
-	).bind().first<Record<string, unknown>>();
-	report.since = text(earliest ?? {}, "since") || null;
-	report.range = { from: query.from, to: query.to };
-	const rolledDays = await optionalRows(
+	const earliest = await optionalRows(
 		db,
-		`SELECT day AS label, views, uniques FROM stats_daily WHERE day >= ? AND day <= ? ORDER BY day LIMIT 120`,
-		[startDay, endDay],
+		`SELECT MIN(day) AS since FROM stats_article_hour WHERE ${whereSlug()}`,
+		[slug, slug],
 	);
-	if (!report.series.day.length && rolledDays.length) {
-		report.series.day = rolledDays.map((row) => ({ label: text(row, "label"), views: num(row, "views"), uniques: num(row, "uniques") }));
-		report.series.week = bucketDays(report.series.day, false);
-		report.series.month = bucketDays(report.series.day, true);
-	}
+	report.since = text(earliest[0] ?? {}, "since") || null;
+	report.range = { from: query.from, to: query.to };
 	return report;
 }

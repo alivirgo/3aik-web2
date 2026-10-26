@@ -2,19 +2,29 @@ import { ADSENSE_HOSTS } from "../adsense";
 import { renderNotFound } from "./html";
 
 /**
- * HTML documents carry a per-response nonce. They are not edge-cached.
- * `publicNotFoundResponse` is the only 404 used for a normal miss and for a
- * hidden stats or collect miss, so those responses share one header set.
+ * Public HTML is edge-cached. Inline scripts use CSP hashes, not nonces,
+ * so the document is stable for a URL. `publicNotFoundResponse` is the only
+ * 404 used for a normal miss and for a hidden stats or collect miss.
  */
-export function freshNonce(): string {
-	const bytes = new Uint8Array(16);
-	crypto.getRandomValues(bytes);
-	return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+export async function scriptSourceHash(source: string): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+	let binary = "";
+	for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+	return `'sha256-${btoa(binary)}'`;
 }
 
-export function htmlCsp(imageOrigins: string[], nonce: string): string {
-	const extra = imageOrigins.length ? ` ${imageOrigins.join(" ")}` : "";
-	return `default-src 'self'; base-uri 'self'; connect-src 'self' ${ADSENSE_HOSTS}; font-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' ${ADSENSE_HOSTS}${extra}; object-src 'none'; script-src ${ADSENSE_HOSTS} 'nonce-${nonce}'; style-src 'self'; upgrade-insecure-requests`;
+export async function inlineScriptHashes(html: string): Promise<string[]> {
+	const hashes: string[] = [];
+	const pattern = /<script(?: type="application\/ld\+json")?>([\s\S]*?)<\/script>/g;
+	for (const match of html.matchAll(pattern)) {
+		if (match[1]) hashes.push(await scriptSourceHash(match[1]));
+	}
+	return hashes;
+}
+
+export function htmlCsp(hashes: string[]): string {
+	const inline = hashes.length ? ` ${hashes.join(" ")}` : "";
+	return `default-src 'self'; base-uri 'self'; connect-src 'self' ${ADSENSE_HOSTS}; font-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' ${ADSENSE_HOSTS}; object-src 'none'; script-src ${ADSENSE_HOSTS}${inline}; style-src 'self'; upgrade-insecure-requests`;
 }
 
 export function securityHeaders(contentType: string, cache: string, csp: string): Headers {
@@ -30,8 +40,9 @@ export function securityHeaders(contentType: string, cache: string, csp: string)
 	return headers;
 }
 
-export function publicNotFoundResponse(request: Request, origin: string): Response {
-	const headers = securityHeaders("text/html; charset=utf-8", "no-store", htmlCsp([], freshNonce()));
+export async function publicNotFoundResponse(request: Request, origin: string): Promise<Response> {
+	const body = renderNotFound(origin);
+	const headers = securityHeaders("text/html; charset=utf-8", "no-store", htmlCsp(await inlineScriptHashes(body)));
 	if (request.method === "HEAD") return new Response(null, { status: 404, headers });
-	return new Response(renderNotFound(origin), { status: 404, headers });
+	return new Response(body, { status: 404, headers });
 }

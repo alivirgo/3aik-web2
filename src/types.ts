@@ -4,6 +4,12 @@ export interface Env {
 	CHAT_RATE_LIMITER?: RateLimit;
 	IMAGE_RATE_LIMITER?: RateLimit;
 	AGENT_RATE_LIMITER?: RateLimit;
+	/** Per-client news stats lanes. `namespace_id` 3104. Approximate, and per location. */
+	NEWS_STATS_RATE_LIMITER?: RateLimit;
+	/** SQLite Durable Object. Global cap of 25,000 D1 stats row writes per UTC day. */
+	NEWS_STATS_BUDGET?: DurableObjectNamespace;
+	/** Raw reader events. Write-only on the Free plan. */
+	AI_NEWS_EVENTS?: AnalyticsEngineDataset;
 	NUC7_STATS?: KVNamespace;
 	AI_NEWS_DB?: D1Database;
 	/** Fine-grained token with contents:write on alivirgo/3aik-ai-news-images. Set with `wrangler secret put`. */

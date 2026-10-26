@@ -1,51 +1,31 @@
 /**
- * Per-isolate token buckets for the collect beacon and human pageview writes.
- * A Cloudflare rate-limit binding is not added here: this worker already binds
- * chat, image, and agent limiters, and a new namespace id is not provisioned
- * on the Free plan from this change. Sharing those limiters would throttle
- * unrelated routes. The bucket is per colo (one isolate), which is the bound
- * the Free plan can enforce without another binding.
+ * Per-client limits for collect, human views, and bot/404/feed counters.
+ *
+ * A per-isolate token bucket does not bound this worker. Isolates do not share
+ * memory, and the script runs in many Cloudflare locations. The limit below is
+ * the Workers Rate Limiting binding (`NEWS_STATS_RATE_LIMITER` in
+ * wrangler.jsonc). That binding is free, needs no dashboard namespace, and
+ * counts per key inside each location. It is approximate: a location can run
+ * slightly over the configured limit while counts catch up. It is not a global
+ * daily cap. The global cap is `NewsStatsBudget` (25,000 D1 stats row writes
+ * per UTC day).
+ *
+ * The key is a SHA-256 of cf-connecting-ip, kept only for the `limit()` call.
+ * It is not written to D1, Analytics Engine, or logs.
  */
 
-interface Bucket {
-	tokens: number;
-	updated: number;
+export type StatsLane = "collect" | "view" | "counter";
+
+export async function clientRateKey(ip: string): Promise<string> {
+	const material = new TextEncoder().encode(`3aik-news-rl\n${ip || "anon"}`);
+	const digest = await crypto.subtle.digest("SHA-256", material);
+	return [...new Uint8Array(digest).subarray(0, 8)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-const buckets = new Map<string, Bucket>();
-
-function take(key: string, capacity: number, perMinute: number, now: number): boolean {
-	if (buckets.size > 400) {
-		const cutoff = now - 120_000;
-		for (const [name, bucket] of buckets) {
-			if (bucket.updated < cutoff) buckets.delete(name);
-		}
-	}
-	const bucket = buckets.get(key) ?? { tokens: capacity, updated: now };
-	const refilled = bucket.tokens + ((now - bucket.updated) * perMinute) / 60_000;
-	bucket.tokens = Math.min(capacity, refilled);
-	bucket.updated = now;
-	if (bucket.tokens < 1) {
-		buckets.set(key, bucket);
-		return false;
-	}
-	bucket.tokens -= 1;
-	buckets.set(key, bucket);
-	return true;
-}
-
-/** Beacon writes: 4/min per address key, 10/min for the isolate. */
-export function allowCollect(ip: string, now = Date.now()): boolean {
-	const key = ip.slice(0, 80) || "anon";
-	return take(`c:${key}`, 4, 4, now) && take("c:*", 10, 10, now);
-}
-
-/** Human pageview rows: 8/min per address key, 15/min for the isolate. */
-export function allowView(ip: string, now = Date.now()): boolean {
-	const key = ip.slice(0, 80) || "anon";
-	return take(`v:${key}`, 8, 8, now) && take("v:*", 15, 15, now);
-}
-
-export function resetRateLimits(): void {
-	buckets.clear();
+/** False when the binding is missing, so a deploy without it cannot write without a limit. */
+export async function allowStatsLane(limiter: RateLimit | undefined, ip: string, lane: StatsLane): Promise<boolean> {
+	if (!limiter) return false;
+	const key = await clientRateKey(ip);
+	const result = await limiter.limit({ key: `${lane}:${key}` });
+	return result.success;
 }

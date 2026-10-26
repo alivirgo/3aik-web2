@@ -3,7 +3,8 @@ import worker from "../src/index";
 import { AUTHORS } from "../src/news/authors";
 import { handleNewsRequest } from "../src/news/routes";
 import { tokensMatch } from "../src/news/ingest";
-import { MemoryNewsRepository } from "../src/news/repository";
+import { D1NewsRepository, MemoryNewsRepository } from "../src/news/repository";
+import { pageViewFromRequest } from "../src/news/pageviews";
 import type { StoredArticle } from "../src/news/types";
 import { TINY_JPEG, TINY_PNG, slugify } from "../src/news/text";
 
@@ -577,5 +578,40 @@ describe("publisher images", () => {
 		const reasons = await rejected.response.json() as { reasons: string[] };
 		expect(reasons.reasons).toContain("image_alt");
 		expect(short.repo.articles).toHaveLength(0);
+	});
+
+	it("keeps publishing when the stats write budget is exhausted", async () => {
+		const calls: string[] = [];
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind() {
+						return {
+							async run() {
+								calls.push(sql.toLowerCase());
+								return { meta: { changes: 1 } };
+							},
+						};
+					},
+				};
+			},
+		};
+		const stats = new D1NewsRepository(db as unknown as D1Database, { budget: { async take() { return false; } } });
+		const event = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin"),
+			{ slug: "short-bulletin", page: "article" },
+			NOW,
+			"3aik.com",
+		);
+		event.visitorHash = "cd".repeat(32);
+		await stats.recordPageView(event);
+		expect(calls.join("\n")).not.toContain("stats_article_hour");
+		expect(calls.join("\n")).not.toContain("page_views");
+		const state = desk({ page: "<p>Routine maintenance was mentioned on the status page.</p>" });
+		const { response } = await send(post(articleFields({
+			image: { data: `data:image/jpeg;base64,${jpegBase64()}`, alt: ALT },
+		})), state);
+		expect(response.status).toBe(201);
+		expect(state.repo.articles).toHaveLength(1);
 	});
 });

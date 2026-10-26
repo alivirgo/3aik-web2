@@ -1,7 +1,9 @@
 import { ADSENSE_HOSTS } from "./adsense";
 import { ingestApiPath } from "./news/ingest";
 import { isNewsCollectPath } from "./news/collect";
-import { handleNewsRequest, isNewsRequestPath, isNewsStatsPath, publishScheduled } from "./news/routes";
+import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
+import { isNewsStatsPath, noteStatsDigest } from "./news/stats";
+export { NewsStatsBudget } from "./news/budget";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -135,6 +137,7 @@ class HttpError extends Error {
 
 export default {
 	async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+		noteStatsDigest(env);
 		const url = new URL(request.url);
 
 		try {
@@ -221,6 +224,7 @@ export default {
 		}
 	},
 	async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+		noteStatsDigest(env);
 		await publishScheduled(env, controller);
 	},
 } satisfies ExportedHandler<Env>;

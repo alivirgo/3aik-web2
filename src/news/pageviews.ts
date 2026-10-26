@@ -201,7 +201,7 @@ export interface NewsStatsReport {
 }
 
 export const RAW_RETENTION_DAYS = 90;
-export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is not derived from a token. It is deleted after that UTC day. The address and user agent are discarded. The same person counts again the next day. Raw human rows are kept 90 days. Daily totals, including visitor-day rows, are pruned with them. Sessions are groups of human page views that share a daily hash and sit within 30 minutes. A bounce is a session with one page view.";
+export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is stored before the hash and is not derived from a token. The cron deletes that salt after the UTC day. Raw events go to Workers Analytics Engine. D1 keeps hourly article rollups, capped at 25,000 row writes a day, and keeps those daily tables for 400 days. This D1 desk does not scan raw rows, so its bounce rate stays at zero. An in-memory report still treats a bounce as one human page view inside a 30-minute session.";
 
 const SEARCH_ENGINES: Array<{ name: string; hosts: string[]; keys: string[] }> = [
 	{ name: "Google", hosts: ["google.com"], keys: ["q"] },
@@ -283,12 +283,12 @@ export function rawRetentionCutoff(now: Date): string {
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_RE = /(?:\+\d{1,3}[\s.-])?(?:\(\d{2,4}\)[\s.-]?|\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}|\+\d{8,15}/g;
 
-/** Drop email-like and phone-like strings before a query or utm value is stored. */
+/** Drop emails, phone-like strings, and digit runs longer than 6 before storage. */
 export function redactContacts(value: string): string {
 	return value.replace(EMAIL_RE, "[redacted]").replace(PHONE_RE, (match) => {
 		const digits = match.replace(/\D/g, "");
 		return digits.length >= 8 && digits.length <= 15 ? "[redacted]" : match;
-	});
+	}).replace(/\d{7,}/g, "[redacted]");
 }
 
 const daySalts = new Map<string, Uint8Array>();
@@ -315,13 +315,16 @@ export function hexToSalt(hex: string): Uint8Array | null {
 	return bytes;
 }
 
-/** Isolate cache of today's salt. The D1 copy is the one deleted after the UTC day. */
-export function cachedDaySalt(day: string): Uint8Array {
-	const existing = daySalts.get(day);
-	if (existing) return existing;
-	const salt = randomDaySalt();
-	daySalts.set(day, salt);
-	return salt;
+/** Salt already confirmed by persistDaySalt. Does not invent one. */
+export function knownDaySalt(day: string): Uint8Array | null {
+	return daySalts.get(day) ?? null;
+}
+
+/** First path segment only, so a referrer cannot store a long unique path. */
+export function firstReferrerSegment(pathname: string): string {
+	const segment = pathname.split("?")[0]?.split("/").filter(Boolean)[0] ?? "";
+	if (!segment) return "/";
+	return `/${segment.replace(/[^\w.~-]/g, "").slice(0, 78)}`;
 }
 
 export function rememberDaySalt(day: string, salt: Uint8Array): void {
@@ -420,10 +423,9 @@ export function isFeedPath(pathname: string): boolean {
 		|| /^\/ai-news\/(ai|technology|fashion|showbiz)\/(feed|atom)\.xml$/.test(pathname);
 }
 
+/** Article-shaped misses only. Other unknown paths are not counted. */
 export function isTrackedMiss(pathname: string): boolean {
-	return pathname.startsWith("/ai-news/")
-		&& !pathname.startsWith("/ai-news/api/")
-		&& !pathname.startsWith("/ai-news/media/");
+	return /^\/ai-news\/article\/[a-z0-9-]{1,120}$/.test(pathname);
 }
 
 function clip(value: string, max: number): string {
@@ -620,7 +622,7 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 	const utmSource = clip(redactContacts(pageUrl.searchParams.get("utm_source") ?? ""), 80);
 	const utmMedium = clip(redactContacts(pageUrl.searchParams.get("utm_medium") ?? ""), 80);
 	const utmCampaign = clip(redactContacts(pageUrl.searchParams.get("utm_campaign") ?? ""), 80);
-	const utmTerm = clip(redactContacts(pageUrl.searchParams.get("utm_term") ?? ""), 120);
+	const utmTerm = clip(redactContacts(pageUrl.searchParams.get("utm_term") ?? ""), 80);
 	const siteHosts = [siteHost, pageUrl.hostname, "3aik.com"];
 	const cf = cfOf(request);
 
@@ -634,7 +636,7 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 			const parsed = new URL(referrer);
 			if (parsed.protocol === "http:" || parsed.protocol === "https:") {
 				referrerHost = clip(parsed.hostname.toLowerCase(), 253);
-				referrerPath = clip(parsed.pathname || "/", 180);
+				referrerPath = firstReferrerSegment(parsed.pathname || "/");
 				const engine = searchEngine(referrerHost);
 				if (engine) {
 					engineName = engine.name;
@@ -657,8 +659,8 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 	else if (utmSource || utmMedium || utmCampaign) sourceClass = "other";
 
 	if (!engineName && sourceClass === "search") engineName = engineFromUtm(utmSource);
-	let searchQuery = redactContacts(referrerQuery);
-	if (!searchQuery && utmTerm && (sourceClass === "search" || searchMedium(utmMedium))) searchQuery = clip(utmTerm, 120);
+	let searchQuery = clip(redactContacts(referrerQuery), 80);
+	if (!searchQuery && utmTerm && (sourceClass === "search" || searchMedium(utmMedium))) searchQuery = clip(utmTerm, 80);
 
 	const continentCode = textOf(cf.continent).toUpperCase();
 	return {
@@ -696,14 +698,14 @@ export function normalizeEvent(event: PageViewEvent): Required<PageViewEvent> {
 		slug: clip(event.slug, 120),
 		page: clip(event.page, 180),
 		referrerHost: clip(event.referrerHost, 253),
-		referrerPath: clip(event.referrerPath, 180),
+		referrerPath: event.referrerHost ? firstReferrerSegment(event.referrerPath || "/") : "",
 		sourceClass: event.sourceClass,
 		searchEngine: clip(event.searchEngine, 40),
-		searchQuery: clip(redactContacts(event.searchQuery), 120),
+		searchQuery: clip(redactContacts(event.searchQuery), 80),
 		utmSource: clip(redactContacts(event.utmSource), 80),
 		utmMedium: clip(redactContacts(event.utmMedium), 80),
 		utmCampaign: clip(redactContacts(event.utmCampaign), 80),
-		utmTerm: clip(redactContacts(event.utmTerm), 120),
+		utmTerm: clip(redactContacts(event.utmTerm), 80),
 		country: clip(event.country, 8),
 		region: clip(event.region ?? "", 80),
 		city: clip(event.city ?? "", 80),
@@ -723,7 +725,7 @@ export function normalizeEvent(event: PageViewEvent): Required<PageViewEvent> {
 		scrollPct: Math.max(0, Math.min(100, Math.round(event.scrollPct ?? 0))),
 		returning,
 		clickHost: clip(event.clickHost ?? "", 253),
-		clickPath: clip(event.clickPath ?? "", 180),
+		clickPath: clickKind ? firstReferrerSegment(event.clickPath || "/") : "",
 		clickKind,
 	};
 }

@@ -1,7 +1,7 @@
 /**
- * Bots, 404s, and feed fetches are counted in memory and flushed as daily
- * upserts. A flood becomes a handful of D1 writes per half-minute per isolate
- * instead of one row per request.
+ * Bots, 404s, and feed fetches collapse to one daily upsert per key.
+ * The caller flushes that upsert immediately so a short isolate still counts it.
+ * The Workers rate-limit binding and the daily write budget bound a flood.
  */
 
 export type AggregateKind = "bot" | "miss" | "feed";
@@ -59,11 +59,6 @@ export async function flushAggregates(db: SqlRunner, force = false): Promise<voi
 					`INSERT INTO stats_bot_daily (day, bot_name, hits) VALUES (?, ?, ?)
 					 ON CONFLICT(day, bot_name) DO UPDATE SET hits = hits + excluded.hits`,
 				).bind(day, name, hits).run();
-				await db.prepare(
-					`INSERT INTO stats_daily (day, views, uniques, bots, engaged_ms, engage_n)
-					 VALUES (?, 0, 0, ?, 0, 0)
-					 ON CONFLICT(day) DO UPDATE SET bots = bots + excluded.bots`,
-				).bind(day, hits).run();
 			} else if (kind === "miss") {
 				await db.prepare(
 					`INSERT INTO stats_miss_daily (day, path, hits) VALUES (?, ?, ?)

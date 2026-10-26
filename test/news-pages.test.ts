@@ -112,11 +112,14 @@ describe("news pages", () => {
 		expect(html).not.toContain(ACCURACY_DISCLAIMER);
 		expect(html).not.toContain("AI-generated");
 		expect(html).toContain('"@type":"Organization"');
-		expect(html).toContain('"@type":"Person"');
+		expect(html).not.toContain('"@type":"Person"');
 		expect(html).toContain('"creditText":"Written with AI assistance from cited reporting."');
-		expect(html).toContain('href="https://3aik.com/ai-news/about">Persona</a>');
-		expect(response.headers.get("cache-control")).toContain("private");
-		expect(response.headers.get("cache-control")).toContain("no-store");
+		expect(html).toContain('href="https://3aik.com/ai-news/about">AI persona</a>');
+		expect(html).toContain('"url":"https://3aik.com/ai-news/about"');
+		expect(response.headers.get("cache-control")).toContain("public");
+		expect(response.headers.get("cache-control")).toContain("max-age=120");
+		expect(response.headers.get("content-security-policy")).toContain("'sha256-");
+		expect(response.headers.get("content-security-policy")).not.toContain("'nonce-");
 		expect(html).toContain('"name":"Mira Ellison"');
 		expect(html).toContain(`"dateModified":"${publishedAt}"`);
 		expect(html).toContain("1 min read");

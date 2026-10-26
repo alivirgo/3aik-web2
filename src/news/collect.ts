@@ -1,15 +1,17 @@
 import type { NewsEnv } from "./config";
 import { publicHttpsUrl } from "./net";
 import {
-	cachedDaySalt,
+	hexToSalt,
+	knownDaySalt,
 	pageViewFromRequest,
+	randomDaySalt,
 	saltToHex,
 	type EventKind,
 	type PageViewEvent,
 	trackedPage,
 	visitorHmac,
 } from "./pageviews";
-import { allowCollect } from "./ratelimit";
+import { allowStatsLane } from "./ratelimit";
 import { publicNotFoundResponse } from "./responses";
 import type { NewsRepository } from "./repository";
 
@@ -92,12 +94,12 @@ function returningOf(value: unknown): -1 | 0 | 1 {
 export function beaconToEvent(body: unknown, request: Request, now: Date, siteHost: string): PageViewEvent | null {
 	if (!body || typeof body !== "object") return null;
 	const record = body as Record<string, unknown>;
-	const kind = record.kind === "engage" || record.kind === "click" ? record.kind : "";
+	const kind = record.kind === "view" || record.kind === "engage" || record.kind === "click" ? record.kind : "";
 	if (!kind) return null;
 	const page = typeof record.page === "string" ? record.page : "";
 	const slug = typeof record.slug === "string" ? record.slug : "";
 	const tracked = trackedPage(page === "index" ? "/ai-news" : page === "article" ? `/ai-news/article/${slug}` : page.startsWith("section:") ? `/ai-news/${page.slice(8)}` : page.startsWith("author:") ? `/ai-news/author/${page.slice(7)}` : page === "about" || page === "disclaimer" ? `/ai-news/${page}` : "");
-	if (!tracked || tracked.page !== page || tracked.slug !== slug) return null;
+	if (!tracked || tracked.page !== "article" || !tracked.slug || tracked.page !== page || tracked.slug !== slug) return null;
 	const event = pageViewFromRequest(request, tracked, now, siteHost);
 	event.eventKind = kind as EventKind;
 	event.returning = returningOf(record.returning);
@@ -110,20 +112,20 @@ export function beaconToEvent(body: unknown, request: Request, now: Date, siteHo
 		if (!parsed) return null;
 		const url = new URL(parsed);
 		event.clickHost = url.hostname.toLowerCase();
-		event.clickPath = url.pathname.slice(0, 180);
+		event.clickPath = url.pathname;
 		event.clickKind = record.clickKind === "source" ? "source" : "outbound";
 	}
 	return event;
 }
 
-export function beaconScript(nonce: string, page: string, slug: string): string {
+export function beaconSource(page: string, slug: string): string {
 	const meta = JSON.stringify({ page, slug }).replace(/</g, "\\u003c");
-	return `<script nonce="${nonce}">(function(){var meta=${meta};var key="3aik-news-seen";var returning=0;try{returning=localStorage.getItem(key)==="1"?1:0;if(!returning)localStorage.setItem(key,"1");}catch(e){}var start=Date.now();var maxScroll=0;function depth(){var el=document.documentElement;var h=el.scrollHeight-el.clientHeight;if(h<=0)return 100;return Math.max(0,Math.min(100,Math.round(100*(window.scrollY||el.scrollTop)/h)));}addEventListener("scroll",function(){maxScroll=Math.max(maxScroll,depth());},{passive:true});function send(payload){var body=JSON.stringify(payload);if(navigator.sendBeacon){navigator.sendBeacon("/ai-news/api/collect",new Blob([body],{type:"application/json"}));return;}fetch("/ai-news/api/collect",{method:"POST",body:body,headers:{"content-type":"application/json"},keepalive:true,credentials:"omit"}).catch(function(){});}document.addEventListener("click",function(ev){var node=ev.target;var link=node&&node.closest?node.closest("a"):null;if(!link||!link.href)return;var url;try{url=new URL(link.href);}catch(err){return;}var clickKind="";if(link.closest&&link.closest(".source-line"))clickKind="source";else if(url.origin!==location.origin)clickKind="outbound";else return;send({kind:"click",page:meta.page,slug:meta.slug,href:url.origin+url.pathname,clickKind:clickKind,returning:returning});},true);var sent=false;document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="hidden"||sent)return;sent=true;var w=(screen&&screen.width)||0;var bucket=w<480?"xs":w<768?"sm":w<1200?"md":"lg";send({kind:"engage",page:meta.page,slug:meta.slug,engagedMs:Date.now()-start,scroll:Math.max(maxScroll,depth()),screen:bucket,returning:returning});});})();</script>`;
+	return `(function(){var meta=${meta};var key="3aik-news-seen";var returning=0;try{returning=localStorage.getItem(key)==="1"?1:0;if(!returning)localStorage.setItem(key,"1");}catch(e){}var start=Date.now();var maxScroll=0;function depth(){var el=document.documentElement;var h=el.scrollHeight-el.clientHeight;if(h<=0)return 100;return Math.max(0,Math.min(100,Math.round(100*(window.scrollY||el.scrollTop)/h)));}addEventListener("scroll",function(){maxScroll=Math.max(maxScroll,depth());},{passive:true});function send(payload){var body=JSON.stringify(payload);if(navigator.sendBeacon){navigator.sendBeacon("/ai-news/api/collect",new Blob([body],{type:"application/json"}));return;}fetch("/ai-news/api/collect",{method:"POST",body:body,headers:{"content-type":"application/json"},keepalive:true,credentials:"omit"}).catch(function(){});}send({kind:"view",page:meta.page,slug:meta.slug,returning:returning});document.addEventListener("click",function(ev){var node=ev.target;var link=node&&node.closest?node.closest("a"):null;if(!link||!link.href)return;var url;try{url=new URL(link.href);}catch(err){return;}var clickKind="";if(link.closest&&link.closest(".source-line"))clickKind="source";else if(url.origin!==location.origin)clickKind="outbound";else return;send({kind:"click",page:meta.page,slug:meta.slug,href:url.origin+url.pathname,clickKind:clickKind,returning:returning});},true);var sent=false;document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="hidden"||sent)return;sent=true;var w=(screen&&screen.width)||0;var bucket=w<480?"xs":w<768?"sm":w<1200?"md":"lg";send({kind:"engage",page:meta.page,slug:meta.slug,engagedMs:Date.now()-start,scroll:Math.max(maxScroll,depth()),screen:bucket,returning:returning});});})();`;
 }
 
 export async function handleCollectRequest(
 	request: Request,
-	_env: NewsEnv,
+	env: NewsEnv & { NEWS_STATS_RATE_LIMITER?: RateLimit },
 	repo: NewsRepository | null,
 	origin: string,
 	ctx?: ExecutionContext,
@@ -138,7 +140,7 @@ export async function handleCollectRequest(
 			return noContent();
 		}
 	}
-	if (!allowCollect(request.headers.get("cf-connecting-ip") ?? "anon")) {
+	if (!await allowStatsLane(env.NEWS_STATS_RATE_LIMITER, request.headers.get("cf-connecting-ip") ?? "", "collect")) {
 		await request.body?.cancel().catch(() => undefined);
 		return noContent();
 	}
@@ -162,16 +164,14 @@ export async function handleCollectRequest(
 		siteHost = "3aik.com";
 	}
 	const event = beaconToEvent(parsed, request, now, siteHost);
-	if (!event || !repo) return noContent();
+	if (!event || !repo || !event.slug || !await repo.hasSlug(event.slug)) return noContent();
 	const address = request.headers.get("cf-connecting-ip") ?? "";
 	const userAgent = request.headers.get("user-agent") ?? "";
 	const day = event.viewedAt.slice(0, 10);
-	const salt = cachedDaySalt(day);
+	const known = knownDaySalt(day);
+	const salt = known ?? hexToSalt(await repo.persistDaySalt(day, saltToHex(randomDaySalt()))) ?? new Uint8Array();
 	event.visitorHash = visitorHmac(salt, address, userAgent);
-	const work = Promise.all([
-		repo.persistDaySalt(day, saltToHex(salt)),
-		repo.recordPageView(event),
-	]).catch((error: unknown) => {
+	const work = repo.recordPageView(event).catch((error: unknown) => {
 		console.error(JSON.stringify({
 			message: "ai-news collect failed",
 			error: error instanceof Error ? error.message : "collect",
