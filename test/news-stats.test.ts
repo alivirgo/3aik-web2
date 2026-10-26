@@ -4,7 +4,8 @@ import worker from "../src/index";
 import { handleNewsRequest } from "../src/news/routes";
 import { D1NewsRepository, MemoryNewsRepository } from "../src/news/repository";
 import { emptyStatsReport, pageViewFromRequest } from "../src/news/pageviews";
-import { expectedStatsDigest, formatDuration, formatPercent, NEWS_STATS_DIGEST, renderStatsCsv, renderStatsDashboard, resetStatsDigestWarning } from "../src/news/stats";
+import { expectedStatsDigest, formatDuration, formatPercent, NEWS_STATS_DIGEST, renderStatsCsv, renderStatsDashboard, resetStatsDigestWarning, statsQueryFromUrl } from "../src/news/stats";
+import { allowStatsLane } from "../src/news/ratelimit";
 import { NewsStatsBudget, STATS_DAILY_WRITE_CAP } from "../src/news/budget";
 import { resetAggregates } from "../src/news/aggregates";
 import type { StoredArticle } from "../src/news/types";
@@ -380,7 +381,7 @@ describe("private stats", () => {
 				};
 			},
 		};
-		const repo = new D1NewsRepository(db as unknown as D1Database, { budget: { async take() { return true; } } });
+		const repo = new D1NewsRepository(db as unknown as D1Database, { budget: { async open() { return true; }, async charge() {} } });
 		const request = new Request("https://3aik.test/ai-news/article/short-bulletin", {
 			headers: { "user-agent": AGENT, "cf-connecting-ip": IP },
 		});
@@ -489,7 +490,7 @@ describe("private stats", () => {
 				};
 			},
 		};
-		const repo = new D1NewsRepository(db as unknown as D1Database, { budget: { async take() { return true; } } });
+		const repo = new D1NewsRepository(db as unknown as D1Database, { budget: { async open() { return true; }, async charge() {} } });
 		const base = pageViewFromRequest(
 			new Request("https://3aik.test/ai-news/article/missing", { headers: { "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1)" } }),
 			{ slug: "", page: "/ai-news/article/missing" },
@@ -560,16 +561,23 @@ describe("private stats", () => {
 						return {
 							async run() {
 								calls.push(sql.toLowerCase());
-								return { meta: { changes: 1 } };
+								return { meta: { changes: 1, rows_written: 3 } };
 							},
 						};
 					},
 				};
 			},
 		};
-		const repo = new D1NewsRepository(db as unknown as D1Database);
+		const charged: number[] = [];
+		const repo = new D1NewsRepository(db as unknown as D1Database, {
+			budget: {
+				async open() { return true; },
+				async charge(rows: number) { charged.push(rows); },
+			},
+		});
 		await repo.pruneStatsRetention(new Date("2026-10-26T13:00:00.000Z"));
 		const packed = calls.join("\n");
+		expect(charged).toEqual(Array(10).fill(3));
 		expect(packed).toContain("delete from stats_visitor_day");
 		expect(packed).toContain("delete from stats_day_salt");
 		expect(packed).toContain("delete from stats_article_hour");
@@ -599,7 +607,7 @@ describe("private stats", () => {
 			},
 		};
 		const repo = new D1NewsRepository(db as unknown as D1Database, {
-			budget: { async take() { return false; } },
+			budget: { async open() { return false; }, async charge() {} },
 			analytics: { writeDataPoint() { points += 1; } },
 		});
 		const event = pageViewFromRequest(
@@ -650,17 +658,104 @@ describe("private stats", () => {
 		};
 		const budget = new NewsStatsBudget(state as never, {} as never);
 		const day = "2026-10-26";
-		const full = await budget.fetch(new Request("https://stats-budget.internal/take", {
+		const charged = await budget.fetch(new Request("https://stats-budget.internal/", {
 			method: "POST",
-			body: JSON.stringify({ cost: 2, day }),
+			body: JSON.stringify({ op: "charge", rows: 7, day }),
 		}));
-		expect(await full.json()).toEqual({ ok: true });
-		rows.set(day, STATS_DAILY_WRITE_CAP);
-		const blocked = await budget.fetch(new Request("https://stats-budget.internal/take", {
+		expect(await charged.json()).toEqual({ ok: true });
+		expect(rows.get(day)).toBe(7);
+		rows.set(day, STATS_DAILY_WRITE_CAP - 1);
+		const crossing = await budget.fetch(new Request("https://stats-budget.internal/", {
 			method: "POST",
-			body: JSON.stringify({ cost: 1, day }),
+			body: JSON.stringify({ op: "charge", rows: 4, day }),
+		}));
+		expect(await crossing.json()).toEqual({ ok: false });
+		expect(rows.get(day)).toBe(STATS_DAILY_WRITE_CAP + 3);
+		const blocked = await budget.fetch(new Request("https://stats-budget.internal/", {
+			method: "POST",
+			body: JSON.stringify({ op: "open", day }),
 		}));
 		expect(await blocked.json()).toEqual({ ok: false });
-		expect(rows.get(day)).toBe(STATS_DAILY_WRITE_CAP);
+	});
+
+	it("charges D1 rows_written for a view and for prune deletes", async () => {
+		const calls: string[] = [];
+		const charged: number[] = [];
+		let open = true;
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind() {
+						return {
+							async run() {
+								calls.push(sql.toLowerCase());
+								return { meta: { changes: 1, rows_written: 5 } };
+							},
+						};
+					},
+				};
+			},
+		};
+		const repo = new D1NewsRepository(db as unknown as D1Database, {
+			budget: {
+				async open() { return open; },
+				async charge(rows: number) { charged.push(rows); },
+			},
+		});
+		const event = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin"),
+			{ slug: "short-bulletin", page: "article" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		event.visitorHash = "ab".repeat(32);
+		await repo.recordPageView(event);
+		expect(charged).toEqual([5, 5]);
+		expect(calls.join("\n")).toContain("stats_visitor_day");
+		expect(calls.join("\n")).toContain("stats_article_hour");
+		calls.length = 0;
+		open = false;
+		await repo.recordPageView(event);
+		expect(calls).toHaveLength(0);
+		expect(charged).toEqual([5, 5]);
+		open = true;
+		await repo.pruneStatsRetention(new Date("2026-10-26T13:00:00.000Z"));
+		const deletes = calls.filter((sql) => sql.startsWith("delete from"));
+		expect(deletes.length).toBeGreaterThan(0);
+		expect(charged.slice(2)).toEqual(deletes.map(() => 5));
+		expect(calls.some((sql) => sql.includes("stats-prune"))).toBe(true);
+		expect(charged.length).toBe(2 + deletes.length);
+	});
+
+	it("clamps a stats range to 400 days and does not present a fake bounce rate", () => {
+		const now = new Date("2026-10-26T13:00:00.000Z");
+		const query = statsQueryFromUrl(new URL("https://3aik.test/ai-news/api/stats?from=2020-01-01&to=2026-10-26"), null, now);
+		expect(query.to).toBe("2026-10-26");
+		expect(query.from).toBe("2025-09-22");
+		const report = emptyStatsReport(now);
+		report.ready = true;
+		report.truncated = true;
+		report.comparison.current.bounceRate = null;
+		report.comparison.previous.bounceRate = null;
+		const html = renderStatsDashboard(report);
+		expect(html).toContain(">n/a<");
+		expect(html).toContain("Not computed from rollups");
+		expect(html).not.toContain("newest 400");
+	});
+
+	it("shares one rate-limit key across lanes and fails closed when the binding throws", async () => {
+		const keys: string[] = [];
+		const limiter = {
+			async limit(options: { key: string }) {
+				keys.push(options.key);
+				return { success: true };
+			},
+		};
+		expect(await allowStatsLane(limiter, "203.0.113.9", "collect")).toBe(true);
+		expect(await allowStatsLane(limiter, "203.0.113.9", "counter")).toBe(true);
+		expect(keys[0]).toBe(keys[1]);
+		expect(keys[0]).not.toContain("collect");
+		const broken = { async limit() { throw new Error("binding down"); } };
+		expect(await allowStatsLane(broken, "203.0.113.9", "collect")).toBe(false);
 	});
 });

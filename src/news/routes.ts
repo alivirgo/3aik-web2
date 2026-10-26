@@ -12,10 +12,11 @@ import {
 import { loadPublicImage, parseMediaRequest } from "./github-images";
 import { handleIngestRequest, ingestApiPath } from "./ingest";
 import { beaconSource, handleCollectRequest, isNewsCollectPath } from "./collect";
-import { takeStatsBudget } from "./budget";
+import { statsBudgetCharge, statsBudgetOpen } from "./budget";
 import { isFeedPath, isTrackedMiss, pageViewFromRequest, trackedPage, type PageViewEvent } from "./pageviews";
 import { allowStatsLane } from "./ratelimit";
-import { htmlCsp, inlineScriptHashes, publicNotFoundResponse, securityHeaders } from "./responses";
+import { htmlCsp, publicNotFoundResponse, scriptSourceHashes, securityHeaders } from "./responses";
+import type { NewsHtml } from "./html";
 import { D1NewsRepository, type NewsRepository, type NewsStatsOptions } from "./repository";
 import { handleNewsStatsRequest, isNewsStatsPath } from "./stats";
 import { runPublishCycle } from "./pipeline";
@@ -53,12 +54,13 @@ export const SITEMAP_PAGE_SIZE = 1000;
 const FEED_ARTICLE_LIMIT = 100;
 const IMAGE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'";
 
-async function htmlResponse(request: Request, body: string, status: number, cache: string): Promise<Response> {
+async function htmlResponse(request: Request, page: NewsHtml, status: number, cache: string): Promise<Response> {
 	const path = normalizePath(new URL(request.url).pathname);
 	const tracked = status === 200 ? trackedPage(path) : null;
-	const source = tracked?.slug ? beaconSource(tracked.page, tracked.slug) : "";
-	const html = source ? body.replace("</body>", `<script>${source}</script></body>`) : body;
-	const headers = securityHeaders("text/html; charset=utf-8", cache, htmlCsp(await inlineScriptHashes(html)));
+	const beacon = tracked?.slug ? beaconSource(tracked.page, tracked.slug) : "";
+	const scripts = beacon ? [...page.scripts, beacon] : page.scripts;
+	const html = beacon ? page.html.replace("</body>", `<script>${beacon}</script></body>`) : page.html;
+	const headers = securityHeaders("text/html; charset=utf-8", cache, htmlCsp(await scriptSourceHashes(scripts)));
 	if (request.method === "HEAD") return new Response(null, { status, headers });
 	return new Response(html, { status, headers });
 }
@@ -154,7 +156,10 @@ async function countArticles(repo: NewsRepository | null): Promise<number> {
 function statsOptions(env: Env): NewsStatsOptions {
 	return {
 		budget: env.NEWS_STATS_BUDGET
-			? { take: (cost, day) => takeStatsBudget(env.NEWS_STATS_BUDGET as DurableObjectNamespace, cost, day) }
+			? {
+				open: (day) => statsBudgetOpen(env.NEWS_STATS_BUDGET as DurableObjectNamespace, day),
+				charge: (rows, day) => statsBudgetCharge(env.NEWS_STATS_BUDGET as DurableObjectNamespace, rows, day),
+			}
 			: undefined,
 		analytics: env.AI_NEWS_EVENTS,
 	};

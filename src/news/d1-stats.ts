@@ -180,7 +180,7 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 			bots: report.totals.botHitsExcluded,
 			avgEngagedMs: currentEngage.avgEngagedMs,
 			avgScrollPct: currentEngage.avgScrollPct,
-			bounceRate: 0,
+			bounceRate: null,
 		},
 		previous: {
 			from: prevStartDay,
@@ -190,9 +190,10 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 			bots: await botWindow(prevStartDay, prevEndDay),
 			avgEngagedMs: previousEngage.avgEngagedMs,
 			avgScrollPct: previousEngage.avgScrollPct,
-			bounceRate: 0,
+			bounceRate: null,
 		},
 	};
+	report.audience.bounceRate = null;
 	report.audience.avgEngagedMs = currentEngage.avgEngagedMs;
 	report.audience.avgScrollPct = currentEngage.avgScrollPct;
 

@@ -1,6 +1,6 @@
 import { authorById } from "./authors";
 import type { ArticleCatalogEntry, NewsStatsReport, PageViewEvent, StatsQuery } from "./pageviews";
-import { flushAggregates, queueAggregate } from "./aggregates";
+import { flushAggregates, queueAggregate, rowsWrittenOf } from "./aggregates";
 import { STATS_DAILY_WRITE_CAP, type StatsBudget } from "./budget";
 import { loadD1StatsReport } from "./d1-stats";
 import { writeNewsEvent } from "./events";
@@ -474,8 +474,7 @@ export class D1NewsRepository implements NewsRepository {
 		const day = row.viewedAt.slice(0, 10);
 		const aggregated = row.eventKind === "404" || row.eventKind === "feed" || row.bot === 1;
 		if (aggregated && row.eventKind === "404" && !/^\/ai-news\/article\/[a-z0-9-]{1,120}$/.test(row.page)) return;
-		const cost = writeCost(row, aggregated);
-		const allowed = await this.reserveWrites(cost, day);
+		const allowed = await this.budgetOpen(day);
 		writeNewsEvent(this.statsOptions.analytics, {
 			kind: row.eventKind,
 			slug: row.slug,
@@ -492,7 +491,7 @@ export class D1NewsRepository implements NewsRepository {
 			if (row.eventKind === "feed") queueAggregate("feed", day, row.page || "/ai-news");
 			if (row.bot === 1) queueAggregate("bot", day, row.botName || "bot");
 			try {
-				await flushAggregates(this.db, true);
+				for (const rows of await flushAggregates(this.db, true)) await this.chargeRows(rows, day);
 			} catch (error) {
 				if (!missingSchema(error)) throw error;
 			}
@@ -507,67 +506,100 @@ export class D1NewsRepository implements NewsRepository {
 		}
 	}
 
-	private async reserveWrites(cost: number, day: string): Promise<boolean> {
-		if (this.statsOptions.budget) return this.statsOptions.budget.take(cost, day);
+	private async budgetOpen(day: string): Promise<boolean> {
+		if (this.statsOptions.budget) return this.statsOptions.budget.open(day);
 		try {
-			const result = await this.db
-				.prepare(
-					`INSERT INTO stats_write_budget (day, writes) VALUES (?, ?)
-					 ON CONFLICT(day) DO UPDATE SET writes = writes + excluded.writes
-					 WHERE stats_write_budget.writes + excluded.writes <= ?`,
-				)
-				.bind(day, cost + 1, STATS_DAILY_WRITE_CAP)
-				.run();
-			return (result.meta?.changes ?? 0) > 0;
+			const row = await this.db.prepare("SELECT writes FROM stats_write_budget WHERE day = ?").bind(day).first<{ writes?: number }>();
+			const writes = Number(row?.writes ?? 0);
+			return !Number.isFinite(writes) || writes < STATS_DAILY_WRITE_CAP;
 		} catch (error) {
 			if (!missingSchema(error)) throw error;
 			return false;
 		}
 	}
 
+	private async chargeRows(rows: number, day: string): Promise<void> {
+		if (rows <= 0) return;
+		if (this.statsOptions.budget) {
+			await this.statsOptions.budget.charge(rows, day);
+			return;
+		}
+		try {
+			const result = await this.db
+				.prepare(
+					`INSERT INTO stats_write_budget (day, writes) VALUES (?, ?)
+					 ON CONFLICT(day) DO UPDATE SET writes = writes + excluded.writes`,
+				)
+				.bind(day, rows)
+				.run();
+			const extra = rowsWrittenOf(result);
+			if (extra > 0) {
+				await this.db
+					.prepare("UPDATE stats_write_budget SET writes = writes + ? WHERE day = ?")
+					.bind(extra, day)
+					.run();
+			}
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
+	}
+
+	private async runCharged(day: string, sql: string, ...binds: unknown[]): Promise<{ meta?: { changes?: number; rows_written?: number } } | null> {
+		if (!(await this.budgetOpen(day))) return null;
+		const result = await this.db.prepare(sql).bind(...binds).run();
+		await this.chargeRows(rowsWrittenOf(result), day);
+		return result;
+	}
+
 	private async rollupView(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
 		let uniques = 0;
 		if (event.visitorHash) {
-			const inserted = await this.db
-				.prepare(`INSERT OR IGNORE INTO stats_visitor_day (day, visitor_hash) VALUES (?, ?)`)
-				.bind(day, event.visitorHash)
-				.run();
+			const inserted = await this.runCharged(day, `INSERT OR IGNORE INTO stats_visitor_day (day, visitor_hash) VALUES (?, ?)`, day, event.visitorHash);
+			if (!inserted) return;
 			uniques = inserted.meta?.changes ?? 0;
 		}
-		await this.db
-			.prepare(
-				`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
-				 VALUES (?, ?, ?, 1, ?, 0, 0, 0)
-				 ON CONFLICT(day, hour_utc, slug) DO UPDATE SET
-				 views = views + 1,
-				 uniques = uniques + excluded.uniques`,
-			)
-			.bind(day, event.hourUtc, event.slug || event.page || "article", uniques)
-			.run();
+		await this.runCharged(
+			day,
+			`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
+			 VALUES (?, ?, ?, 1, ?, 0, 0, 0)
+			 ON CONFLICT(day, hour_utc, slug) DO UPDATE SET
+			 views = views + 1,
+			 uniques = uniques + excluded.uniques`,
+			day,
+			event.hourUtc,
+			event.slug || event.page || "article",
+			uniques,
+		);
 	}
 
 	private async rollupEngage(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
-		await this.db
-			.prepare(
-				`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
-				 VALUES (?, ?, ?, 0, 0, ?, 1, ?)
-				 ON CONFLICT(day, hour_utc, slug) DO UPDATE SET
-				 engaged_ms = engaged_ms + excluded.engaged_ms,
-				 engage_n = engage_n + 1,
-				 scroll_sum = scroll_sum + excluded.scroll_sum`,
-			)
-			.bind(day, event.hourUtc, event.slug || "article", event.engagedMs, event.scrollPct)
-			.run();
+		await this.runCharged(
+			day,
+			`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
+			 VALUES (?, ?, ?, 0, 0, ?, 1, ?)
+			 ON CONFLICT(day, hour_utc, slug) DO UPDATE SET
+			 engaged_ms = engaged_ms + excluded.engaged_ms,
+			 engage_n = engage_n + 1,
+			 scroll_sum = scroll_sum + excluded.scroll_sum`,
+			day,
+			event.hourUtc,
+			event.slug || "article",
+			event.engagedMs,
+			event.scrollPct,
+		);
 	}
 
 	private async rollupClick(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
-		await this.db
-			.prepare(
-				`INSERT INTO stats_click_daily (day, slug, kind, host, path, hits) VALUES (?, ?, ?, ?, ?, 1)
-				 ON CONFLICT(day, slug, kind, host, path) DO UPDATE SET hits = hits + 1`,
-			)
-			.bind(day, event.slug || "article", event.clickKind, event.clickHost, event.clickPath || "/")
-			.run();
+		await this.runCharged(
+			day,
+			`INSERT INTO stats_click_daily (day, slug, kind, host, path, hits) VALUES (?, ?, ?, ?, ?, 1)
+			 ON CONFLICT(day, slug, kind, host, path) DO UPDATE SET hits = hits + 1`,
+			day,
+			event.slug || "article",
+			event.clickKind,
+			event.clickHost,
+			event.clickPath || "/",
+		);
 	}
 
 	async pruneStatsRetention(now: Date): Promise<void> {
@@ -598,7 +630,9 @@ export class D1NewsRepository implements NewsRepository {
 		] as const;
 		for (const [sql, bind] of statements) {
 			try {
-				await this.db.prepare(sql).bind(bind).run();
+				if (!(await this.budgetOpen(today))) return;
+				const result = await this.db.prepare(sql).bind(bind).run();
+				await this.chargeRows(rowsWrittenOf(result), today);
 			} catch (error) {
 				if (!missingSchema(error)) throw error;
 			}
@@ -621,16 +655,6 @@ export class D1NewsRepository implements NewsRepository {
 		return loadD1StatsReport(this.db, now, query);
 	}
 
-}
-
-function writeCost(row: ReturnType<typeof normalizeEvent>, aggregated: boolean): number {
-	if (!aggregated && row.eventKind === "view" && row.visitorHash) return 2;
-	if (!aggregated) return 1;
-	let writes = 0;
-	if (row.eventKind === "404") writes += 1;
-	if (row.eventKind === "feed") writes += 1;
-	if (row.bot === 1) writes += 1;
-	return Math.min(2, Math.max(1, writes));
 }
 
 function numberOf(row: Record<string, unknown> | null, key: string): number {

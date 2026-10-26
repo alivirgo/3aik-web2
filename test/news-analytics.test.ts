@@ -441,5 +441,21 @@ describe("detailed stats", () => {
 		}
 		expect(repo.pageViews).toHaveLength(3);
 		expect(limited).toBeGreaterThan(0);
+		const throwing = {
+			async limit() {
+				throw new Error("binding down");
+			},
+		};
+		const failed = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/collect", {
+				method: "POST",
+				headers: { origin: "https://3aik.test", "content-type": "application/json", "cf-connecting-ip": "203.0.113.77" },
+				body: JSON.stringify(beacon),
+			}),
+			env(throwing),
+			{ repo, now: NOW },
+		);
+		expect(failed.status).toBe(204);
+		expect(repo.pageViews).toHaveLength(3);
 	});
 });

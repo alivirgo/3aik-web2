@@ -112,7 +112,7 @@ export interface AudienceStats {
 	uniques: number;
 	sessions: number;
 	bounces: number;
-	bounceRate: number;
+	bounceRate: number | null;
 	avgEngagedMs: number;
 	avgScrollPct: number;
 	newVisitors: number;
@@ -127,7 +127,7 @@ export interface PeriodSlice {
 	bots: number;
 	avgEngagedMs: number;
 	avgScrollPct: number;
-	bounceRate: number;
+	bounceRate: number | null;
 }
 
 export interface ArticleCatalogEntry {
@@ -201,7 +201,7 @@ export interface NewsStatsReport {
 }
 
 export const RAW_RETENTION_DAYS = 90;
-export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is stored before the hash and is not derived from a token. The cron deletes that salt after the UTC day. Raw events go to Workers Analytics Engine. D1 keeps hourly article rollups, capped at 25,000 row writes a day, and keeps those daily tables for 400 days. This D1 desk does not scan raw rows, so its bounce rate stays at zero. An in-memory report still treats a bounce as one human page view inside a 30-minute session.";
+export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is stored before the hash and is not derived from a token. The cron deletes that salt after the UTC day. Raw events go to Workers Analytics Engine. D1 keeps hourly article rollups. The daily cap counts D1 rows_written, including index rows and prune deletes, and stops at 25,000. Daily tables are kept 400 days. This D1 desk does not compute bounce, so that card stays n/a. An in-memory report still treats a bounce as one human page view inside a 30-minute session.";
 
 const SEARCH_ENGINES: Array<{ name: string; hosts: string[]; keys: string[] }> = [
 	{ name: "Google", hosts: ["google.com"], keys: ["q"] },

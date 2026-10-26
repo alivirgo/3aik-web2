@@ -13,11 +13,11 @@ export async function scriptSourceHash(source: string): Promise<string> {
 	return `'sha256-${btoa(binary)}'`;
 }
 
-export async function inlineScriptHashes(html: string): Promise<string[]> {
+/** Hashes of sources this worker wrote: JSON-LD bodies and the collect beacon. Nothing else. */
+export async function scriptSourceHashes(sources: string[]): Promise<string[]> {
 	const hashes: string[] = [];
-	const pattern = /<script(?: type="application\/ld\+json")?>([\s\S]*?)<\/script>/g;
-	for (const match of html.matchAll(pattern)) {
-		if (match[1]) hashes.push(await scriptSourceHash(match[1]));
+	for (const source of sources) {
+		if (source) hashes.push(await scriptSourceHash(source));
 	}
 	return hashes;
 }
@@ -41,8 +41,8 @@ export function securityHeaders(contentType: string, cache: string, csp: string)
 }
 
 export async function publicNotFoundResponse(request: Request, origin: string): Promise<Response> {
-	const body = renderNotFound(origin);
-	const headers = securityHeaders("text/html; charset=utf-8", "no-store", htmlCsp(await inlineScriptHashes(body)));
+	const page = renderNotFound(origin);
+	const headers = securityHeaders("text/html; charset=utf-8", "no-store", htmlCsp(await scriptSourceHashes(page.scripts)));
 	if (request.method === "HEAD") return new Response(null, { status: 404, headers });
-	return new Response(body, { status: 404, headers });
+	return new Response(page.html, { status: 404, headers });
 }

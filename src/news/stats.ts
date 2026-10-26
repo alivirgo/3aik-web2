@@ -73,15 +73,21 @@ export async function statsAuthorized(request: Request, env: { AI_NEWS_STATS_TOK
 	return true;
 }
 
-export function statsQueryFromUrl(url: URL, slug: string | null = null): StatsQuery {
+const MAX_STATS_RANGE_DAYS = 400;
+
+export function statsQueryFromUrl(url: URL, slug: string | null = null, now = new Date()): StatsQuery {
 	const date = /^\d{4}-\d{2}-\d{2}$/;
-	const from = url.searchParams.get("from");
-	const to = url.searchParams.get("to");
-	return {
-		from: from && date.test(from) ? from : null,
-		to: to && date.test(to) ? to : null,
-		slug,
-	};
+	const rawFrom = url.searchParams.get("from");
+	const rawTo = url.searchParams.get("to");
+	let from = rawFrom && date.test(rawFrom) ? rawFrom : null;
+	let to = rawTo && date.test(rawTo) ? rawTo : null;
+	if (!from && !to) return { from, to, slug };
+	const today = now.toISOString().slice(0, 10);
+	if (!to || to > today) to = today;
+	if (from && from > to) from = to;
+	const earliest = dayShift(to, -(MAX_STATS_RANGE_DAYS - 1));
+	if (!from || from < earliest) from = earliest;
+	return { from, to, slug };
 }
 
 function statsHeaders(contentType: string): Headers {
@@ -234,6 +240,13 @@ function deltaLabel(current: number, previous: number, lowerIsBetter = false): {
 	return { text, tone };
 }
 
+function bounceCard(current: number | null, previous: number | null, bounces: number): string {
+	if (current == null || previous == null) {
+		return `<article class="kpi"><h2>Bounce</h2><p class="kpi-value">n/a</p><p class="delta flat">Not computed from rollups</p><p class="kpi-sub">Raw sessions are not stored in D1</p></article>`;
+	}
+	return kpi("Bounce", formatPercent(current), current, previous, `${formatCount(bounces)} single-page sessions`, true);
+}
+
 function kpi(label: string, value: string, current: number, previous: number, detail: string, lowerIsBetter = false): string {
 	const delta = deltaLabel(current, previous, lowerIsBetter);
 	return `<article class="kpi"><h2>${escapeHtml(label)}</h2><p class="kpi-value">${escapeHtml(value)}</p><p class="delta ${delta.tone}">${escapeHtml(delta.text)}</p><p class="kpi-sub">${detail}</p></article>`;
@@ -272,8 +285,7 @@ export function renderStatsDashboard(report: NewsStatsReport, heading = "Newsroo
 	const publish = report.publishLog.map((row) => `<tr>${cell(row.publishedAt)}${cell(row.title)}${cell(row.author)}${cell(row.category)}${cell(row.words)}${cell(row.tags)}</tr>`);
 	const topDay = countedRows(report.topByDay.map((row) => ({ label: escapeHtml(row.day), extra: [row.title || row.slug], views: row.views })));
 	const since = report.since ? escapeHtml(report.since) : "no views yet";
-	const notice = report.ready ? "" : `<p class="warn">Stats storage is not ready. Apply migrations 0004 and 0005, then reload.</p>`;
-	const truncated = report.truncated ? `<p class="warn">Bounce and session detail used the newest 400 raw events. Charts and totals come from daily rollups.</p>` : "";
+	const notice = report.ready ? "" : `<p class="warn">Stats storage is not ready. Apply migrations 0006 and 0007, then reload.</p>`;
 	const from = report.range.from ?? "";
 	const to = report.range.to ?? "";
 	const period = `${current.from} to ${current.to}`;
@@ -282,7 +294,7 @@ export function renderStatsDashboard(report: NewsStatsReport, heading = "Newsroo
 		kpi("Uniques", formatCount(current.uniques), current.uniques, previous.uniques, "Daily hashes, not people"),
 		kpi("Avg engaged time", formatDuration(current.avgEngagedMs), current.avgEngagedMs, previous.avgEngagedMs, `Scroll ${current.avgScrollPct}%`),
 		kpi("Scroll depth", formatPercent(current.avgScrollPct / 100), current.avgScrollPct, previous.avgScrollPct, "Mean of beacon samples"),
-		kpi("Bounce", formatPercent(current.bounceRate), current.bounceRate, previous.bounceRate, `${formatCount(report.audience.bounces)} single-page sessions`, true),
+		bounceCard(current.bounceRate, previous.bounceRate, report.audience.bounces),
 		kpi("Bot hits", formatCount(current.bots), current.bots, previous.bots, `${formatCount(totals.botHitsExcluded)} excluded from human counts`, true),
 	].join("");
 	const end = report.generatedAt.slice(0, 10);
@@ -367,7 +379,6 @@ th { font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; colo
 <h1>${escapeHtml(heading)}</h1>
 <p class="meta">Generated ${escapeHtml(report.generatedAt)}. Since ${since}. Period ${escapeHtml(period)} compared with ${escapeHtml(previous.from)} to ${escapeHtml(previous.to)}. Human counts leave bots out.</p>
 ${notice}
-${truncated}
 <nav class="ranges" aria-label="Date range">
 ${rangeLinks}
 <a href="${escapeHtml(path)}">All recent</a>

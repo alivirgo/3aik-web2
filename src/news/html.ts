@@ -115,7 +115,12 @@ function sectionNav(origin: string, current?: NavCurrent): string {
 	return `<nav class="sections" aria-label="Sections">${chips}</nav>`;
 }
 
-export function renderPage(options: PageOptions): string {
+export interface NewsHtml {
+	html: string;
+	scripts: string[];
+}
+
+export function renderPage(options: PageOptions): NewsHtml {
 	const description = stripEditorialDashes(options.description);
 	const title = stripEditorialDashes(options.title);
 	const imageTags = options.image
@@ -130,10 +135,11 @@ export function renderPage(options: PageOptions): string {
 		: "";
 	const section = options.section ? `<meta property="article:section" content="${escapeHtml(options.section)}">` : "";
 	const tags = (options.tags ?? []).map((tag) => `<meta property="article:tag" content="${escapeHtml(tag)}">`).join("\n");
-	const scripts = (options.jsonLd ?? []).map((entry) => `<script type="application/ld+json">${jsonForScript(entry)}</script>`).join("\n");
+	const scripts = (options.jsonLd ?? []).map((entry) => jsonForScript(entry));
+	const scriptTags = scripts.map((source) => `<script type="application/ld+json">${source}</script>`).join("\n");
 	const dateline = formatDateline();
 	const aboutCurrent = options.navCurrent === "about" ? ` aria-current="page"` : "";
-	return `<!DOCTYPE html>
+	const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -159,7 +165,7 @@ ${tags}
 <link rel="alternate" type="application/atom+xml" title="${SITE_NAME}" href="${options.origin}/ai-news/atom.xml">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ai-news.css">
-${scripts}
+${scriptTags}
 ${ADSENSE_SCRIPT}
 </head>
 <body class="desk">
@@ -183,6 +189,7 @@ ${options.footerNote ? `<p class="assist">${escapeHtml(options.footerNote)}</p>`
 </footer>
 </body>
 </html>`;
+	return { html, scripts };
 }
 
 function crumbs(origin: string, items: Array<{ href?: string; label: string }>): { html: string; json: unknown } {
@@ -330,7 +337,7 @@ function shareNav(canonical: string, title: string): string {
 <nav class="share" aria-label="Share this article"><a href="${escapeHtml(canonical)}">Article link</a><a href="${escapeHtml(email)}">Email</a><a href="${escapeHtml(tweet)}" rel="noopener noreferrer">X</a><a href="${escapeHtml(linkedin)}" rel="noopener noreferrer">LinkedIn</a></nav>`;
 }
 
-export function renderIndex(origin: string, articles: StoredArticle[]): string {
+export function renderIndex(origin: string, articles: StoredArticle[]): NewsHtml {
 	const canonical = `${origin}/ai-news`;
 	const description = "AI-assisted news on AI, technology, fashion, and showbiz, rewritten from credible outlets and linked back to them.";
 	const now = Date.now();
@@ -355,7 +362,7 @@ export function renderIndex(origin: string, articles: StoredArticle[]): string {
 	});
 }
 
-export function renderCategory(origin: string, category: Category, articles: StoredArticle[]): string {
+export function renderCategory(origin: string, category: Category, articles: StoredArticle[]): NewsHtml {
 	const canonical = categoryHref(origin, category);
 	const label = CATEGORY_LABEL[category];
 	const now = Date.now();
@@ -379,7 +386,7 @@ export function renderCategory(origin: string, category: Category, articles: Sto
 	});
 }
 
-export function renderAuthor(origin: string, authorId: string, articles: StoredArticle[]): string | null {
+export function renderAuthor(origin: string, authorId: string, articles: StoredArticle[]): NewsHtml | null {
 	const author = authorById(authorId);
 	if (!author) return null;
 	const canonical = authorHref(origin, author.id);
@@ -430,7 +437,7 @@ ${list}`;
 	});
 }
 
-export function renderArticle(origin: string, article: StoredArticle, latest: StoredArticle[] = []): string {
+export function renderArticle(origin: string, article: StoredArticle, latest: StoredArticle[] = []): NewsHtml {
 	const author = authorById(article.authorId);
 	const name = author?.name ?? "Desk persona";
 	const canonical = articleHref(origin, article.slug);
@@ -501,6 +508,7 @@ ${latestList(origin, others, now)}
 		author: {
 			"@type": "Organization",
 			name,
+			description: "Not a real person.",
 			url: `${origin}/ai-news/about`,
 		},
 		creditText: ASSIST_LINE,
@@ -547,7 +555,7 @@ ${latestList(origin, others, now)}
 	});
 }
 
-export function renderAbout(origin: string): string {
+export function renderAbout(origin: string): NewsHtml {
 	const canonical = `${origin}/ai-news/about`;
 	const roster = AUTHORS.map((author) => `<li><span class="avatar" aria-hidden="true">${escapeHtml(authorInitials(author.name))}</span><div><a href="${authorHref(origin, author.id)}">${escapeHtml(author.name)}</a> <span>${escapeHtml(CATEGORY_LABEL[author.category])} · ${escapeHtml(author.beat)}</span><p>${escapeHtml(author.bio)}</p></div></li>`).join("");
 	const trail = crumbs(origin, [
@@ -588,7 +596,7 @@ export function renderAbout(origin: string): string {
 	});
 }
 
-export function renderDisclaimer(origin: string): string {
+export function renderDisclaimer(origin: string): NewsHtml {
 	const canonical = `${origin}/ai-news/disclaimer`;
 	const trail = crumbs(origin, [
 		{ href: `${origin}/`, label: "3aik" },
@@ -616,7 +624,7 @@ export function renderDisclaimer(origin: string): string {
 	});
 }
 
-export function renderNotFound(origin: string): string {
+export function renderNotFound(origin: string): NewsHtml {
 	return renderPage({
 		origin,
 		title: `Not found | ${SITE_NAME}`,

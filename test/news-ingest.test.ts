@@ -596,7 +596,7 @@ describe("publisher images", () => {
 				};
 			},
 		};
-		const stats = new D1NewsRepository(db as unknown as D1Database, { budget: { async take() { return false; } } });
+		const stats = new D1NewsRepository(db as unknown as D1Database, { budget: { async open() { return false; }, async charge() {} } });
 		const event = pageViewFromRequest(
 			new Request("https://3aik.test/ai-news/article/short-bulletin"),
 			{ slug: "short-bulletin", page: "article" },

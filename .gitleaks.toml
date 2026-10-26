@@ -3,14 +3,27 @@ title = "3aik gitleaks allowlist"
 [extend]
 useDefault = true
 
-# The stats desk compares SHA-256(bearer) with this digest. The bearer is not
-# in git. The test fixture string below only appears in older commits.
-[[allowlists]]
+# These allowlists sit on generic-api-key, which is the only rule that
+# matches the committed stats digest. condition AND means a finding is
+# ignored only when the path and the secret both match. The default is OR,
+# which would ignore every secret in these files.
+#
+# Global [[allowlists]] with targetRules are not used: gitleaks 8.28 drops
+# them when the config also sets [extend] useDefault (the extend depth is
+# incremented and those allowlists are never attached). A rule allowlist is
+# merged into the extended rule and stays in effect.
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
 description = "Committed news stats digest"
+condition = "AND"
 paths = ['''(?:^|/)src/news/stats\.ts$''', '''(?:^|/)\.gitleaks\.toml$''']
 regexes = ['''e5c04756be85b8c5d0bcbe3d32ec3778d56a356ce90c2c27faf32536b2c8ba42''']
 
-[[allowlists]]
+[[rules.allowlists]]
 description = "Historical stats test bearer fixture"
+condition = "AND"
 paths = ['''(?:^|/)test/news-(?:stats|analytics)\.test\.ts$''']
 regexes = ['''stats-desk-bearer-0123456789abcdef0123456789abcd''']
