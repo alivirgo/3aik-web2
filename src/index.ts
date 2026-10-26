@@ -1,6 +1,9 @@
 import { ADSENSE_HOSTS } from "./adsense";
 import { ingestApiPath } from "./news/ingest";
+import { isNewsCollectPath } from "./news/collect";
 import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
+import { isNewsStatsPath, noteStatsDigest } from "./news/stats";
+export { NewsStatsBudget } from "./news/budget";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -134,11 +137,12 @@ class HttpError extends Error {
 
 export default {
 	async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+		noteStatsDigest(env);
 		const url = new URL(request.url);
 
 		try {
 			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
-				if (!ingestApiPath(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
+				if (!ingestApiPath(url.pathname) && !isNewsStatsPath(url.pathname) && !isNewsCollectPath(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
 					return methodNotAllowed(["GET", "HEAD"]);
 				}
 				return handleNewsRequest(request, env, {}, ctx);
@@ -220,6 +224,7 @@ export default {
 		}
 	},
 	async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+		noteStatsDigest(env);
 		await publishScheduled(env, controller);
 	},
 } satisfies ExportedHandler<Env>;

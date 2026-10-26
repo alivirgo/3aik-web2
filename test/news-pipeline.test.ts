@@ -165,8 +165,8 @@ describe("publish cycle", () => {
 		const png = harness({ token: "ghp-test" });
 		png.paint.mockResolvedValue({ bytes: TINY_PNG, contentType: "image/png", model: "dry-run" });
 		const pngReport = await runPublishCycle(png.deps);
-		expect((await png.repo.getBySlug(pngReport.published[0] ?? ""))?.imageKey).toBe("");
-		expect(png.githubCalls).toHaveLength(0);
+		expect((await png.repo.getBySlug(pngReport.published[0] ?? ""))?.imageKey.endsWith(".png")).toBe(true);
+		expect(png.githubCalls.some((call) => call.method === "PUT")).toBe(true);
 	});
 
 	it("retries after a slop rejection and publishes the clean draft once", async () => {
@@ -481,6 +481,8 @@ function existing(url: string, publishedAt: string): StoredArticle {
 		imageCommit: "",
 		imageAlt: "Old abstract squares.",
 		imageType: "image/png",
+		imageCredit: "",
+		imageSourceUrl: "",
 		publishedAt,
 		updatedAt: publishedAt,
 	};

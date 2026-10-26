@@ -41,7 +41,8 @@
     "AI_NEWS_WALL_MS": "300000",
     "AI_NEWS_TEXT_TIMEOUT_MS": "60000",
     "AI_NEWS_IMAGE_TIMEOUT_MS": "20000",
-    "AI_NEWS_RETENTION_DAYS": "180"
+    "AI_NEWS_RETENTION_DAYS": "180",
+    "AI_NEWS_STATS_ENABLED": "true"
   },
   "ratelimits": [
     {
@@ -58,6 +59,31 @@
       "name": "AGENT_RATE_LIMITER",
       "namespace_id": "3103",
       "simple": { "limit": 20, "period": 60 }
+    },
+    {
+      "name": "NEWS_STATS_RATE_LIMITER",
+      "namespace_id": "3104",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+  "analytics_engine_datasets": [
+    {
+      "binding": "AI_NEWS_EVENTS",
+      "dataset": "ai_news_events"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NEWS_STATS_BUDGET",
+        "class_name": "NewsStatsBudget"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-news-stats-budget",
+      "new_sqlite_classes": ["NewsStatsBudget"]
     }
   ],
   "observability": {

@@ -77,6 +77,8 @@ body.desk {
 .desk .times,
 .desk .meta,
 .desk .disclosure,
+.desk .assist,
+.desk .source-line,
 .desk .site-foot,
 .desk .section-label,
 .desk .latest-list,
@@ -191,6 +193,13 @@ body.desk {
 
 .desk .dek { margin: 0 0 0.55rem; font-size: 1.02rem; line-height: 1.45; }
 
+.desk .story .dek {
+  font-size: 1.2rem;
+  line-height: 1.5;
+  margin: 0.2rem 0 0.7rem;
+  max-width: 72ch;
+}
+
 .desk .lead img, .desk .hero img {
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -229,6 +238,11 @@ body.desk {
 }
 
 .desk .by a { color: var(--accent); }
+
+.desk .by a.persona {
+  color: var(--muted);
+  font-size: 0.85em;
+}
 
 .desk .byline {
   display: flex;
@@ -331,7 +345,7 @@ body.desk {
 
 .desk .more, .desk .empty { margin-top: 1rem; }
 
-.desk .story { width: min(68ch, 100%); margin-inline: auto; }
+.desk .story { width: min(72ch, 100%); margin-inline: auto; }
 
 .desk .story h1 {
   font-size: clamp(2rem, 4.4vw, 2.7rem);
@@ -342,16 +356,38 @@ body.desk {
 
 .desk .story h2 { font-size: 1.35rem; margin-top: 1.4rem; }
 
-.desk .prose { font-size: 1.125rem; line-height: 1.65; }
+.desk .prose { font-size: 1.125rem; line-height: 1.75; max-width: 72ch; }
 
-.desk .prose p { margin: 0 0 0.95rem; }
+.desk .prose p { margin: 0 0 1.15em; }
+
+.desk .source-line,
+.desk .assist {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0.2rem 0 0.75rem;
+}
+
+.desk .source-line a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.desk .assist { margin-top: 0.45rem; font-size: 0.78rem; }
+
+.desk .related { margin-top: 1.4rem; }
+
+.desk .related-list a { color: var(--ink); text-decoration: none; }
+
+.desk .related-list a:hover { text-decoration: underline; }
 
 .desk .prose a, .desk .sources a { overflow-wrap: anywhere; }
 
 .desk .hero { margin: 1rem 0 1.25rem; }
 
 .desk .hero figcaption {
-  width: min(68ch, 100%);
+  width: min(72ch, 100%);
   margin: 0.4rem auto 0;
   color: var(--muted);
   font-size: 0.85rem;
@@ -484,7 +520,7 @@ body.desk {
   .desk .card + .card { border-left: 1px solid var(--line); padding-left: 0.9rem; }
   .desk .article-layout {
     display: grid;
-    grid-template-columns: minmax(0, 68ch) minmax(14rem, 18rem);
+    grid-template-columns: minmax(0, 72ch) minmax(14rem, 18rem);
     justify-content: center;
     column-gap: 2.25rem;
     align-items: start;

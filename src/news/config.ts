@@ -65,8 +65,10 @@ export const SITE_NAME = "3aik News";
 export const PUBLISHER_NAME = "3aik";
 export const ACCURACY_DISCLAIMER =
 	"3aik.com takes no responsibility for the accuracy of news. Readers should verify claims with the linked original sources.";
-export const DESK_DISCLOSURE =
-	"AI-assisted articles, automatically checked against source and quality rules before publishing. The named authors are editorial personas, not real people.";
+/** One calm line on an article, and the only disclosure on index pages. */
+export const ASSIST_LINE = "Written with AI assistance from cited reporting.";
+/** Publisher and upload image cap. PNG, JPEG, and WebP are stored only at or under 1 MB. */
+export const SOURCE_IMAGE_MAX_BYTES = 1_000_000;
 
 export const CATEGORY_LABEL: Record<Category, string> = {
 	ai: "AI",
@@ -181,8 +183,18 @@ export interface NewsEnv {
 	 * calls so a tick does not spend neurons. Cleanup still runs when publishing is on.
 	 */
 	AI_NEWS_GENERATOR?: string;
-	/** Bearer token for POST /ai-news/api/ingest. Never commit it. */
+	/** Bearer token for /ai-news/api/ingest. It does not open the stats desk. Never commit it. */
 	AI_NEWS_INGEST_TOKEN?: string;
+	/**
+	 * Optional SHA-256 hex of the stats bearer. When unset, stats auth uses the
+	 * digest committed in src/news/stats.ts. The bearer is not the ingest token.
+	 */
+	AI_NEWS_STATS_TOKEN_SHA256?: string;
+	/**
+	 * `false` stops collect writes and hides every stats read. Anything else,
+	 * including unset, leaves stats on. Pages, ingest, and the cron stay up.
+	 */
+	AI_NEWS_STATS_ENABLED?: string;
 }
 
 export function articlesPerHour(env: NewsEnv): number {
@@ -198,6 +210,11 @@ export function publishingEnabled(env: NewsEnv): boolean {
 	return value === "on" || value === "true" || value === "yes" || value === "1";
 }
 
+/** Reader stats stay on unless this var is the string `false`. */
+export function statsEnabled(env: { AI_NEWS_STATS_ENABLED?: string }): boolean {
+	return (env.AI_NEWS_STATS_ENABLED ?? "true").trim().toLowerCase() !== "false";
+}
+
 export type NewsGenerator = "workers-ai" | "off";
 
 /** Missing, empty, or any value other than `workers-ai` keeps Workers AI off. */
@@ -210,7 +227,7 @@ export function newsGenerator(env: NewsEnv): NewsGenerator {
 export const INGEST_REQUESTS_PER_HOUR = 10;
 
 /** Decoded ingest image cap. About 1.5 MB. The GitHub path still stores only WebP or JPEG at or under 1 MB. */
-export const INGEST_IMAGE_MAX_BYTES = 1_572_864;
+export const INGEST_IMAGE_MAX_BYTES = 1_000_000;
 
 function clampedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
 	if (raw === undefined || raw.trim() === "") return fallback;
@@ -313,6 +330,3 @@ export function hourStartIso(now: Date): string {
 	return copy.toISOString();
 }
 
-export function personaFooter(name: string): string {
-	return `${name} is an editorial persona, not a real person. This article was written with AI assistance and automatically checked against source and quality rules before publishing.`;
-}

@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { ADSENSE_SCRIPT } from "../src/adsense";
 import worker from "../src/index";
-import { ACCURACY_DISCLAIMER, DESK_DISCLOSURE } from "../src/news/config";
+import { ACCURACY_DISCLAIMER, ASSIST_LINE } from "../src/news/config";
 import { authorInitials } from "../src/news/html";
 import { handleNewsRequest, newsCacheRequest } from "../src/news/routes";
+import { scriptSourceHash } from "../src/news/responses";
 import { MemoryNewsRepository } from "../src/news/repository";
 import type { StoredArticle } from "../src/news/types";
 import { formatDateline, formatTimestamp, readingLabel, readingMinutes, relativeTime, TINY_JPEG } from "../src/news/text";
@@ -42,6 +43,8 @@ function article(): StoredArticle {
 		imageCommit: COMMIT_SHA,
 		imageAlt: "Abstract stack of paper rectangles in sand and ink blue on a warm gray field.",
 		imageType: "image/jpeg",
+		imageCredit: "",
+		imageSourceUrl: "",
 		publishedAt,
 		updatedAt: publishedAt,
 	};
@@ -59,8 +62,11 @@ describe("news pages", () => {
 		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news/"), env, { repo: null });
 		const html = await index.text();
 		expect(index.status).toBe(200);
-		expect(html).toContain(DESK_DISCLOSURE);
-		expect(html).toContain(ACCURACY_DISCLAIMER);
+		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
+		expect(html.split(ASSIST_LINE)).toHaveLength(2);
+		expect(html).not.toContain(ACCURACY_DISCLAIMER);
+		expect(html).not.toContain("AI-generated");
+		expect(html).not.toContain("editorial persona");
 		expect(html).toContain('href="/ai-news.css"');
 		expect(withoutAdLoader(html)).not.toMatch(/<script[^>]+src=/i);
 
@@ -73,7 +79,7 @@ describe("news pages", () => {
 		expect(await disclaimer.text()).toContain(ACCURACY_DISCLAIMER);
 	});
 
-	it("renders article metadata, structured data, and the persona footer", async () => {
+	it("renders article metadata, structured data, and one assistance line", async () => {
 		const { repo } = desk();
 		const response = await handleNewsRequest(
 			new Request("https://3aik.test/ai-news/article/short-bulletin"),
@@ -98,13 +104,36 @@ describe("news pages", () => {
 		expect(html).toContain('"@type":"FAQPage"');
 		expect(html).toContain("TL;DR");
 		expect(html).toContain("https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model");
-		expect(html).toContain("Mira Ellison is an editorial persona, not a real person.");
-		expect(html).toContain("automatically checked against source and quality rules before publishing");
-		expect(html).not.toContain("editorially checked");
-		expect(html).toContain(ACCURACY_DISCLAIMER);
-		expect(html).toContain("AI-generated");
+		expect(html).toContain("Source: <a href=\"https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model\" rel=\"noopener noreferrer\">The Verge</a>");
+		expect(html).toContain("<p class=\"dek\">");
+		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
+		expect(html.split(ASSIST_LINE)).toHaveLength(4);
+		expect(html).not.toContain("Mira Ellison is an editorial persona");
+		expect(html).not.toContain("automatically checked against source and quality rules before publishing");
+		expect(html).not.toContain(ACCURACY_DISCLAIMER);
+		expect(html).not.toContain("AI-generated");
 		expect(html).toContain('"@type":"Organization"');
 		expect(html).not.toContain('"@type":"Person"');
+		expect(html).toContain('"description":"Not a real person."');
+		expect(html).toContain('"creditText":"Written with AI assistance from cited reporting."');
+		expect(html).toContain('href="https://3aik.com/ai-news/about">AI persona</a>');
+		expect(html).toContain('"url":"https://3aik.com/ai-news/about"');
+		expect(response.headers.get("cache-control")).toContain("public");
+		expect(response.headers.get("cache-control")).toContain("max-age=120");
+		expect(response.headers.get("content-security-policy")).toContain("'sha256-");
+		expect(response.headers.get("content-security-policy")).not.toContain("'nonce-");
+		const csp = response.headers.get("content-security-policy") ?? "";
+		const hashes = [...csp.matchAll(/'sha256-[^']+'/g)].map((match) => match[0]);
+		const ld = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((match) => match[1] ?? "");
+		const beacon = html.match(/<script>(\(function\(\)\{var meta=[\s\S]*?)<\/script><\/body>/);
+		const expected = [];
+		for (const source of ld) expected.push(await scriptSourceHash(source));
+		if (beacon?.[1]) expected.push(await scriptSourceHash(beacon[1]));
+		expect(hashes).toEqual(expected);
+		expect(csp).not.toContain(await scriptSourceHash("alert(1)"));
+		expect(html).toContain('"name":"Mira Ellison"');
+		expect(html).toContain(`"dateModified":"${publishedAt}"`);
+		expect(html).toContain("1 min read");
 		expect(html).toContain("The Verge reported a narrow product note.");
 		expect(html).not.toContain("STORED_HTML_SHOULD_NOT_RENDER");
 		expect(html).not.toContain("<script>alert");
@@ -158,6 +187,14 @@ describe("news pages", () => {
 
 		const sitemap = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap.xml"), env, { repo });
 		expect(await sitemap.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
+		const sitemapPage = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap/1.xml"), env, { repo });
+		expect(await sitemapPage.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
+		const fresh = article();
+		fresh.id = "33333333-3333-4333-8333-333333333333";
+		fresh.slug = "fresh-bulletin";
+		fresh.publishedAt = new Date().toISOString();
+		fresh.updatedAt = fresh.publishedAt;
+		repo.articles.push(fresh);
 		const news = await handleNewsRequest(new Request("https://3aik.test/ai-news/news-sitemap.xml"), env, { repo });
 		expect(await news.text()).toContain("news:news");
 
@@ -190,7 +227,7 @@ describe("existing routes stay in place", () => {
 		const denied = await worker.fetch(new Request("https://3aik.test/ai-news", { method: "POST" }), env);
 		expect(denied.status).toBe(405);
 		const section = await worker.fetch(new Request("https://3aik.test/ai-news"), env);
-		expect(await section.text()).toContain(ACCURACY_DISCLAIMER);
+		expect(await section.text()).toContain(ASSIST_LINE);
 		expect((env as { AI: { run: ReturnType<typeof vi.fn> } }).AI.run).not.toHaveBeenCalled();
 	});
 
@@ -321,10 +358,12 @@ describe("magazine pages", () => {
 		expect(html).toContain('alt="Abstract stack of paper rectangles in sand and ink blue on a warm gray field."');
 		expect(html).toContain('width="1600" height="900" loading="eager" fetchpriority="high"');
 		expect(html).not.toContain('loading="lazy"');
-		expect(html).toContain('<aside class="sources">');
-		expect(html).toContain('<aside class="note">');
-		expect(html.indexOf('<aside class="note">')).toBeLessThan(html.indexOf('<footer class="site-foot">'));
-		expect(html).toContain(ACCURACY_DISCLAIMER);
+		expect(html).toContain('class="source-line"');
+		expect(html).not.toContain('<aside class="sources">');
+		expect(html).not.toContain('<aside class="note">');
+		expect(html).not.toContain(ACCURACY_DISCLAIMER);
+		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
+		expect(html.split(ASSIST_LINE)).toHaveLength(4);
 		expect(html).toContain(">Related</h2>");
 		expect(html).toContain('class="rail"');
 		expect(html).toContain('class="kicker"');
@@ -379,7 +418,8 @@ describe("magazine pages", () => {
 		expect(css).toContain("@media (min-width: 1020px)");
 		expect(css).toContain("grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.05fr) 16.5rem");
 		expect(css).toContain("grid-template-columns: repeat(4, minmax(0, 1fr))");
-		expect(css).toContain("width: min(68ch, 100%)");
+		expect(css).toContain("width: min(72ch, 100%)");
+		expect(css).toContain("line-height: 1.75");
 		expect(css).toContain("aspect-ratio: 16 / 9");
 		expect(css).toContain("aspect-ratio: 3 / 2");
 		expect(css).toContain("text-transform: uppercase");
