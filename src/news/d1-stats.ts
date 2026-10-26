@@ -133,7 +133,15 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 		 WHERE ${whereSlug()} AND ((day = ? AND hour_utc >= ?) OR day = ?)`,
 		[slug, slug, yesterday, hour, today],
 	);
-	report.totals.views = await sumViews("1970-01-01", "9999-12-31");
+	// All-time is the retained window. Older rows are deleted, and a day range
+	// on the (day, hour_utc, slug) primary key avoids a scan from year 1970.
+	const retainedFrom = new Date(now.getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+	const totalsSql = slug
+		? `SELECT COALESCE(SUM(views), 0) AS views FROM stats_article_hour WHERE day >= ? AND day <= ? AND slug = ?`
+		: `SELECT COALESCE(SUM(views), 0) AS views FROM stats_article_hour WHERE day >= ? AND day <= ?`;
+	const totalsBinds = slug ? [retainedFrom, today, slug] : [retainedFrom, today];
+	const totals = await optionalRows(db, totalsSql, totalsBinds);
+	report.totals.views = num(totals[0] ?? null, "views");
 	report.totals.last24h = num(lastDay[0] ?? null, "views");
 	report.totals.last7d = await sumViews(weekAgo, today);
 	report.audience.uniques = report.series.day.reduce((sum, point) => sum + point.uniques, 0);

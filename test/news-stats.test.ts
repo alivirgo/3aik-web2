@@ -6,6 +6,7 @@ import { D1NewsRepository, MemoryNewsRepository } from "../src/news/repository";
 import { emptyStatsReport, pageViewFromRequest } from "../src/news/pageviews";
 import { expectedStatsDigest, formatDuration, formatPercent, NEWS_STATS_DIGEST, renderStatsCsv, renderStatsDashboard, resetStatsDigestWarning, statsQueryFromUrl } from "../src/news/stats";
 import { allowStatsLane } from "../src/news/ratelimit";
+import { loadD1StatsReport } from "../src/news/d1-stats";
 import { NewsStatsBudget, STATS_DAILY_WRITE_CAP } from "../src/news/budget";
 import { resetAggregates } from "../src/news/aggregates";
 import type { StoredArticle } from "../src/news/types";
@@ -757,5 +758,64 @@ describe("private stats", () => {
 		expect(keys[0]).not.toContain("collect");
 		const broken = { async limit() { throw new Error("binding down"); } };
 		expect(await allowStatsLane(broken, "203.0.113.9", "collect")).toBe(false);
+	});
+
+	it("still deletes visitor hashes and salts after the write budget is closed", async () => {
+		const calls: string[] = [];
+		const charged: number[] = [];
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind() {
+						return {
+							async run() {
+								calls.push(sql.toLowerCase());
+								return { meta: { changes: 1, rows_written: 2 } };
+							},
+						};
+					},
+				};
+			},
+		};
+		const repo = new D1NewsRepository(db as unknown as D1Database, {
+			budget: {
+				async open() { return false; },
+				async charge(rows: number) { charged.push(rows); },
+			},
+		});
+		await repo.pruneStatsRetention(new Date("2026-10-26T13:00:00.000Z"));
+		const deletes = calls.filter((sql) => sql.startsWith("delete from"));
+		expect(deletes.some((sql) => sql.includes("stats_visitor_day"))).toBe(true);
+		expect(deletes.some((sql) => sql.includes("stats_day_salt"))).toBe(true);
+		expect(deletes.some((sql) => sql.includes("stats_article_hour"))).toBe(false);
+		expect(charged).toEqual([2, 2]);
+	});
+
+	it("bounds all-time view totals to the retained rollup window", async () => {
+		const sqls: string[] = [];
+		const binds: unknown[][] = [];
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind(...values: unknown[]) {
+						return {
+							async all() {
+								sqls.push(sql);
+								binds.push(values);
+								return { results: [] };
+							},
+						};
+					},
+				};
+			},
+		};
+		const now = new Date("2026-10-26T13:00:00.000Z");
+		const retainedFrom = new Date(now.getTime() - 400 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+		await loadD1StatsReport(db, now, { from: null, to: null, slug: null });
+		expect(sqls.join("\n")).not.toContain("1970-01-01");
+		expect(sqls.join("\n")).not.toContain("9999-12-31");
+		const totals = sqls.findIndex((sql) => sql.includes("SUM(views)") && sql.includes("day >= ?") && !sql.includes("OR"));
+		expect(totals).toBeGreaterThanOrEqual(0);
+		expect(binds[totals]).toEqual([retainedFrom, "2026-10-26"]);
 	});
 });

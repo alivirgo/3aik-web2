@@ -458,4 +458,37 @@ describe("detailed stats", () => {
 		expect(failed.status).toBe(204);
 		expect(repo.pageViews).toHaveLength(3);
 	});
+
+	it("returns 204 and hides the stats desk when stats are switched off", async () => {
+		const repo = desk();
+		const disabled = { ...env(), AI_NEWS_STATS_ENABLED: "false" };
+		const collect = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/collect", {
+				method: "POST",
+				headers: { origin: "https://3aik.test", "content-type": "application/json", "cf-connecting-ip": IP },
+				body: JSON.stringify({ kind: "view", page: "article", slug: "short-bulletin", returning: 0 }),
+			}),
+			disabled,
+			{ repo, now: NOW },
+		);
+		expect(collect.status).toBe(204);
+		expect(repo.pageViews).toHaveLength(0);
+		const headers = { authorization: `Bearer ${STATS_BEARER}` };
+		const publicMiss = await handleNewsRequest(new Request("https://3aik.test/ai-news/not-a-real-page"), disabled, { repo, now: NOW });
+		for (const path of ["/ai-news/api/stats", "/ai-news/api/stats/dashboard", "/ai-news/api/stats.csv", "/ai-news/api/stats/article/short-bulletin"]) {
+			const response = await handleNewsRequest(new Request(`https://3aik.test${path}`, { headers }), disabled, { repo, now: NOW });
+			expect(response.status).toBe(404);
+			expect(response.headers.get("cache-control")).toBe(publicMiss.headers.get("cache-control"));
+			expect(response.headers.get("x-robots-tag")).toBe(publicMiss.headers.get("x-robots-tag"));
+			expect(await response.text()).not.toContain("SECRET_STORY_TITLE_ZZZ");
+		}
+		const page = await handleNewsRequest(new Request("https://3aik.test/ai-news/article/short-bulletin"), disabled, { repo, now: NOW });
+		expect(page.status).toBe(200);
+		const ingest = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/ingest/meta", { headers: { authorization: `Bearer ${TOKEN}` } }),
+			disabled,
+			{ repo, now: NOW },
+		);
+		expect(ingest.status).toBe(200);
+	});
 });

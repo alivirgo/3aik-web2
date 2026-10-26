@@ -1,4 +1,4 @@
-import type { NewsEnv } from "./config";
+import { statsEnabled, type NewsEnv } from "./config";
 import { tokensMatch } from "./ingest";
 import type { NamedCount, NewsStatsReport, PageCount, SeriesPoint, StatsQuery } from "./pageviews";
 import { emptyStatsReport } from "./pageviews";
@@ -456,6 +456,7 @@ function articleSlug(pathname: string): string | null {
 }
 
 export async function handleNewsStatsRequest(request: Request, env: NewsEnv, repo: NewsRepository | null, origin: string, now = new Date()): Promise<Response> {
+	if (!statsEnabled(env)) return hiddenNotFound(request, origin);
 	const allowed = await statsAuthorized(request, env);
 	if (!allowed || (request.method !== "GET" && request.method !== "HEAD")) return await hiddenNotFound(request, origin);
 	const url = new URL(request.url);

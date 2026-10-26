@@ -190,6 +190,11 @@ export interface NewsEnv {
 	 * digest committed in src/news/stats.ts. The bearer is not the ingest token.
 	 */
 	AI_NEWS_STATS_TOKEN_SHA256?: string;
+	/**
+	 * `false` stops collect writes and hides every stats read. Anything else,
+	 * including unset, leaves stats on. Pages, ingest, and the cron stay up.
+	 */
+	AI_NEWS_STATS_ENABLED?: string;
 }
 
 export function articlesPerHour(env: NewsEnv): number {
@@ -203,6 +208,11 @@ export function articlesPerHour(env: NewsEnv): number {
 export function publishingEnabled(env: NewsEnv): boolean {
 	const value = (env.AI_NEWS_PUBLISHING ?? "off").trim().toLowerCase();
 	return value === "on" || value === "true" || value === "yes" || value === "1";
+}
+
+/** Reader stats stay on unless this var is the string `false`. */
+export function statsEnabled(env: { AI_NEWS_STATS_ENABLED?: string }): boolean {
+	return (env.AI_NEWS_STATS_ENABLED ?? "true").trim().toLowerCase() !== "false";
 }
 
 export type NewsGenerator = "workers-ai" | "off";

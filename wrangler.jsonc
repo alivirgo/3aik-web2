@@ -41,7 +41,8 @@
     "AI_NEWS_WALL_MS": "300000",
     "AI_NEWS_TEXT_TIMEOUT_MS": "60000",
     "AI_NEWS_IMAGE_TIMEOUT_MS": "20000",
-    "AI_NEWS_RETENTION_DAYS": "180"
+    "AI_NEWS_RETENTION_DAYS": "180",
+    "AI_NEWS_STATS_ENABLED": "true"
   },
   "ratelimits": [
     {

@@ -630,7 +630,8 @@ export class D1NewsRepository implements NewsRepository {
 		] as const;
 		for (const [sql, bind] of statements) {
 			try {
-				if (!(await this.budgetOpen(today))) return;
+				const freesStorage = sql.startsWith("DELETE FROM stats_visitor_day") || sql.startsWith("DELETE FROM stats_day_salt");
+				if (!freesStorage && !(await this.budgetOpen(today))) continue;
 				const result = await this.db.prepare(sql).bind(bind).run();
 				await this.chargeRows(rowsWrittenOf(result), today);
 			} catch (error) {

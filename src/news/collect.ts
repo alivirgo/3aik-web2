@@ -1,4 +1,4 @@
-import type { NewsEnv } from "./config";
+import { statsEnabled, type NewsEnv } from "./config";
 import { publicHttpsUrl } from "./net";
 import {
 	hexToSalt,
@@ -132,6 +132,10 @@ export async function handleCollectRequest(
 	now = new Date(),
 ): Promise<Response> {
 	if (request.method !== "POST" || !collectSameOrigin(request, origin)) return publicNotFoundResponse(request, origin);
+	if (!statsEnabled(env)) {
+		await request.body?.cancel().catch(() => undefined);
+		return noContent();
+	}
 	const declared = request.headers.get("content-length");
 	if (declared !== null) {
 		const size = Number(declared);

@@ -31,6 +31,8 @@ export interface Env {
 	AI_NEWS_INGEST_TOKEN?: string;
 	/** Optional SHA-256 hex override for the stats bearer. The bearer is not stored. */
 	AI_NEWS_STATS_TOKEN_SHA256?: string;
+	/** `false` stops collect writes and hides the stats desk. Default `true`. */
+	AI_NEWS_STATS_ENABLED?: string;
 	INDEXNOW_KEY?: string;
 }
 
