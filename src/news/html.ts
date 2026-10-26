@@ -9,7 +9,6 @@ import {
 	SITE_NAME,
 } from "./config";
 import { readerImageUrl } from "./github-images";
-import { publicHttpsUrl } from "./net";
 import type { Category, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
 import {
@@ -228,7 +227,7 @@ function byline(origin: string, article: StoredArticle, now: number): string {
 	return `<p class="byline">
 <span class="avatar" aria-hidden="true">${escapeHtml(authorInitials(name))}</span>
 <span class="byline-copy">
-<span class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a></span>
+<span class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a> · <a href="${origin}/ai-news/about">Persona</a></span>
 <span class="times"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time><span class="rel">${escapeHtml(relativeTime(article.publishedAt, now))}</span><span class="read">${escapeHtml(readingLabel(article.bodyText))}</span></span>
 </span>
 </p>`;
@@ -236,10 +235,8 @@ function byline(origin: string, article: StoredArticle, now: number): string {
 
 export function articleImage(origin: string, article: StoredArticle): { src: string; external: boolean } | null {
 	const stored = readerImageUrl(origin, article.imageKey, article.imageCommit);
-	if (stored) return { src: stored, external: false };
-	const hotlink = publicHttpsUrl(article.imageSourceUrl);
-	if (!hotlink) return null;
-	return { src: hotlink, external: true };
+	if (!stored) return null;
+	return { src: stored, external: false };
 }
 
 export function externalImageOrigins(origin: string, articles: StoredArticle[]): string[] {
@@ -517,10 +514,13 @@ ${latestList(origin, others, now)}
 		articleSection: CATEGORY_LABEL[article.category],
 		keywords: article.tags.join(", "),
 		author: {
-			"@type": "Organization",
+			"@type": "Person",
 			name,
-			url: authorHref(origin, article.authorId),
+			url: `${origin}/ai-news/about`,
+			description: "Editorial persona on the 3aik news desk. Not a real person.",
 		},
+		creditText: ASSIST_LINE,
+		disclaimer: ASSIST_LINE,
 		publisher: {
 			"@type": "Organization",
 			name: PUBLISHER_NAME,

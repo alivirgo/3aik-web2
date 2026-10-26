@@ -21,8 +21,10 @@ export interface Env {
 	AI_NEWS_RETENTION_DAYS?: string;
 	/** `workers-ai` or `off`. Missing means off, so the cron does not spend neurons. */
 	AI_NEWS_GENERATOR?: string;
-	/** Bearer secret for /ai-news/api/ingest and /ai-news/api/stats. Set with `wrangler secret put`. */
+	/** Bearer secret for /ai-news/api/ingest. It does not authorize /ai-news/api/stats. */
 	AI_NEWS_INGEST_TOKEN?: string;
+	/** Optional SHA-256 hex override for the stats bearer. The bearer is not stored. */
+	AI_NEWS_STATS_TOKEN_SHA256?: string;
 	INDEXNOW_KEY?: string;
 }
 

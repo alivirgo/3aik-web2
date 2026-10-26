@@ -1,8 +1,13 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { handleNewsRequest } from "../src/news/routes";
 import { MemoryNewsRepository } from "../src/news/repository";
-import { dailyVisitorHash, rawRetentionCutoff, summarizePageViews, type PageViewEvent } from "../src/news/pageviews";
+import { rawRetentionCutoff, randomDaySalt, summarizePageViews, visitorHmac, type PageViewEvent } from "../src/news/pageviews";
+import { resetRateLimits } from "../src/news/ratelimit";
 import type { StoredArticle } from "../src/news/types";
+
+const STATS_BEARER = "stats-desk-bearer-0123456789abcdef0123456789abcd";
+const STATS_SHA = createHash("sha256").update(STATS_BEARER).digest("hex");
 
 const TOKEN = "cd".repeat(32);
 const IP = "203.0.113.50";
@@ -35,7 +40,11 @@ function article(): StoredArticle {
 }
 
 function env() {
-	return { AI_NEWS_INGEST_TOKEN: TOKEN, AI_NEWS_SITE_ORIGIN: "https://3aik.com" };
+	return {
+		AI_NEWS_INGEST_TOKEN: TOKEN,
+		AI_NEWS_STATS_TOKEN_SHA256: STATS_SHA,
+		AI_NEWS_SITE_ORIGIN: "https://3aik.com",
+	};
 }
 
 function desk() {
@@ -70,17 +79,22 @@ function view(overrides: Partial<PageViewEvent> = {}): PageViewEvent {
 }
 
 describe("daily visitor hash", () => {
-	it("rotates by UTC day and never embeds the address or user agent", () => {
-		const first = dailyVisitorHash(TOKEN, IP, "Mozilla/5.0 UniqueAgentTokenXYZ", "2026-10-26");
-		const same = dailyVisitorHash(TOKEN, IP, "Mozilla/5.0 UniqueAgentTokenXYZ", "2026-10-26");
-		const next = dailyVisitorHash(TOKEN, IP, "Mozilla/5.0 UniqueAgentTokenXYZ", "2026-10-27");
+	it("uses a random HMAC salt and never embeds the address, user agent, or token", () => {
+		const salt = randomDaySalt();
+		const nextSalt = randomDaySalt();
+		const first = visitorHmac(salt, IP, "Mozilla/5.0 UniqueAgentTokenXYZ");
+		const same = visitorHmac(salt, IP, "Mozilla/5.0 UniqueAgentTokenXYZ");
+		const next = visitorHmac(nextSalt, IP, "Mozilla/5.0 UniqueAgentTokenXYZ");
+		expect(salt).toHaveLength(32);
 		expect(first).toMatch(/^[0-9a-f]{64}$/);
 		expect(first).toBe(same);
 		expect(first).not.toBe(next);
+		expect(Buffer.from(salt).equals(Buffer.from(nextSalt))).toBe(false);
 		expect(first).not.toContain(IP);
 		expect(first).not.toContain("UniqueAgentTokenXYZ");
 		expect(first).not.toContain(TOKEN);
-		expect(dailyVisitorHash("", IP, "ua", "2026-10-26")).toBe("");
+		expect(first).not.toBe(createHash("sha256").update(`${TOKEN}|2026-10-26`).digest("hex"));
+		expect(visitorHmac(salt, "", "ua")).toBe("");
 		const cutoff = Date.parse(rawRetentionCutoff(NOW));
 		expect(NOW.getTime() - cutoff).toBe(90 * 24 * 60 * 60 * 1000);
 	});
@@ -156,7 +170,7 @@ describe("detailed stats", () => {
 		const repo = desk();
 		await repo.recordPageView(view({ city: "Karachi", region: "Sindh", continent: "AS", browser: "Chrome", os: "Windows", lang: "en-PK" }));
 		await repo.recordPageView(view({ viewedAt: "2026-10-20T12:00:00.000Z", visitorHash: "b".repeat(64) }));
-		const headers = { authorization: `Bearer ${TOKEN}` };
+		const headers = { authorization: `Bearer ${STATS_BEARER}` };
 		const filtered = await handleNewsRequest(
 			new Request("https://3aik.test/ai-news/api/stats?from=2026-10-26&to=2026-10-26", { headers }),
 			env(),
@@ -342,5 +356,47 @@ describe("detailed stats", () => {
 		expect(report.bots.map((row) => row.name)).toContain("Googlebot");
 		expect(report.publishLog[0]).toMatchObject({ slug: "short-bulletin", author: "Mira Ellison", category: "ai" });
 		expect(report.publishLog[0]?.words).toBeGreaterThan(0);
+	});
+
+	it("drops an oversized or flooded collect body before writing", async () => {
+		resetRateLimits();
+		const repo = desk();
+		const headers = { origin: "https://3aik.test", "content-type": "application/json", "content-length": "9000", "cf-connecting-ip": "203.0.113.77" };
+		const oversized = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/collect", {
+				method: "POST",
+				headers,
+				body: "{}",
+			}),
+			env(),
+			{ repo, now: NOW },
+		);
+		expect(oversized.status).toBe(204);
+		expect(repo.pageViews).toHaveLength(0);
+		const beacon = {
+			kind: "engage",
+			page: "article",
+			slug: "short-bulletin",
+			engagedMs: 1000,
+			scroll: 10,
+			screen: "sm",
+			returning: 0,
+		};
+		let limited = 0;
+		for (let index = 0; index < 8; index += 1) {
+			const response = await handleNewsRequest(
+				new Request("https://3aik.test/ai-news/api/collect", {
+					method: "POST",
+					headers: { origin: "https://3aik.test", "content-type": "application/json", "cf-connecting-ip": "203.0.113.77" },
+					body: JSON.stringify(beacon),
+				}),
+				env(),
+				{ repo, now: NOW },
+			);
+			expect(response.status).toBe(204);
+			if (repo.pageViews.length === index) limited += 1;
+		}
+		expect(repo.pageViews.length).toBeLessThan(8);
+		expect(limited).toBeGreaterThan(0);
 	});
 });

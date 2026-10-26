@@ -56,15 +56,16 @@ Bindings added to `wrangler.jsonc`:
 | `AI_NEWS_DB` | D1 | `3aik-ai-news` |
 | `AI` | Workers AI | already on the worker |
 | `GITHUB_IMAGES_TOKEN` | Secret | contents:write on `alivirgo/3aik-ai-news-images` only |
-| `AI_NEWS_INGEST_TOKEN` | Secret | Bearer token for `/ai-news/api/ingest`. Already set in production. |
+| `AI_NEWS_INGEST_TOKEN` | Secret | Bearer token for `/ai-news/api/ingest` only. It does not open the stats desk. Already set in production. |
+| `AI_NEWS_STATS_TOKEN_SHA256` | Optional var | SHA-256 hex of the stats bearer. When unset, stats auth uses the digest in `src/news/stats.ts`. Do not put the bearer in git. |
 
-Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`), `migrations/0004_ai_news_image_credit.sql` (`image_credit`, `image_source_url`), and `migrations/0005_ai_news_pageviews.sql` (reader stats). Workers Builds does not apply D1 migrations. After this change is on `main`, run:
+Article rows, source URLs, and rotation counters are in D1. Migrations: `migrations/0001_ai_news_init.sql`, `migrations/0002_ai_news_rejections.sql`, `migrations/0003_ai_news_image_commit.sql` (adds `image_commit`), `migrations/0004_ai_news_image_credit.sql` (`image_credit`, `image_source_url`), `migrations/0005_ai_news_pageviews.sql` (reader stats), and `migrations/0006_ai_news_stats_bounds.sql` (daily HMAC salt, bot, 404, and feed counters). Workers Builds does not apply D1 migrations. After this change is on `main`, run:
 
 ```sh
 npx wrangler d1 migrations apply 3aik-ai-news --remote
 ```
 
-Until that command succeeds, article reads still work (new image columns are probed) and the stats pages come back empty rather than 500. Illustrations are WebP or JPEG files committed to `images/YYYY/MM/<slug>-<8-char-id>.webp` (JPEG uses `.jpg`) through the GitHub Contents API. The suffix is the first 8 characters of the article id, so a leftover file from a failed delete does not block a later article that reuses the title. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
+Until that command succeeds, article reads still work (new image columns are probed) and the stats pages come back empty rather than 500. Illustrations are PNG, WebP, or JPEG files at or under 1 MB, committed to `images/YYYY/MM/<slug>-<8-char-id>.webp` (JPEG uses `.jpg`, PNG uses `.png`) through the GitHub Contents API. The suffix is the first 8 characters of the article id, so a leftover file from a failed delete does not block a later article that reuses the title. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
 
 ## Rate, schedule, and pause
 
@@ -105,7 +106,7 @@ DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
 DELETE FROM source_rejections WHERE expires_at <= datetime('now');
 ```
 
-Delete the matching `images/YYYY/MM/<slug>-<8-char-id>.webp` or `.jpg` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not WebP or JPEG, are not uploaded. A PNG from an image model is not stored: the desk tries the next image model inside the same image budget. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
+Delete the matching `images/YYYY/MM/<slug>-<8-char-id>.webp`, `.jpg`, or `.png` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not PNG, JPEG, or WebP, are not uploaded. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
 
 A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image. A network error during that lookup is caught inside the upload, so the draft is kept and the article still publishes with no image.
 
@@ -113,7 +114,7 @@ A 429 is a rate limit. A 403 is a rate limit only when the remaining budget is 0
 
 Retention asks D1 for up to 20 old rows, then deletes at most 5 GitHub files in that tick, with 250 ms between those deletes. `deleteImageFile` returns whether GitHub asked for a pause. On a pause, retention stops and that tick does not commit a new image. The row already removed can leave its file in the repo. Later rows stay until a later tick. Image model calls stay inside `AI_NEWS_IMAGE_CALLS_PER_ARTICLE`.
 
-Readers load `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp`. The Worker proxies that file only when D1 has the same `image_key` and `image_commit`. An unknown key is a 404 with `cache-control: public, max-age=60` and is not fetched from jsDelivr, so a stranger cannot force unlimited CDN reads. A D1 error, and a failed fetch for a key that does exist, is `no-store`. `HEAD` on a known image returns the stored content type and an empty body. It does not download the file. A known `GET` fetches that one path from jsDelivr at the commit SHA (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo and that same SHA). `@main` is not used: jsDelivr caches a branch tip for about 12 hours, and a year-long immutable response would keep serving a moving file. The write token is not sent on that read. A successful image is answered with `cache-control: public, max-age=31536000, immutable`. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
+Readers load `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp` (or `.jpg` / `.png`). The Worker proxies that file only when D1 has the same `image_key` and `image_commit`. An unknown key is a 404 with `cache-control: public, max-age=60` and is not fetched from jsDelivr, so a stranger cannot force unlimited CDN reads. A D1 error, and a failed fetch for a key that does exist, is `no-store`. `HEAD` on a known image returns the stored content type and an empty body. It does not download the file. A known `GET` fetches that one path from jsDelivr at the commit SHA (`cdn.jsdelivr.net` or `fastly.jsdelivr.net`, and only when the URL still names this repo and that same SHA). `@main` is not used: jsDelivr caches a branch tip for about 12 hours, and a year-long immutable response would keep serving a moving file. The write token is not sent on that read. A successful image is answered with `cache-control: public, max-age=31536000, immutable`. News HTML keeps `img-src 'self'`. Image responses use `default-src 'none'`. `cdn.jsdelivr.net` is not in the page policy, so a story cannot embed the CDN directly.
 
 ## Taking an image down, and repo growth
 
@@ -248,12 +249,12 @@ JSON fields:
 | `tags` | 2 to 4 lowercase hyphenated tags |
 | `sources` | 1 to 4 `{ "url", "publisher", "title" }`. At least one. Showbiz requires one. Optional `excerpt` |
 | `image` | Optional. `{ "data": "<base64 or data URL>", "alt": "..." }` or a base64 string plus `image_alt`. JPEG, PNG, or WebP, up to about 1.5 MB |
-| `image_source_url` | Optional https publisher image, such as `og:image`. Fetched and stored like a generated image. Private hosts, redirects to them, non-image bytes, and files over 5 MB are rejected. If storage fails for a valid JPEG or WebP that is too big for GitHub, the page hotlinks that URL. A failed fetch publishes with no picture. Wins over `image` when both are sent |
+| `image_source_url` | Optional https publisher image, such as `og:image`. Fetched and stored like a generated image. Private hosts, redirects to them, non-image bytes, and files over 1 MB are rejected. If the copy cannot be stored, the article has no picture. The page never hotlinks the publisher URL. A failed fetch publishes with no picture. Wins over `image` when both are sent |
 | `image_credit` | Optional, for example `Image: WWD`. Shown once under the picture |
 
 The gate rejects em dashes, en dashes used as clause breaks, `---` and spaced `--`, slop words, an 8-word copy of the source title or fetched page, a missing outlet name, and (for fashion and showbiz) an unattributed dispute. A slug or source URL already on the desk returns 409 before those quality reasons, so a retry is not reported as a bad draft. `GET /ai-news/api/ingest/meta` returns the persona list, categories, those limits, and recent source URLs.
 
-A JPEG or WebP at or under 1 MB is committed to `alivirgo/3aik-ai-news-images` with `GITHUB_IMAGES_TOKEN`. An uploaded PNG, a larger upload, a missing token, or a failed commit still returns 201 and publishes with no picture. A publisher `image_source_url` that is a valid image but cannot be stored (PNG, or a JPEG over the GitHub cap) is hotlinked instead. A failed or unsafe fetch stores no image.
+A PNG, JPEG, or WebP at or under 1 MB is committed to `alivirgo/3aik-ai-news-images` with `GITHUB_IMAGES_TOKEN`. A larger upload, a missing token, or a failed commit still returns 201 and publishes with no picture. A publisher image that cannot be stored is omitted. The page does not hotlink it. A failed or unsafe fetch stores no image.
 
 ```sh
 IMG=$(base64 -w 0 photo.jpg)
@@ -283,24 +284,24 @@ SELECT SUM(publish_count) FROM author_stats;
 SELECT category, publish_count, last_published_at FROM category_stats;
 ```
 
-`GET /ai-news/api/stats` is JSON. `GET /ai-news/api/stats/dashboard` is the HTML desk. `GET /ai-news/api/stats/article/<slug>` is one article. `GET /ai-news/api/stats.csv` is the same numbers as CSV. All four use the existing ingest secret and nothing else:
+`GET /ai-news/api/stats` is JSON. `GET /ai-news/api/stats/dashboard` is the HTML desk. `GET /ai-news/api/stats/article/<slug>` is one article. `GET /ai-news/api/stats.csv` is the same numbers as CSV. All four require the stats bearer. The ingest token is rejected. The check is SHA-256 of the presented bearer, compared in constant time with the committed digest (or `AI_NEWS_STATS_TOKEN_SHA256` when that var is set). The bearer is not stored in the repo.
 
 ```sh
 curl -sS "https://3aik.com/ai-news/api/stats?from=2026-10-01&to=2026-10-26" \
-  -H "Authorization: Bearer <TOKEN>"
+  -H "Authorization: Bearer <STATS_TOKEN>"
 curl -sS "https://3aik.com/ai-news/api/stats/dashboard" \
-  -H "Authorization: Bearer <TOKEN>"
+  -H "Authorization: Bearer <STATS_TOKEN>"
 curl -sS "https://3aik.com/ai-news/api/stats.csv" \
-  -H "Authorization: Bearer <TOKEN>"
+  -H "Authorization: Bearer <STATS_TOKEN>"
 ```
 
-Send `from` and `to` as `YYYY-MM-DD` query parameters when you want a range. A missing header, a wrong bearer, a cookie, or a credential query key (`token`, `access_token`, `auth`, `key`, `secret`, `bearer`) is a 404 with `Cache-Control: no-store`, `CDN-Cache-Control: no-store`, and `X-Robots-Tag: noindex, nofollow`. The response has no CORS header. The paths are not linked from public pages and are not in the sitemap.
+Send `from` and `to` as `YYYY-MM-DD` query parameters when you want a range. The dashboard uses those as plain GET links. A missing header, the ingest token, a wrong bearer, a cookie, or a credential query key (`token`, `access_token`, `auth`, `key`, `secret`, `bearer`) is the same 404 a public `/ai-news` miss returns, including the same headers. A successful stats response is `Cache-Control: private, no-store`, `CDN-Cache-Control: no-store`, `Cloudflare-CDN-Cache-Control: no-store`, and `X-Robots-Tag: noindex, nofollow`. There is no CORS header. The paths are not linked from public pages and are not in the sitemap.
 
-Views are recorded on the server with `waitUntil`. A same-origin `navigator.sendBeacon` POST to `/ai-news/api/collect` adds engaged time, scroll depth, screen bucket, outbound clicks, and source-link clicks. It does not add a second view and it does not use cookies. New versus returning is a 0/1 flag from `localStorage` key `3aik-news-seen`. No client id is sent or stored.
+Views are recorded on the server with `waitUntil`. A same-origin `navigator.sendBeacon` POST to `/ai-news/api/collect` adds engaged time, scroll depth, screen bucket, outbound clicks, and source-link clicks. It does not add a second view and it does not use cookies. The body is refused when `Content-Length` is over 4 KB, and again if the stream exceeds that. A per-isolate token bucket limits collect and human pageview writes. New versus returning is a 0/1 flag from `localStorage` key `3aik-news-seen`. No client id is sent or stored.
 
-Unique visitors are `SHA-256(daily salt + address + user agent)`. The salt is `SHA-256` of the ingest secret and the UTC date, so the same person hashes differently the next day. The address and user agent are dropped after the hash. Browser, OS, and bot name are parsed first. Country, city, region, and continent come from `request.cf`. Hour heatmaps are stored in UTC and Asia/Karachi (UTC+5).
+Unique visitors are HMAC-SHA256 of a random 32-byte salt, the address, and the user agent. The salt comes from `crypto.getRandomValues`, is stored in `stats_day_salt`, and is deleted after that UTC day. It is not derived from the ingest token or the stats token. The address and user agent are dropped after the hash. Browser, OS, and bot name are parsed first. Country, city, region, and continent come from `request.cf`. Hour heatmaps are stored in UTC and Asia/Karachi (UTC+5). Search queries and utm values are stored with email-like and phone-like strings removed.
 
-Free-plan writes stay small: one raw row, one daily upsert, and one visitor-day insert per human view. Raw rows are deleted in batches of 200 after 90 days. Daily totals remain. Breakdowns for referrers, cities, and the rest come from the raw rows still on disk. A dashboard read caps the raw scan at 20,000 rows.
+Bots, 404s, and feed fetches are daily counters (`stats_bot_daily`, `stats_miss_daily`, `stats_feed_daily`), not raw `page_views` rows. Human views still write one raw row, one daily upsert, and one visitor-day insert, and those writes are rate limited per isolate. Raw rows and `stats_visitor_day` are deleted in batches after 90 days. The dashboard aggregates with SQL `GROUP BY` and daily rollups. It does not load the raw table into the worker. Feeds list 100 articles. The sitemap is one page of 1,000 URLs, and `/ai-news/sitemap.xml` becomes a sitemap index when more pages exist. HTML uses a CSP nonce and is not cached at the edge.
 
 ## Samples
 
@@ -315,7 +316,8 @@ Free-plan writes stay small: one raw row, one daily upsert, and one visitor-day 
 - `src/news/model.ts` Workers AI calls and prompts
 - `src/news/github-images.ts` Contents API writes and the jsDelivr read
 - `src/news/routes.ts` HTML, feeds, sitemaps, IndexNow key, stats, and the collect beacon
-- `src/news/pageviews.ts` classification, daily visitor hash, and the stats report
-- `src/news/stats.ts` bearer-only stats JSON, dashboard, drilldown, and CSV
+- `src/news/pageviews.ts` classification, HMAC visitor hash, and the in-memory stats report
+- `src/news/d1-stats.ts` SQL aggregates for the D1 dashboard
+- `src/news/stats.ts` separate stats bearer, dashboard, drilldown, and CSV
 - `src/news/collect.ts` same-origin engagement beacon
 - `src/index.ts` sends `/ai-news`, `/llms.txt`, and the key file to that router, then leaves every other route as it was

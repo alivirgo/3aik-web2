@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { handleNewsRequest } from "../src/news/routes";
 import { D1NewsRepository, MemoryNewsRepository } from "../src/news/repository";
-import { pageViewFromRequest } from "../src/news/pageviews";
+import { emptyStatsReport, pageViewFromRequest } from "../src/news/pageviews";
+import { formatDuration, formatPercent, renderStatsCsv, renderStatsDashboard } from "../src/news/stats";
+import { resetAggregates } from "../src/news/aggregates";
 import type { StoredArticle } from "../src/news/types";
+
+const STATS_BEARER = "stats-desk-bearer-0123456789abcdef0123456789abcd";
+const STATS_SHA = createHash("sha256").update(STATS_BEARER).digest("hex");
 
 const TOKEN = "cd".repeat(32);
 const SECRET_TITLE = "SECRET_STORY_TITLE_ZZZ";
@@ -37,7 +43,11 @@ function article(): StoredArticle {
 }
 
 function env() {
-	return { AI_NEWS_INGEST_TOKEN: TOKEN, AI_NEWS_SITE_ORIGIN: "https://3aik.com" };
+	return {
+		AI_NEWS_INGEST_TOKEN: TOKEN,
+		AI_NEWS_STATS_TOKEN_SHA256: STATS_SHA,
+		AI_NEWS_SITE_ORIGIN: "https://3aik.com",
+	};
 }
 
 function desk() {
@@ -167,13 +177,16 @@ describe("private stats", () => {
 			new Request("https://3aik.test/ai-news/api/stats", { headers: { cookie: `token=${TOKEN}` } }),
 			new Request("https://3aik.test/ai-news/api/stats/dashboard", { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } }),
 		];
+		const publicMiss = await handleNewsRequest(new Request("https://3aik.test/ai-news/not-a-real-page"), env(), { repo });
 		for (const request of cases) {
 			const response = await handleNewsRequest(request, env(), { repo });
 			expect(response.status, request.url).toBe(404);
-			expect(response.headers.get("cache-control")).toContain("no-store");
-			expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
-			expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+			expect(response.headers.get("cache-control")).toBe(publicMiss.headers.get("cache-control"));
+			expect(response.headers.get("x-robots-tag")).toBe(publicMiss.headers.get("x-robots-tag"));
+			expect(response.headers.get("cdn-cache-control")).toBe(publicMiss.headers.get("cdn-cache-control"));
 			expect(response.headers.get("access-control-allow-origin")).toBeNull();
+			const strip = (value: string | null) => (value ?? "").replace(/'nonce-[^']+'/g, "'nonce'");
+			expect(strip(response.headers.get("content-security-policy"))).toBe(strip(publicMiss.headers.get("content-security-policy")));
 			const body = await read(response);
 			expect(body).not.toContain(SECRET_TITLE);
 			expect(body).not.toContain("robot hands");
@@ -243,7 +256,7 @@ describe("private stats", () => {
 			deviceClass: "other",
 			bot: 1,
 		});
-		const headers = { authorization: `Bearer ${TOKEN}` };
+		const headers = { authorization: `Bearer ${STATS_BEARER}` };
 		const jsonResponse = await handleNewsRequest(
 			new Request("https://3aik.test/ai-news/api/stats", { headers }),
 			env(),
@@ -361,5 +374,135 @@ describe("private stats", () => {
 		const packed = JSON.stringify(calls.flatMap((call) => call.binds));
 		expect(packed).not.toContain(IP);
 		expect(packed).not.toContain("UniqueAgentTokenXYZ");
+		expect(packedSql).toContain("delete from stats_visitor_day");
+		expect(packedSql).toContain("delete from stats_day_salt");
+	});
+
+	it("rejects the ingest token on every stats route", async () => {
+		const repo = desk();
+		const paths = [
+			"/ai-news/api/stats",
+			"/ai-news/api/stats/dashboard",
+			"/ai-news/api/stats.csv",
+			"/ai-news/api/stats/article/short-bulletin",
+		];
+		for (const path of paths) {
+			const response = await handleNewsRequest(
+				new Request(`https://3aik.test${path}`, { headers: { authorization: `Bearer ${TOKEN}` } }),
+				env(),
+				{ repo },
+			);
+			expect(response.status, path).toBe(404);
+		}
+		const locked = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/api/stats", { headers: { authorization: `Bearer ${TOKEN}` } }),
+			{ AI_NEWS_INGEST_TOKEN: TOKEN, AI_NEWS_SITE_ORIGIN: "https://3aik.com" },
+			{ repo },
+		);
+		expect(locked.status).toBe(404);
+		const leaked = await handleNewsRequest(
+			new Request(`https://3aik.test/ai-news/api/stats?from=2026-10-01&token=${STATS_BEARER}`, { headers: { authorization: `Bearer ${STATS_BEARER}` } }),
+			env(),
+			{ repo },
+		);
+		expect(leaked.status).toBe(404);
+	});
+
+	it("draws axis charts and formats engaged time and bounce rate", () => {
+		expect(formatDuration(125000)).toBe("2:05");
+		expect(formatDuration(4200)).toBe("0:04");
+		expect(formatPercent(0.375)).toBe("37.5%");
+		const report = emptyStatsReport(new Date("2026-10-26T13:00:00.000Z"));
+		report.ready = true;
+		report.comparison.current = { ...report.comparison.current, views: 40, uniques: 18, bots: 3, avgEngagedMs: 125000, avgScrollPct: 62, bounceRate: 0.375 };
+		report.comparison.previous = { ...report.comparison.previous, views: 20, uniques: 10, bots: 6, avgEngagedMs: 60000, avgScrollPct: 40, bounceRate: 0.5 };
+		report.series.day = [
+			{ label: "2026-10-24", views: 10, uniques: 4 },
+			{ label: "2026-10-25", views: 22, uniques: 9 },
+			{ label: "2026-10-26", views: 8, uniques: 5 },
+		];
+		report.series.hour = [
+			{ label: "2026-10-26T08", views: 3, uniques: 2 },
+			{ label: "2026-10-26T09", views: 7, uniques: 4 },
+		];
+		report.queries = [{ engine: "Google", query: "robot hands", views: 2 }];
+		const html = renderStatsDashboard(report);
+		expect(html).toContain('class="axis"');
+		expect(html).toContain('class="bar"');
+		const widths = [...html.matchAll(/class="bar"[^>]*width="([0-9.]+)"/g)].map((match) => Number(match[1]));
+		expect(widths.length).toBeGreaterThanOrEqual(4);
+		expect(Math.max(...widths)).toBeLessThan(40);
+		expect(html).toContain("2:05");
+		expect(html).toContain("37.5%");
+		expect(html).toContain("Last 24 hours");
+		expect(html).toContain("Asia/Karachi");
+		expect(html).toContain("<svg");
+		expect(html).toContain("Last 7 days");
+		expect(html).not.toMatch(/jsdelivr|chart\.js|cdnjs|unpkg/i);
+		expect(html).not.toContain("<form");
+		const csv = renderStatsCsv(report);
+		expect(csv).toContain("robot hands");
+		const sheet = renderStatsCsv({
+			...report,
+			queries: [{ engine: "Google", query: "=cmd", views: 1 }, { engine: "Google", query: " @hidden", views: 1 }],
+		});
+		expect(sheet).toContain(`"'=cmd"`);
+		expect(sheet).toContain(`"' @hidden"`);
+	});
+
+	it("stores bots and unknown paths as daily counters, not pageview rows", async () => {
+		resetAggregates();
+		const calls: Array<{ sql: string; binds: unknown[] }> = [];
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind(...binds: unknown[]) {
+						return {
+							async run() {
+								calls.push({ sql, binds });
+								return { meta: { changes: 1 } };
+							},
+						};
+					},
+				};
+			},
+		};
+		const repo = new D1NewsRepository(db as unknown as D1Database);
+		const base = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/article/missing", { headers: { "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1)" } }),
+			{ slug: "", page: "/ai-news/article/missing" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		base.eventKind = "view";
+		await repo.recordPageView(base);
+		const botSql = calls.map((call) => call.sql.toLowerCase()).join("\n");
+		expect(botSql).toContain("stats_bot_daily");
+		expect(botSql).not.toContain("insert into page_views");
+		calls.length = 0;
+		resetAggregates();
+		const miss = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/nope", { headers: { "user-agent": "Mozilla/5.0" } }),
+			{ slug: "", page: "/ai-news/nope" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		miss.eventKind = "404";
+		await repo.recordPageView(miss);
+		const missSql = calls.map((call) => call.sql.toLowerCase()).join("\n");
+		expect(missSql).toContain("stats_miss_daily");
+		expect(missSql).not.toContain("insert into page_views");
+	});
+
+	it("strips email and phone strings from stored queries", () => {
+		const event = pageViewFromRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin?utm_term=reach+ada%40example.com+or+%2B1+202+555+0143"),
+			{ slug: "short-bulletin", page: "article" },
+			new Date("2026-10-26T13:00:00.000Z"),
+			"3aik.com",
+		);
+		expect(event.utmTerm).not.toContain("ada@example.com");
+		expect(event.utmTerm).not.toContain("202");
+		expect(event.utmTerm.toLowerCase()).toContain("redacted");
 	});
 });

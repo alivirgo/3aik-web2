@@ -1,4 +1,3 @@
-import { ADSENSE_HOSTS } from "../adsense";
 import type { Env } from "../types";
 import { publishingEnabled, siteOrigin } from "./config";
 import {
@@ -14,11 +13,13 @@ import {
 import { loadPublicImage, parseMediaRequest } from "./github-images";
 import { handleIngestRequest, ingestApiPath } from "./ingest";
 import { beaconScript, handleCollectRequest, isNewsCollectPath } from "./collect";
-import { dailyVisitorHash, isFeedPath, isTrackedMiss, pageViewFromRequest, trackedPage, type PageViewEvent } from "./pageviews";
+import { cachedDaySalt, isFeedPath, isTrackedMiss, pageViewFromRequest, saltToHex, trackedPage, visitorHmac, type PageViewEvent } from "./pageviews";
+import { allowView } from "./ratelimit";
+import { freshNonce, htmlCsp, publicNotFoundResponse, securityHeaders } from "./responses";
 import { handleNewsStatsRequest, isNewsStatsPath } from "./stats";
 import { runPublishCycle } from "./pipeline";
 import { D1NewsRepository, type NewsRepository } from "./repository";
-import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap } from "./syndication";
+import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap, renderSitemapIndex } from "./syndication";
 import type { SitemapEntry, StoredArticle } from "./types";
 import { isCategory } from "./text";
 
@@ -47,52 +48,30 @@ function normalizePath(pathname: string): string {
  * Image responses themselves cannot load anything.
  */
 const PAGE_CSP = "default-src 'self'; base-uri 'self'; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'none'; style-src 'self'; upgrade-insecure-requests";
-const SITEMAP_ARTICLE_LIMIT = 50_000;
-const FEED_ARTICLE_LIMIT = 5_000;
-
-function freshNonce(): string {
-	const bytes = new Uint8Array(16);
-	crypto.getRandomValues(bytes);
-	return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function htmlCsp(imageOrigins: string[], nonce: string): string {
-	const extra = imageOrigins.length ? ` ${imageOrigins.join(" ")}` : "";
-	return `default-src 'self'; base-uri 'self'; connect-src 'self' ${ADSENSE_HOSTS}; font-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src ${ADSENSE_HOSTS}; img-src 'self' ${ADSENSE_HOSTS}${extra}; object-src 'none'; script-src ${ADSENSE_HOSTS} 'nonce-${nonce}'; style-src 'self'; upgrade-insecure-requests`;
-}
+/** One sitemap file stays small enough for a Free worker to render. */
+export const SITEMAP_PAGE_SIZE = 1000;
+const FEED_ARTICLE_LIMIT = 100;
 const IMAGE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'none'";
 
-function securityHeaders(contentType: string, cache: string, csp = PAGE_CSP): Headers {
-	const headers = new Headers();
-	headers.set("content-type", contentType);
-	headers.set("cache-control", cache);
-	headers.set("x-content-type-options", "nosniff");
-	headers.set("x-frame-options", "DENY");
-	headers.set("referrer-policy", "strict-origin-when-cross-origin");
-	headers.set("strict-transport-security", "max-age=31536000");
-	headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
-	headers.set("content-security-policy", csp);
-	return headers;
-}
-
-function htmlResponse(request: Request, body: string, status: number, cache: string, imageOrigins: string[] = []): Response {
+function htmlResponse(request: Request, body: string, status: number, _cache: string, imageOrigins: string[] = []): Response {
 	const nonce = freshNonce();
 	const path = normalizePath(new URL(request.url).pathname);
 	const tracked = status === 200 ? trackedPage(path) : null;
 	const html = tracked ? body.replace("</body>", `${beaconScript(nonce, tracked.page, tracked.slug)}</body>`) : body;
-	const headers = securityHeaders("text/html; charset=utf-8", cache, htmlCsp(imageOrigins, nonce));
+	// A nonce must not be stored at the edge. HTML is private even when the caller asked for a public TTL.
+	const headers = securityHeaders("text/html; charset=utf-8", "private, no-store", htmlCsp(imageOrigins, nonce));
 	if (request.method === "HEAD") return new Response(null, { status, headers });
 	return new Response(html, { status, headers });
 }
 
 function xmlResponse(request: Request, body: string, contentType: string): Response {
-	const headers = securityHeaders(contentType, "public, max-age=120");
+	const headers = securityHeaders(contentType, "public, max-age=120", PAGE_CSP);
 	if (request.method === "HEAD") return new Response(null, { status: 200, headers });
 	return new Response(body, { status: 200, headers });
 }
 
 function textResponse(request: Request, body: string, cache: string): Response {
-	const headers = securityHeaders("text/plain; charset=utf-8", cache);
+	const headers = securityHeaders("text/plain; charset=utf-8", cache, PAGE_CSP);
 	if (request.method === "HEAD") return new Response(null, { status: 200, headers });
 	return new Response(body, { status: 200, headers });
 }
@@ -125,7 +104,9 @@ async function matchEdge(request: Request): Promise<Response | null> {
 async function putEdge(request: Request, response: Response, ctx?: ExecutionContext): Promise<void> {
 	if (request.method !== "GET" || (response.status !== 200 && response.status !== 404)) return;
 	const control = response.headers.get("cache-control") ?? "";
-	if (!control.includes("public") || control.includes("no-store")) return;
+	if (!control.includes("public") || control.includes("no-store") || control.includes("private")) return;
+	const policy = response.headers.get("content-security-policy") ?? "";
+	if (policy.includes("'nonce-")) return;
 	const cache = edgeCache();
 	if (!cache) return;
 	const put = cache.put(newsCacheRequest(request), response.clone()).catch(() => undefined);
@@ -151,13 +132,23 @@ async function loadRecent(repo: NewsRepository | null, limit: number, category?:
 	}
 }
 
-async function loadSitemap(repo: NewsRepository | null, limit: number): Promise<SitemapEntry[]> {
+async function loadSitemap(repo: NewsRepository | null, limit: number, offset = 0): Promise<SitemapEntry[]> {
 	if (!repo) return [];
 	try {
-		return await repo.listSitemap(limit);
+		return await repo.listSitemap(limit, offset);
 	} catch (error) {
 		logReadError("sitemap", error);
 		return [];
+	}
+}
+
+async function countArticles(repo: NewsRepository | null): Promise<number> {
+	if (!repo) return 0;
+	try {
+		return await repo.countArticles();
+	} catch (error) {
+		logReadError("sitemap-count", error);
+		return 0;
 	}
 }
 
@@ -192,7 +183,20 @@ function scheduleAnalytics(ctx: ExecutionContext | undefined, request: Request, 
 	if (!event) return;
 	const address = request.headers.get("cf-connecting-ip") ?? "";
 	const userAgent = request.headers.get("user-agent") ?? "";
-	event.visitorHash = dailyVisitorHash(env.AI_NEWS_INGEST_TOKEN ?? "", address, userAgent, event.viewedAt.slice(0, 10));
+	const humanView = event.bot !== 1 && event.eventKind !== "404" && event.eventKind !== "feed";
+	if (humanView && !allowView(address || "anon")) return;
+	if (humanView && address) {
+		const day = event.viewedAt.slice(0, 10);
+		const salt = cachedDaySalt(day);
+		event.visitorHash = visitorHmac(salt, address, userAgent);
+		const saltWork = repo.persistDaySalt(day, saltToHex(salt)).catch((error: unknown) => {
+			console.error(JSON.stringify({
+				message: "ai-news salt failed",
+				error: error instanceof Error ? error.message : "salt",
+			}));
+		});
+		ctx.waitUntil(saltWork);
+	}
 	const work = repo.recordPageView(event).catch((error: unknown) => {
 		console.error(JSON.stringify({
 			message: "ai-news pageview failed",
@@ -253,8 +257,16 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 		}
 		if (path === "/ai-news/about") return htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/disclaimer") return htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
-		if (path === "/ai-news/sitemap.xml") {
-			const articles = await loadSitemap(repo, SITEMAP_ARTICLE_LIMIT);
+		const sitemapPage = /^\/ai-news\/sitemap\/([1-9]\d{0,2})\.xml$/.exec(path);
+		if (path === "/ai-news/sitemap.xml" || sitemapPage) {
+			const count = await countArticles(repo);
+			const pages = Math.max(1, Math.ceil(count / SITEMAP_PAGE_SIZE));
+			const requested = sitemapPage ? Number(sitemapPage[1]) : 0;
+			if (!sitemapPage && pages > 1) {
+				return xmlResponse(request, renderSitemapIndex(origin, pages), "application/xml; charset=utf-8");
+			}
+			const index = requested === 0 ? 1 : requested;
+			const articles = index > pages ? [] : await loadSitemap(repo, SITEMAP_PAGE_SIZE, (index - 1) * SITEMAP_PAGE_SIZE);
 			return xmlResponse(request, renderSitemap(origin, articles), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/news-sitemap.xml") {
@@ -282,7 +294,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 					known = await repo.findImage(media.repoPath, media.commitSha);
 				} catch (error) {
 					logReadError(path, error);
-					return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+					return publicNotFoundResponse(request, origin);
 				}
 			}
 			if (!known) return miss();
@@ -335,7 +347,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				}
 			}
 			const page = renderAuthor(origin, authorMatch[1], articles);
-			if (!page) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+			if (!page) return publicNotFoundResponse(request, origin);
 			return htmlResponse(request, page, 200, "public, max-age=120", externalImageOrigins(origin, articles));
 		}
 
@@ -347,15 +359,15 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 					article = await repo.getBySlug(articleMatch[1]);
 				} catch (error) {
 					logReadError(path, error);
-					return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+					return publicNotFoundResponse(request, origin);
 				}
 			}
-			if (!article) return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+			if (!article) return publicNotFoundResponse(request, origin);
 			const latest = await loadRecent(repo, 8);
 			return htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120", externalImageOrigins(origin, [article, ...latest]));
 		}
 
-		return htmlResponse(request, renderNotFound(origin), 404, "no-store");
+		return publicNotFoundResponse(request, origin);
 	} catch (error) {
 		console.error(JSON.stringify({
 			message: "ai-news request failed",

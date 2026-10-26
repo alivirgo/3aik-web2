@@ -289,7 +289,7 @@ describe("ingest publish", () => {
 		expect(JSON.parse(state.githubPuts[0]?.body ?? "{}").content).toBe(jpegBase64());
 	});
 
-	it("publishes without a picture when the file is png, GitHub fails, or the image token is missing", async () => {
+	it("stores a png and publishes without a picture when GitHub fails or the image token is missing", async () => {
 		const png = desk();
 		const pngBody = articleFields({
 			image: { data: Buffer.from(TINY_PNG).toString("base64"), alt: ALT },
@@ -297,8 +297,8 @@ describe("ingest publish", () => {
 		});
 		const pngResponse = await send(post(pngBody), png);
 		expect(pngResponse.response.status).toBe(201);
-		expect(png.repo.articles[0]?.imageKey).toBe("");
-		expect(png.githubPuts).toHaveLength(0);
+		expect(png.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
+		expect(png.githubPuts).toHaveLength(1);
 
 		const failed = desk({ githubStatus: 500 });
 		const failedResponse = await send(post(articleFields({
@@ -390,7 +390,7 @@ describe("ingest publish", () => {
 		expect(body.personas[0]).toEqual(expect.objectContaining({ slug: expect.any(String), name: expect.any(String), beat: expect.any(String) }));
 		expect(body.categories.find((category) => category.id === "technology")?.aliases).toEqual(["tech"]);
 		expect(body.limits.requests_per_hour).toBe(10);
-		expect(body.limits.image_max_bytes).toBe(1_572_864);
+		expect(body.limits.image_max_bytes).toBe(1_000_000);
 		expect(body.recent_source_urls).toEqual([]);
 
 		const head = await handleNewsRequest(new Request("https://3aik.test/ai-news/api/ingest/meta", {
@@ -472,7 +472,7 @@ describe("publisher images", () => {
 		expect(page.headers.get("content-security-policy")).toContain("pagead2.googlesyndication.com");
 	});
 
-	it("hotlinks when the file cannot be stored and drops the picture when the fetch fails", async () => {
+	it("stores a publisher PNG and drops the picture when the fetch fails", async () => {
 		const pngUrl = "https://images.example.net/photo.png";
 		const pngState = desk();
 		pngState.fetchImpl = imageFetch({
@@ -480,7 +480,7 @@ describe("publisher images", () => {
 		}).fetchImpl;
 		const png = await send(post(fields({ image_source_url: pngUrl, image_credit: "WWD" })), pngState);
 		expect(png.response.status).toBe(201);
-		expect(pngState.repo.articles[0]?.imageKey).toBe("");
+		expect(pngState.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
 		expect(pngState.repo.articles[0]?.imageCredit).toBe("Image: WWD");
 		expect(pngState.repo.articles[0]?.imageSourceUrl).toBe(pngUrl);
 		const page = await handleNewsRequest(
@@ -489,9 +489,10 @@ describe("publisher images", () => {
 			{ repo: pngState.repo },
 		);
 		const html = await page.text();
-		expect(html).toContain(`src="${pngUrl}"`);
+		expect(html).toContain("/ai-news/media/");
+		expect(html).not.toContain(`src="${pngUrl}"`);
 		expect(html).toContain("<figcaption>Image: WWD</figcaption>");
-		expect(page.headers.get("content-security-policy")).toContain("https://images.example.net");
+		expect(page.headers.get("content-security-policy")).not.toContain("images.example.net");
 
 		const missing = desk();
 		missing.fetchImpl = imageFetch({}).fetchImpl;

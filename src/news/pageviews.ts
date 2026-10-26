@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 
 export type SourceClass = "search" | "social" | "direct" | "internal" | "other";
 export type DeviceClass = "desktop" | "mobile" | "tablet" | "other";
@@ -124,6 +124,10 @@ export interface PeriodSlice {
 	to: string;
 	views: number;
 	uniques: number;
+	bots: number;
+	avgEngagedMs: number;
+	avgScrollPct: number;
+	bounceRate: number;
 }
 
 export interface ArticleCatalogEntry {
@@ -197,7 +201,7 @@ export interface NewsStatsReport {
 }
 
 export const RAW_RETENTION_DAYS = 90;
-export const STATS_NOTE = "Unique visitors are once-per-UTC-day hashes of a daily salt, the address, and the user agent. The address and user agent are discarded. The same person counts again the next day. Raw events are kept 90 days. Daily view and unique totals are kept after that. Sessions are groups of human page views that share a daily hash and sit within 30 minutes. A bounce is a session with one page view.";
+export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is not derived from a token. It is deleted after that UTC day. The address and user agent are discarded. The same person counts again the next day. Raw human rows are kept 90 days. Daily totals, including visitor-day rows, are pruned with them. Sessions are groups of human page views that share a daily hash and sit within 30 minutes. A bounce is a session with one page view.";
 
 const SEARCH_ENGINES: Array<{ name: string; hosts: string[]; keys: string[] }> = [
 	{ name: "Google", hosts: ["google.com"], keys: ["q"] },
@@ -276,12 +280,58 @@ export function rawRetentionCutoff(now: Date): string {
 	return new Date(now.getTime() - RAW_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
-/** Daily-rotating salt from the ingest secret, then SHA-256 of salt, address, and user agent. */
-export function dailyVisitorHash(secret: string, address: string, userAgent: string, day: string): string {
-	const token = secret.trim();
-	if (!token || !address) return "";
-	const salt = createHash("sha256").update(`${token}|${day}`).digest("hex");
-	return createHash("sha256").update(`${salt}|${address}|${userAgent}`).digest("hex");
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+const PHONE_RE = /(?:\+\d{1,3}[\s.-])?(?:\(\d{2,4}\)[\s.-]?|\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}|\+\d{8,15}/g;
+
+/** Drop email-like and phone-like strings before a query or utm value is stored. */
+export function redactContacts(value: string): string {
+	return value.replace(EMAIL_RE, "[redacted]").replace(PHONE_RE, (match) => {
+		const digits = match.replace(/\D/g, "");
+		return digits.length >= 8 && digits.length <= 15 ? "[redacted]" : match;
+	});
+}
+
+const daySalts = new Map<string, Uint8Array>();
+
+export function clearDaySalts(): void {
+	daySalts.clear();
+}
+
+/** 32 random bytes from crypto.getRandomValues. Not derived from a token. */
+export function randomDaySalt(): Uint8Array {
+	const salt = new Uint8Array(32);
+	crypto.getRandomValues(salt);
+	return salt;
+}
+
+export function saltToHex(salt: Uint8Array): string {
+	return [...salt].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function hexToSalt(hex: string): Uint8Array | null {
+	if (!/^[0-9a-f]{64}$/i.test(hex)) return null;
+	const bytes = new Uint8Array(32);
+	for (let index = 0; index < 32; index += 1) bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+	return bytes;
+}
+
+/** Isolate cache of today's salt. The D1 copy is the one deleted after the UTC day. */
+export function cachedDaySalt(day: string): Uint8Array {
+	const existing = daySalts.get(day);
+	if (existing) return existing;
+	const salt = randomDaySalt();
+	daySalts.set(day, salt);
+	return salt;
+}
+
+export function rememberDaySalt(day: string, salt: Uint8Array): void {
+	if (salt.byteLength === 32) daySalts.set(day, salt);
+}
+
+/** HMAC-SHA256(salt, address|userAgent). Empty when the address or salt is missing. */
+export function visitorHmac(salt: Uint8Array, address: string, userAgent: string): string {
+	if (!address || salt.byteLength === 0) return "";
+	return createHmac("sha256", salt).update(`${address}|${userAgent}`).digest("hex");
 }
 
 function emptyAudience(): AudienceStats {
@@ -311,8 +361,8 @@ export function emptyStatsReport(now: Date): NewsStatsReport {
 		totals: { views: 0, last24h: 0, last7d: 0, botHitsExcluded: 0 },
 		audience: emptyAudience(),
 		comparison: {
-			current: { from: weekAgo, to: day, views: 0, uniques: 0 },
-			previous: { from: prevStart, to: prevEnd, views: 0, uniques: 0 },
+			current: { from: weekAgo, to: day, views: 0, uniques: 0, bots: 0, avgEngagedMs: 0, avgScrollPct: 0, bounceRate: 0 },
+			previous: { from: prevStart, to: prevEnd, views: 0, uniques: 0, bots: 0, avgEngagedMs: 0, avgScrollPct: 0, bounceRate: 0 },
 		},
 		series: { hour: [], day: [], week: [], month: [] },
 		heatmap: { utc: Array(24).fill(0), karachi: Array(24).fill(0) },
@@ -567,10 +617,10 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 	const bot: 0 | 1 = BOT_PATTERN.test(ua) ? 1 : 0;
 	const device = deviceClass(ua);
 	const pageUrl = new URL(request.url);
-	const utmSource = clip(pageUrl.searchParams.get("utm_source") ?? "", 80);
-	const utmMedium = clip(pageUrl.searchParams.get("utm_medium") ?? "", 80);
-	const utmCampaign = clip(pageUrl.searchParams.get("utm_campaign") ?? "", 80);
-	const utmTerm = clip(pageUrl.searchParams.get("utm_term") ?? "", 120);
+	const utmSource = clip(redactContacts(pageUrl.searchParams.get("utm_source") ?? ""), 80);
+	const utmMedium = clip(redactContacts(pageUrl.searchParams.get("utm_medium") ?? ""), 80);
+	const utmCampaign = clip(redactContacts(pageUrl.searchParams.get("utm_campaign") ?? ""), 80);
+	const utmTerm = clip(redactContacts(pageUrl.searchParams.get("utm_term") ?? ""), 120);
 	const siteHosts = [siteHost, pageUrl.hostname, "3aik.com"];
 	const cf = cfOf(request);
 
@@ -607,7 +657,7 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 	else if (utmSource || utmMedium || utmCampaign) sourceClass = "other";
 
 	if (!engineName && sourceClass === "search") engineName = engineFromUtm(utmSource);
-	let searchQuery = referrerQuery;
+	let searchQuery = redactContacts(referrerQuery);
 	if (!searchQuery && utmTerm && (sourceClass === "search" || searchMedium(utmMedium))) searchQuery = clip(utmTerm, 120);
 
 	const continentCode = textOf(cf.continent).toUpperCase();
@@ -649,11 +699,11 @@ export function normalizeEvent(event: PageViewEvent): Required<PageViewEvent> {
 		referrerPath: clip(event.referrerPath, 180),
 		sourceClass: event.sourceClass,
 		searchEngine: clip(event.searchEngine, 40),
-		searchQuery: clip(event.searchQuery, 120),
-		utmSource: clip(event.utmSource, 80),
-		utmMedium: clip(event.utmMedium, 80),
-		utmCampaign: clip(event.utmCampaign, 80),
-		utmTerm: clip(event.utmTerm, 120),
+		searchQuery: clip(redactContacts(event.searchQuery), 120),
+		utmSource: clip(redactContacts(event.utmSource), 80),
+		utmMedium: clip(redactContacts(event.utmMedium), 80),
+		utmCampaign: clip(redactContacts(event.utmCampaign), 80),
+		utmTerm: clip(redactContacts(event.utmTerm), 120),
 		country: clip(event.country, 8),
 		region: clip(event.region ?? "", 80),
 		city: clip(event.city ?? "", 80),
@@ -739,18 +789,61 @@ interface HashHit {
 	label: string;
 }
 
-function countWindow(events: PageViewEvent[], startMs: number, endMs: number, slug: string | null): { views: number; uniques: number } {
+function sessionize(hits: HashHit[]): HashHit[][] {
+	const sessions: HashHit[][] = [];
+	let openSession: HashHit[] = [];
+	const ordered = hits.slice().sort((left, right) => left.hash.localeCompare(right.hash) || left.t - right.t);
+	for (const hit of ordered) {
+		const prev = openSession[openSession.length - 1];
+		const split = !prev || !hit.hash || hit.hash !== prev.hash || hit.t - prev.t > SESSION_GAP_MS;
+		if (split) {
+			if (openSession.length) sessions.push(openSession);
+			openSession = [hit];
+		} else openSession.push(hit);
+	}
+	if (openSession.length) sessions.push(openSession);
+	return sessions;
+}
+
+function windowMetrics(events: PageViewEvent[], startMs: number, endMs: number, slug: string | null): Omit<PeriodSlice, "from" | "to"> {
 	const hashes = new Set<string>();
+	const hits: HashHit[] = [];
 	let views = 0;
+	let bots = 0;
+	let engaged = 0;
+	let engageN = 0;
+	let scroll = 0;
+	let scrollN = 0;
 	for (const event of events) {
-		if (event.bot === 1 || kindOf(event) !== "view") continue;
 		if (!matchesSlug(event, slug)) continue;
 		const at = Date.parse(event.viewedAt);
 		if (!Number.isFinite(at) || at < startMs || at >= endMs) continue;
-		views += 1;
-		if (event.visitorHash) hashes.add(`${event.viewedAt.slice(0, 10)}|${event.visitorHash}`);
+		if (event.bot === 1) {
+			bots += 1;
+			continue;
+		}
+		const kind = kindOf(event);
+		if (kind === "view") {
+			views += 1;
+			if (event.visitorHash) hashes.add(`${event.viewedAt.slice(0, 10)}|${event.visitorHash}`);
+			hits.push({ t: at, hash: event.visitorHash ?? "", day: event.viewedAt.slice(0, 10), label: pageLabel(event.page, event.slug) });
+		} else if (kind === "engage") {
+			engaged += event.engagedMs ?? 0;
+			engageN += 1;
+			scroll += event.scrollPct ?? 0;
+			scrollN += 1;
+		}
 	}
-	return { views, uniques: hashes.size };
+	const sessions = sessionize(hits);
+	const bounces = sessions.filter((session) => session.length === 1).length;
+	return {
+		views,
+		uniques: hashes.size,
+		bots,
+		avgEngagedMs: engageN ? Math.round(engaged / engageN) : 0,
+		avgScrollPct: scrollN ? Math.round(scroll / scrollN) : 0,
+		bounceRate: sessions.length ? Math.round((1000 * bounces) / sessions.length) / 1000 : 0,
+	};
 }
 
 export function summarizePageViews(
@@ -986,18 +1079,7 @@ export function summarizePageViews(
 		}
 	}
 
-	const sessions: HashHit[][] = [];
-	let openSession: HashHit[] = [];
-	const ordered = humanViews.slice().sort((left, right) => left.hash.localeCompare(right.hash) || left.t - right.t);
-	for (const hit of ordered) {
-		const prev = openSession[openSession.length - 1];
-		const split = !prev || !hit.hash || hit.hash !== prev.hash || hit.t - prev.t > SESSION_GAP_MS;
-		if (split) {
-			if (openSession.length) sessions.push(openSession);
-			openSession = [hit];
-		} else openSession.push(hit);
-	}
-	if (openSession.length) sessions.push(openSession);
+	const sessions = sessionize(humanViews);
 	const landing = new Map<string, number>();
 	const exit = new Map<string, number>();
 	let bounces = 0;
@@ -1026,8 +1108,8 @@ export function summarizePageViews(
 	const startDay = query.from ?? new Date(endMs - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 	const startMs = Date.parse(`${startDay}T00:00:00.000Z`);
 	const length = Math.max(24 * 60 * 60 * 1000, endMs - startMs);
-	const current = countWindow(events, startMs, endMs, query.slug);
-	const previous = countWindow(events, startMs - length, startMs, query.slug);
+	const current = windowMetrics(events, startMs, endMs, query.slug);
+	const previous = windowMetrics(events, startMs - length, startMs, query.slug);
 
 	report.since = since;
 	report.audience.uniques = displayHashes.size;
@@ -1037,12 +1119,11 @@ export function summarizePageViews(
 	report.audience.avgEngagedMs = engageN ? Math.round(engagedMs / engageN) : 0;
 	report.audience.avgScrollPct = scrollN ? Math.round(scrollSum / scrollN) : 0;
 	report.comparison = {
-		current: { from: startDay, to: endDay, views: current.views, uniques: current.uniques },
+		current: { from: startDay, to: endDay, ...current },
 		previous: {
 			from: new Date(startMs - length).toISOString().slice(0, 10),
 			to: new Date(startMs - 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-			views: previous.views,
-			uniques: previous.uniques,
+			...previous,
 		},
 	};
 	report.series = {

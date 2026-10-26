@@ -1,6 +1,8 @@
 import { authorById } from "./authors";
 import type { ArticleCatalogEntry, NewsStatsReport, PageViewEvent, StatsQuery } from "./pageviews";
-import { emptyStatsReport, normalizeEvent, rawRetentionCutoff, summarizePageViews } from "./pageviews";
+import { flushAggregates, queueAggregate } from "./aggregates";
+import { loadD1StatsReport } from "./d1-stats";
+import { emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, summarizePageViews } from "./pageviews";
 import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
 import { isCategory, wordCount } from "./text";
 
@@ -20,7 +22,8 @@ export interface NewsRepository {
 	isRejected(url: string, nowIso: string): Promise<boolean>;
 	rejectSource(url: string, reason: string, expiresAt: string): Promise<void>;
 	forgetExpiredRejections(nowIso: string): Promise<void>;
-	listSitemap(limit: number): Promise<SitemapEntry[]>;
+	listSitemap(limit: number, offset?: number): Promise<SitemapEntry[]>;
+	countArticles(): Promise<number>;
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
@@ -28,6 +31,7 @@ export interface NewsRepository {
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
 	consumeIngest(bucket: string, limit: number): Promise<boolean>;
 	recordPageView(event: PageViewEvent): Promise<void>;
+	persistDaySalt(day: string, saltHex: string): Promise<void>;
 	pageViewReport(now: Date, query?: StatsQuery): Promise<NewsStatsReport>;
 }
 
@@ -349,10 +353,10 @@ export class D1NewsRepository implements NewsRepository {
 		await this.db.prepare("DELETE FROM source_rejections WHERE expires_at <= ?").bind(nowIso).run();
 	}
 
-	async listSitemap(limit: number): Promise<SitemapEntry[]> {
+	async listSitemap(limit: number, offset = 0): Promise<SitemapEntry[]> {
 		const result = await this.db
-			.prepare("SELECT slug, title, published_at, updated_at FROM articles ORDER BY published_at DESC LIMIT ?")
-			.bind(limit)
+			.prepare("SELECT slug, title, published_at, updated_at FROM articles ORDER BY published_at DESC LIMIT ? OFFSET ?")
+			.bind(limit, offset)
 			.all<Record<string, unknown>>();
 		return (result.results ?? []).map((row) => ({
 			slug: readString(row, "slug"),
@@ -428,8 +432,46 @@ export class D1NewsRepository implements NewsRepository {
 		return (results[1]?.meta?.changes ?? 0) > 0;
 	}
 
+	async persistDaySalt(day: string, saltHex: string): Promise<void> {
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^[0-9a-f]{64}$/i.test(saltHex)) return;
+		try {
+			await this.db
+				.prepare(`INSERT INTO stats_day_salt (day, salt) VALUES (?, ?) ON CONFLICT(day) DO NOTHING`)
+				.bind(day, saltHex.toLowerCase())
+				.run();
+			const row = await this.db
+				.prepare(`SELECT salt FROM stats_day_salt WHERE day = ?`)
+				.bind(day)
+				.first<Record<string, unknown>>();
+			const stored = typeof row?.salt === "string" ? row.salt : "";
+			const salt = hexToSalt(stored);
+			if (salt) rememberDaySalt(day, salt);
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
+	}
+
+	async countArticles(): Promise<number> {
+		const row = await this.db.prepare("SELECT COUNT(*) AS n FROM articles").bind().first<Record<string, unknown>>();
+		const value = Number(row?.n);
+		return Number.isFinite(value) ? value : 0;
+	}
+
 	async recordPageView(event: PageViewEvent): Promise<void> {
 		const row = normalizeEvent(event);
+		const aggregated = row.eventKind === "404" || row.eventKind === "feed" || row.bot === 1;
+		if (aggregated) {
+			const day = row.viewedAt.slice(0, 10);
+			if (row.eventKind === "404") queueAggregate("miss", day, row.page || "/ai-news");
+			if (row.eventKind === "feed") queueAggregate("feed", day, row.page || "/ai-news");
+			if (row.bot === 1) queueAggregate("bot", day, row.botName || "bot");
+			try {
+				await flushAggregates(this.db);
+			} catch (error) {
+				if (!missingSchema(error)) throw error;
+			}
+			return;
+		}
 		try {
 			await this.insertPageView(row, true);
 		} catch (error) {
@@ -573,10 +615,17 @@ export class D1NewsRepository implements NewsRepository {
 			.bind(until, now.toISOString())
 			.run();
 		if ((lock.meta?.changes ?? 0) < 1) return;
+		const cutoff = rawRetentionCutoff(now);
 		await this.db
 			.prepare(`DELETE FROM page_views WHERE id IN (SELECT id FROM page_views WHERE viewed_at < ? LIMIT 200)`)
-			.bind(rawRetentionCutoff(now))
+			.bind(cutoff)
 			.run();
+		await this.db.prepare(`DELETE FROM stats_visitor_day WHERE day < ?`).bind(cutoff.slice(0, 10)).run();
+		try {
+			await this.db.prepare(`DELETE FROM stats_day_salt WHERE day < ?`).bind(now.toISOString().slice(0, 10)).run();
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
 	}
 
 	async pageViewReport(now: Date, query: StatsQuery = { from: null, to: null, slug: null }): Promise<NewsStatsReport> {
@@ -591,52 +640,7 @@ export class D1NewsRepository implements NewsRepository {
 	}
 
 	private async pageViewReportDetailed(now: Date, query: StatsQuery): Promise<NewsStatsReport> {
-		const bounds = reportBounds(query, now);
-		const rows = await this.db
-			.prepare(
-				`SELECT viewed_at, slug, page, referrer_host, referrer_path, source_class, search_engine, search_query,
-					utm_source, utm_medium, utm_campaign, utm_term, country, region, city, continent, device_class,
-					browser, os, screen, lang, bot, bot_name, visitor_hash, hour_utc, hour_karachi, event_kind,
-					engaged_ms, scroll_pct, seen_before, click_host, click_path, click_kind
-				 FROM page_views
-				 WHERE (? IS NULL OR viewed_at >= ?) AND (? IS NULL OR viewed_at <= ?)
-				 ORDER BY viewed_at DESC
-				 LIMIT 20000`,
-			)
-			.bind(bounds.start, bounds.start, bounds.end, bounds.end)
-			.all<Record<string, unknown>>();
-		const articles = await this.db
-			.prepare(
-				`SELECT slug, title, category, tags_json, author_id, body_text, published_at
-				 FROM articles
-				 ORDER BY published_at DESC
-				 LIMIT 500`,
-			)
-			.all<Record<string, unknown>>();
-		const events = (rows.results ?? []).map(eventFromRow).reverse();
-		const report = summarizePageViews(events, now, catalogFromRows(articles.results ?? []), query);
-		report.truncated = (rows.results ?? []).length >= 20000;
-		try {
-			const daily = await this.db
-				.prepare(`SELECT day, views, uniques, bots FROM stats_daily`)
-				.all<Record<string, unknown>>();
-			const seen = new Set(events.map((event) => event.viewedAt.slice(0, 10)));
-			for (const row of daily.results ?? []) {
-				const day = readString(row, "day");
-				if (!day || seen.has(day)) continue;
-				if (query.from && day < query.from) continue;
-				if (query.to && day > query.to) continue;
-				if (query.slug) continue;
-				report.totals.views += numberOf(row, "views");
-				report.totals.botHitsExcluded += numberOf(row, "bots");
-				report.audience.uniques += numberOf(row, "uniques");
-				report.series.day.push({ label: day, views: numberOf(row, "views"), uniques: numberOf(row, "uniques") });
-			}
-			report.series.day.sort((left, right) => left.label.localeCompare(right.label));
-		} catch (error) {
-			if (!missingSchema(error)) throw error;
-		}
-		return report;
+		return loadD1StatsReport(this.db, now, query);
 	}
 
 }
@@ -871,17 +875,26 @@ export class MemoryNewsRepository implements NewsRepository {
 		}
 	}
 
-	async listSitemap(limit: number): Promise<SitemapEntry[]> {
+	async listSitemap(limit: number, offset = 0): Promise<SitemapEntry[]> {
 		return this.articles
 			.slice()
 			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
-			.slice(0, limit)
+			.slice(offset, offset + limit)
 			.map((article) => ({
 				slug: article.slug,
 				title: article.title,
 				publishedAt: article.publishedAt,
 				updatedAt: article.updatedAt,
 			}));
+	}
+
+	async countArticles(): Promise<number> {
+		return this.articles.length;
+	}
+
+	async persistDaySalt(day: string, saltHex: string): Promise<void> {
+		const salt = hexToSalt(saltHex);
+		if (salt) rememberDaySalt(day, salt);
 	}
 
 	async expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>> {

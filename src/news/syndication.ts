@@ -87,6 +87,18 @@ ${articleEntries}
 </urlset>`;
 }
 
+export function renderSitemapIndex(origin: string, pages: number): string {
+	const count = Math.max(1, Math.min(pages, 50));
+	const entries = Array.from({ length: count }, (_, index) => {
+		const loc = `${origin}/ai-news/sitemap/${index + 1}.xml`;
+		return `<sitemap><loc>${xmlEscape(loc)}</loc></sitemap>`;
+	}).join("\n");
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${entries}
+</sitemapindex>`;
+}
+
 export function renderNewsSitemap(origin: string, articles: Array<Pick<SitemapEntry, "slug" | "title" | "publishedAt">>, now = new Date()): string {
 	const cutoff = now.getTime() - 48 * 60 * 60 * 1000;
 	const recent = articles.filter((article) => Date.parse(article.publishedAt) >= cutoff);

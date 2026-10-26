@@ -548,15 +548,15 @@ function qualityRules() {
 			accepted: ["image/jpeg", "image/png", "image/webp"],
 			max_bytes: INGEST_IMAGE_MAX_BYTES,
 			alt_words: { min: 8, max: 32 },
-			stored: ["image/jpeg", "image/webp"],
+			stored: ["image/jpeg", "image/png", "image/webp"],
 			stored_max_bytes: GITHUB_IMAGE_MAX_BYTES,
-			note: "Send image.data as base64 or a data URL. PNG and files over the stored cap still publish, without a picture.",
+			note: "Send image.data as base64 or a data URL. PNG, JPEG, and WebP at or under 1 MB are stored. A larger file publishes with no picture.",
 			source_url: {
 				field: "image_source_url",
 				credit: "image_credit",
 				max_bytes: SOURCE_IMAGE_MAX_BYTES,
 				accepted: ["image/jpeg", "image/png", "image/webp"],
-				note: "https URL of the publisher image, for example og:image. JPEG or WebP at or under the stored cap is copied into the image repo. A larger file or a PNG is hotlinked. A failed fetch publishes with no picture. Private hosts are rejected.",
+				note: "https URL of the publisher image, for example og:image. PNG, JPEG, and WebP at or under 1 MB are copied into the image repo. If the copy cannot be stored, the article has no picture. Private hosts are rejected.",
 			},
 		},
 	};
@@ -691,9 +691,11 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		const fetched = await fetchPublisherImage(parsed.sourceImage.url, fetchImpl);
 		if (fetched) {
 			const stored = await storeImage(env, { bytes: fetched.bytes, alt: draft.imageAlt }, slug, suffix, nowIso, fetchImpl);
-			picture = stored.imageKey ? stored : { imageKey: "", imageCommit: "", imageType: fetched.mime };
-			imageCredit = parsed.sourceImage.credit;
-			imageSourceUrl = fetched.finalUrl;
+			if (stored.imageKey) {
+				picture = stored;
+				imageCredit = parsed.sourceImage.credit;
+				imageSourceUrl = fetched.finalUrl;
+			}
 		}
 	} else if (parsed.image) {
 		picture = await storeImage(env, parsed.image, slug, suffix, nowIso, fetchImpl);
@@ -714,7 +716,7 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		related: related.map(({ article: prior }) => ({ slug: prior.slug, title: prior.title })),
 		imageKey: picture.imageKey,
 		imageCommit: picture.imageCommit,
-		imageAlt: picture.imageKey || imageSourceUrl ? draft.imageAlt : "",
+		imageAlt: picture.imageKey ? draft.imageAlt : "",
 		imageType: picture.imageType,
 		imageCredit,
 		imageSourceUrl,
@@ -737,7 +739,7 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		slug,
 		category: parsed.category,
 		authorId: author.id,
-		image: Boolean(picture.imageKey || imageSourceUrl),
+		image: Boolean(picture.imageKey),
 		words: wordCount(article.bodyText),
 	}));
 	return json({ url, slug }, 201);

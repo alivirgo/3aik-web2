@@ -67,8 +67,8 @@ export const ACCURACY_DISCLAIMER =
 	"3aik.com takes no responsibility for the accuracy of news. Readers should verify claims with the linked original sources.";
 /** One calm line on an article, and the only disclosure on index pages. */
 export const ASSIST_LINE = "Written with AI assistance from cited reporting.";
-/** Publisher image fetch cap. JPEG and WebP at or under 1 MB are copied into the image repo. */
-export const SOURCE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+/** Publisher and upload image cap. PNG, JPEG, and WebP are stored only at or under 1 MB. */
+export const SOURCE_IMAGE_MAX_BYTES = 1_000_000;
 
 export const CATEGORY_LABEL: Record<Category, string> = {
 	ai: "AI",
@@ -183,8 +183,13 @@ export interface NewsEnv {
 	 * calls so a tick does not spend neurons. Cleanup still runs when publishing is on.
 	 */
 	AI_NEWS_GENERATOR?: string;
-	/** Bearer token for ingest and private /ai-news stats. Never commit it. */
+	/** Bearer token for /ai-news/api/ingest. It does not open the stats desk. Never commit it. */
 	AI_NEWS_INGEST_TOKEN?: string;
+	/**
+	 * Optional SHA-256 hex of the stats bearer. When unset, stats auth uses the
+	 * digest committed in src/news/stats.ts. The bearer is not the ingest token.
+	 */
+	AI_NEWS_STATS_TOKEN_SHA256?: string;
 }
 
 export function articlesPerHour(env: NewsEnv): number {
@@ -212,7 +217,7 @@ export function newsGenerator(env: NewsEnv): NewsGenerator {
 export const INGEST_REQUESTS_PER_HOUR = 10;
 
 /** Decoded ingest image cap. About 1.5 MB. The GitHub path still stores only WebP or JPEG at or under 1 MB. */
-export const INGEST_IMAGE_MAX_BYTES = 1_572_864;
+export const INGEST_IMAGE_MAX_BYTES = 1_000_000;
 
 function clampedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
 	if (raw === undefined || raw.trim() === "") return fallback;

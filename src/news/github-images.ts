@@ -16,7 +16,7 @@ export const GITHUB_IMAGE_MAX_BYTES = 1_000_000;
 /** Leave headroom on the token's hourly budget. Further images in this tick are skipped. */
 const RATE_LIMIT_FLOOR = 20;
 
-const IMAGE_PATH = /^images\/\d{4}\/\d{2}\/[a-z0-9-]{1,80}\.(webp|jpg)$/;
+const IMAGE_PATH = /^images\/\d{4}\/\d{2}\/[a-z0-9-]{1,80}\.(webp|jpg|png)$/;
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const CDN_HOSTS = new Set(["cdn.jsdelivr.net", "fastly.jsdelivr.net"]);
 
@@ -33,7 +33,7 @@ export function isGitHubImagePath(path: string): boolean {
  * keeps a new article off a file that retention failed to delete. The stem is
  * shortened so the whole name still fits the 80-character path limit.
  */
-export function githubImagePath(publishedAt: string, slug: string, extension: "webp" | "jpg", suffix = ""): string | null {
+export function githubImagePath(publishedAt: string, slug: string, extension: "webp" | "jpg" | "png", suffix = ""): string | null {
 	if (suffix && !/^[a-z0-9]{8}$/.test(suffix)) return null;
 	const extra = suffix ? `-${suffix}` : "";
 	const stem = slug.slice(0, 80 - extra.length).replace(/-+$/g, "");
@@ -46,9 +46,10 @@ export function githubImagePath(publishedAt: string, slug: string, extension: "w
 	return isGitHubImagePath(path) ? path : null;
 }
 
-export function extensionForMime(mime: string): "webp" | "jpg" | null {
+export function extensionForMime(mime: string): "webp" | "jpg" | "png" | null {
 	if (mime === "image/webp") return "webp";
 	if (mime === "image/jpeg") return "jpg";
+	if (mime === "image/png") return "png";
 	return null;
 }
 
@@ -408,7 +409,7 @@ export async function loadPublicImage(
 			response = await fetchImpl(current, {
 				method: "GET",
 				redirect: "manual",
-				headers: { accept: "image/webp, image/jpeg", "user-agent": "3aik-news" },
+				headers: { accept: "image/webp, image/jpeg, image/png", "user-agent": "3aik-news" },
 				signal: AbortSignal.timeout(8_000),
 			});
 		} catch {
@@ -435,7 +436,7 @@ export async function loadPublicImage(
 		const bytes = await readCapped(response, GITHUB_IMAGE_MAX_BYTES);
 		if (!bytes) return null;
 		const detected = detectImageType(bytes);
-		const extension = repoPath.endsWith(".webp") ? "webp" : "jpg";
+		const extension = repoPath.endsWith(".webp") ? "webp" : repoPath.endsWith(".png") ? "png" : "jpg";
 		if (!detected || detected.extension !== extension) return null;
 		return { bytes, contentType: detected.mime };
 	}

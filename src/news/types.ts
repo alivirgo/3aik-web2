@@ -86,7 +86,7 @@ export interface StoredArticle {
 	/** Caption such as "Image: WWD". Empty when the picture is a generated illustration. */
 	imageCredit: string;
 	/**
-	 * Publisher image URL. The page hotlinks it only when imageKey is empty.
+	 * Publisher image URL kept as provenance. The page never hotlinks it.
 	 * A stored copy keeps this value as provenance and serves the copy instead.
 	 */
 	imageSourceUrl: string;

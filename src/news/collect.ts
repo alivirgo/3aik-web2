@@ -1,13 +1,16 @@
 import type { NewsEnv } from "./config";
-import { renderNotFound } from "./html";
 import { publicHttpsUrl } from "./net";
 import {
-	dailyVisitorHash,
+	cachedDaySalt,
 	pageViewFromRequest,
+	saltToHex,
 	type EventKind,
 	type PageViewEvent,
 	trackedPage,
+	visitorHmac,
 } from "./pageviews";
+import { allowCollect } from "./ratelimit";
+import { publicNotFoundResponse } from "./responses";
 import type { NewsRepository } from "./repository";
 
 export function isNewsCollectPath(pathname: string): boolean {
@@ -45,11 +48,32 @@ function quietHeaders(): Headers {
 	return headers;
 }
 
-function hiddenNotFound(origin: string): Response {
-	const headers = quietHeaders();
-	headers.set("content-type", "text/html; charset=utf-8");
-	headers.set("content-security-policy", "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
-	return new Response(renderNotFound(origin), { status: 404, headers });
+const COLLECT_MAX_BYTES = 4096;
+
+async function readCappedText(request: Request, max: number): Promise<string | null> {
+	const reader = request.body?.getReader();
+	if (!reader) return "";
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	while (true) {
+		const step = await reader.read();
+		if (step.done) break;
+		const value = step.value;
+		if (!value) continue;
+		total += value.byteLength;
+		if (total > max) {
+			await reader.cancel().catch(() => undefined);
+			return null;
+		}
+		chunks.push(value);
+	}
+	const buffer = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		buffer.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(buffer);
 }
 
 function noContent(): Response {
@@ -99,20 +123,32 @@ export function beaconScript(nonce: string, page: string, slug: string): string 
 
 export async function handleCollectRequest(
 	request: Request,
-	env: NewsEnv,
+	_env: NewsEnv,
 	repo: NewsRepository | null,
 	origin: string,
 	ctx?: ExecutionContext,
 	now = new Date(),
 ): Promise<Response> {
-	if (request.method !== "POST" || !collectSameOrigin(request, origin)) return hiddenNotFound(origin);
-	let text = "";
+	if (request.method !== "POST" || !collectSameOrigin(request, origin)) return publicNotFoundResponse(request, origin);
+	const declared = request.headers.get("content-length");
+	if (declared !== null) {
+		const size = Number(declared);
+		if (!Number.isFinite(size) || size < 0 || size > COLLECT_MAX_BYTES) {
+			await request.body?.cancel().catch(() => undefined);
+			return noContent();
+		}
+	}
+	if (!allowCollect(request.headers.get("cf-connecting-ip") ?? "anon")) {
+		await request.body?.cancel().catch(() => undefined);
+		return noContent();
+	}
+	let text: string | null = "";
 	try {
-		text = await request.text();
+		text = await readCappedText(request, COLLECT_MAX_BYTES);
 	} catch {
 		return noContent();
 	}
-	if (text.length > 4096) return noContent();
+	if (text == null) return noContent();
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
@@ -129,8 +165,13 @@ export async function handleCollectRequest(
 	if (!event || !repo) return noContent();
 	const address = request.headers.get("cf-connecting-ip") ?? "";
 	const userAgent = request.headers.get("user-agent") ?? "";
-	event.visitorHash = dailyVisitorHash(env.AI_NEWS_INGEST_TOKEN ?? "", address, userAgent, event.viewedAt.slice(0, 10));
-	const work = repo.recordPageView(event).catch((error: unknown) => {
+	const day = event.viewedAt.slice(0, 10);
+	const salt = cachedDaySalt(day);
+	event.visitorHash = visitorHmac(salt, address, userAgent);
+	const work = Promise.all([
+		repo.persistDaySalt(day, saltToHex(salt)),
+		repo.recordPageView(event),
+	]).catch((error: unknown) => {
 		console.error(JSON.stringify({
 			message: "ai-news collect failed",
 			error: error instanceof Error ? error.message : "collect",

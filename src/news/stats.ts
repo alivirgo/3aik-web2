@@ -1,10 +1,13 @@
 import type { NewsEnv } from "./config";
 import { tokensMatch } from "./ingest";
-import { renderNotFound } from "./html";
 import type { NamedCount, NewsStatsReport, PageCount, SeriesPoint, StatsQuery } from "./pageviews";
 import { emptyStatsReport } from "./pageviews";
+import { publicNotFoundResponse } from "./responses";
 import type { NewsRepository } from "./repository";
 import { escapeHtml } from "./text";
+
+/** SHA-256 of the stats bearer. The bearer itself is held offline and is not the ingest token. */
+export const STATS_TOKEN_SHA256 = "e5c04756be85b8c5d0bcbe3d32ec3778d56a356ce90c2c27faf32536b2c8ba42";
 
 const CREDENTIAL_KEYS = new Set(["token", "access_token", "auth", "key", "secret", "bearer", "password", "apikey", "api_key"]);
 
@@ -21,22 +24,31 @@ function bearerToken(header: string | null): string {
 	return match?.[1] ?? "";
 }
 
+function expectedStatsDigest(override: string | undefined): string {
+	const value = override?.trim().toLowerCase() ?? "";
+	return /^[0-9a-f]{64}$/.test(value) ? value : STATS_TOKEN_SHA256;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+	const bounded = value.length > 512 ? `${value.slice(0, 512)}\n` : value;
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bounded));
+	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /**
- * Header bearer only. Credential query keys and the token value are rejected
- * even when the header is correct. Date filters `from` and `to` are allowed.
- * Cookies are never read.
+ * Header bearer only. The presented bearer is hashed and compared in constant
+ * time with the stats digest. The ingest token is not accepted. Credential
+ * query keys are rejected even when the header is correct. Cookies are never read.
  */
-export async function statsAuthorized(request: Request, secret: string | undefined): Promise<boolean> {
+export async function statsAuthorized(request: Request, env: { AI_NEWS_STATS_TOKEN_SHA256?: string }): Promise<boolean> {
+	const digest = await sha256Hex(bearerToken(request.headers.get("authorization")));
+	const matches = await tokensMatch(digest, expectedStatsDigest(env.AI_NEWS_STATS_TOKEN_SHA256));
+	if (!matches) return false;
 	const url = new URL(request.url);
-	const provided = bearerToken(request.headers.get("authorization"));
-	const expected = secret?.trim() || "\u0000";
-	const matches = await tokensMatch(provided, expected);
-	if (!secret?.trim() || !matches) return false;
-	const token = secret.trim();
 	for (const [key, value] of url.searchParams) {
 		if (CREDENTIAL_KEYS.has(key.toLowerCase())) return false;
-		if (value.includes(token)) return false;
 		if (key !== "from" && key !== "to") return false;
+		if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
 	}
 	return true;
 }
@@ -63,39 +75,110 @@ function statsHeaders(contentType: string): Headers {
 	headers.set("x-content-type-options", "nosniff");
 	headers.set("x-frame-options", "DENY");
 	headers.set("referrer-policy", "no-referrer");
-	headers.set("content-security-policy", "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'");
+	headers.set("content-security-policy", "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; img-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'");
 	return headers;
 }
 
 function hiddenNotFound(request: Request, origin: string): Response {
-	const headers = statsHeaders("text/html; charset=utf-8");
-	if (request.method === "HEAD") return new Response(null, { status: 404, headers });
-	return new Response(renderNotFound(origin), { status: 404, headers });
+	return publicNotFoundResponse(request, origin);
 }
 
 function cell(value: string | number): string {
 	return `<td>${escapeHtml(String(value))}</td>`;
 }
 
-function table(headers: string[], rows: string[]): string {
-	if (!rows.length) return "<p>None yet.</p>";
-	const head = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
-	return `<table><thead><tr>${head}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+/** Milliseconds as m:ss, or h:mm:ss once an hour is reached. */
+export function formatDuration(ms: number): string {
+	const total = Math.max(0, Math.round(ms / 1000));
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = String(total % 60).padStart(2, "0");
+	if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`;
+	return `${minutes}:${seconds}`;
 }
 
-function barChart(points: SeriesPoint[], label: string): string {
-	if (!points.length) return "<p>None yet.</p>";
-	const width = 720;
-	const height = 168;
-	const max = Math.max(1, ...points.map((point) => point.views));
-	const bar = Math.max(1, (width - 16) / points.length);
-	const bars = points.map((point, index) => {
-		const barHeight = Math.round((point.views / max) * (height - 28));
-		const x = 8 + index * bar;
-		const y = height - 18 - barHeight;
-		return `<rect x="${x.toFixed(1)}" y="${y}" width="${Math.max(1, bar - 2).toFixed(1)}" height="${barHeight}" fill="#143d66"><title>${escapeHtml(point.label)}: ${point.views} views, ${point.uniques} uniques</title></rect>`;
+/** Bounce rate is stored as a 0–1 ratio. */
+export function formatPercent(rate: number): string {
+	const pct = Math.round(rate * 1000) / 10;
+	return Number.isInteger(pct) ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
+}
+
+function formatCount(value: number): string {
+	return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function table(headers: string[], rows: string[]): string {
+	if (!rows.length) return "<p class=\"empty\">None yet.</p>";
+	const head = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+	return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+}
+
+function viewCell(value: number, max: number): string {
+	const width = max > 0 && value > 0 ? Math.max(6, Math.round((value / max) * 100)) : 0;
+	return `<td class="metric"><span class="metric-n">${formatCount(value)}</span><span class="meter" style="width:${width}%"></span></td>`;
+}
+
+function axisLabel(label: string): string {
+	if (label.includes("T")) {
+		const [day, hour] = label.split("T");
+		return `${(day ?? "").slice(5)} ${hour ?? ""}h`;
+	}
+	if (/^\d{4}-\d{2}$/.test(label)) return label;
+	return label.slice(5);
+}
+
+function seriesChart(points: SeriesPoint[], label: string): string {
+	if (!points.length) return `<p class="empty">None yet.</p>`;
+	const width = 760;
+	const height = 250;
+	const padL = 48;
+	const padR = 16;
+	const padT = 22;
+	const padB = 52;
+	const plotW = width - padL - padR;
+	const plotH = height - padT - padB;
+	const baseline = padT + plotH;
+	const max = Math.max(1, ...points.map((point) => Math.max(point.views, point.uniques)));
+	const slot = plotW / points.length;
+	const barW = Math.min(16, Math.max(3, slot * 0.55));
+	const yFor = (value: number) => baseline - (value / max) * plotH;
+	const ticks = [0, 0.5, 1].map((share) => Math.round(max * share));
+	const grid = ticks.map((tick) => {
+		const y = yFor(tick);
+		return `<line class="grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${width - padR}" y2="${y.toFixed(1)}" stroke="#d5d8de" stroke-width="1"/>
+<text class="tick" x="${padL - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="#595959" font-size="11">${formatCount(tick)}</text>`;
 	}).join("");
-	return `<svg role="img" aria-label="${escapeHtml(label)}" viewBox="0 0 ${width} ${height}" width="100%" height="168">${bars}</svg>`;
+	const bars = points.map((point, index) => {
+		const x = padL + index * slot + (slot - barW) / 2;
+		const y = yFor(point.views);
+		const barHeight = Math.max(point.views > 0 ? 2 : 0, baseline - y);
+		const value = slot >= 16 ? `<text class="value" x="${(x + barW / 2).toFixed(1)}" y="${Math.max(padT + 10, y - 4).toFixed(1)}" text-anchor="middle" fill="#1a1a1a" font-size="10">${point.views}</text>` : "";
+		return `<rect class="bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barHeight.toFixed(1)}" fill="#1d4f91"><title>${escapeHtml(point.label)}: ${point.views} views, ${point.uniques} uniques</title></rect>${value}`;
+	}).join("");
+	const line = points.map((point, index) => {
+		const x = padL + index * slot + slot / 2;
+		return `${x.toFixed(1)},${yFor(point.uniques).toFixed(1)}`;
+	}).join(" ");
+	const stride = Math.max(1, Math.ceil(points.length / 8));
+	const labels = points.map((point, index) => {
+		if (index % stride !== 0 && index !== points.length - 1) return "";
+		const x = padL + index * slot + slot / 2;
+		const text = axisLabel(point.label);
+		return `<text class="tick" x="0" y="0" fill="#595959" font-size="11" transform="translate(${x.toFixed(1)} ${baseline + 14}) rotate(40)">${escapeHtml(text)}</text>`;
+	}).join("");
+	return `<figure class="chart">
+<figcaption>${escapeHtml(label)}</figcaption>
+<svg role="img" aria-label="${escapeHtml(label)}" viewBox="0 0 ${width} ${height}" width="100%" height="250">
+<rect class="plot" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#f4f6f8"/>
+${grid}
+<line class="axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${baseline}" stroke="#595959" stroke-width="1.25"/>
+<line class="axis" x1="${padL}" y1="${baseline}" x2="${width - padR}" y2="${baseline}" stroke="#595959" stroke-width="1.25"/>
+${bars}
+<polyline class="uniques" fill="none" stroke="#c45c26" stroke-width="2" points="${line}"/>
+${labels}
+</svg>
+<p class="legend"><span class="swatch views"></span> Views <span class="swatch uniques"></span> Uniques</p>
+</figure>`;
 }
 
 function heatmap(counts: number[], label: string): string {
@@ -107,38 +190,98 @@ function heatmap(counts: number[], label: string): string {
 	return `<div class="heatmap" role="img" aria-label="${escapeHtml(label)}">${cells}</div>`;
 }
 
-function namedRows(rows: NamedCount[]): string[] {
-	return rows.map((row) => `<tr>${cell(row.name)}${cell(row.views)}</tr>`);
+function namedTable(headers: [string, string], rows: NamedCount[]): string {
+	return table(headers, countedRows(rows.map((row) => ({ label: escapeHtml(row.name), views: row.views }))));
 }
 
-function pageRows(rows: PageCount[]): string[] {
-	return rows.map((row) => `<tr>${cell(row.label)}${cell(row.views)}</tr>`);
+function pageTable(rows: PageCount[]): string {
+	return table(["Page", "Views"], countedRows(rows.map((row) => ({ label: escapeHtml(row.label), views: row.views }))));
 }
 
-export function renderStatsDashboard(report: NewsStatsReport, heading = "Newsroom stats"): string {
-	const totals = report.totals;
-	const audience = report.audience;
-	const articles = report.articles.map((article) => {
-		const href = `/ai-news/api/stats/article/${encodeURIComponent(article.slug)}`;
-		const title = article.title || article.slug;
-		return `<tr><td><a href="${href}">${escapeHtml(title)}</a></td>${cell(article.slug)}${cell(article.views)}${cell(article.uniques)}${cell(article.last24h)}${cell(article.last7d)}${cell(article.avgEngagedMs)}${cell(article.avgScrollPct)}</tr>`;
+function dayShift(iso: string, days: number): string {
+	const start = Date.parse(`${iso.slice(0, 10)}T00:00:00.000Z`);
+	return new Date(start + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function deltaLabel(current: number, previous: number, lowerIsBetter = false): { text: string; tone: string } {
+	if (previous === 0 && current === 0) return { text: "0% vs previous period", tone: "flat" };
+	if (previous === 0) return { text: "New vs previous period", tone: lowerIsBetter ? "down" : "up" };
+	const pct = Math.round((((current - previous) / previous) * 100) * 10) / 10;
+	const text = `${pct > 0 ? "+" : ""}${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1)}% vs previous period`;
+	const rising = pct > 0;
+	const falling = pct < 0;
+	const tone = pct === 0 ? "flat" : (lowerIsBetter ? falling : rising) ? "up" : "down";
+	return { text, tone };
+}
+
+function kpi(label: string, value: string, current: number, previous: number, detail: string, lowerIsBetter = false): string {
+	const delta = deltaLabel(current, previous, lowerIsBetter);
+	return `<article class="kpi"><h2>${escapeHtml(label)}</h2><p class="kpi-value">${escapeHtml(value)}</p><p class="delta ${delta.tone}">${escapeHtml(delta.text)}</p><p class="kpi-sub">${detail}</p></article>`;
+}
+
+function countedRows(rows: Array<{ label: string; views: number; extra?: string[] }>): string[] {
+	const max = Math.max(1, ...rows.map((row) => row.views));
+	return rows.map((row) => {
+		const extra = (row.extra ?? []).map((item) => cell(item)).join("");
+		return `<tr><td>${row.label}</td>${extra}${viewCell(row.views, max)}</tr>`;
 	});
-	const referrers = report.referrers.map((row) => `<tr>${cell(row.host)}${cell(row.path || "/")}${cell(row.views)}</tr>`);
-	const sources = report.sources.map((row) => `<tr>${cell(row.source)}${cell(row.views)}</tr>`);
-	const queries = report.queries.map((row) => `<tr>${cell(row.engine || "utm")}${cell(row.query)}${cell(row.views)}</tr>`);
-	const countries = report.countries.map((row) => `<tr>${cell(row.country)}${cell(row.views)}</tr>`);
-	const devices = report.devices.map((row) => `<tr>${cell(row.device)}${cell(row.views)}</tr>`);
-	const campaigns = report.campaigns.map((row) => `<tr>${cell(row.source)}${cell(row.medium)}${cell(row.campaign)}${cell(row.term)}${cell(row.views)}</tr>`);
-	const clicks = (rows: NewsStatsReport["outbound"]) => rows.map((row) => `<tr>${cell(row.host)}${cell(row.path || "/")}${cell(row.views)}</tr>`);
-	const publish = report.publishLog.map((row) => `<tr>${cell(row.publishedAt)}${cell(row.title)}${cell(row.author)}${cell(row.category)}${cell(row.words)}${cell(row.tags)}</tr>`);
-	const topDay = report.topByDay.map((row) => `<tr>${cell(row.day)}${cell(row.title || row.slug)}${cell(row.views)}</tr>`);
-	const since = report.since ? escapeHtml(report.since) : "no views yet";
-	const notice = report.ready ? "" : `<p class="warn">Stats storage is not ready. Apply migrations 0004 and 0005, then reload.</p>`;
-	const truncated = report.truncated ? `<p class="warn">This range was capped at the newest 20,000 raw events. Older detail has been rolled into daily totals.</p>` : "";
-	const from = report.range.from ?? "";
-	const to = report.range.to ?? "";
+}
+
+function section(title: string, body: string, open = false): string {
+	return `<details class="panel"${open ? " open" : ""}><summary>${escapeHtml(title)}</summary><div class="panel-body">${body}</div></details>`;
+}
+
+export function renderStatsDashboard(report: NewsStatsReport, heading = "Newsroom stats", path = "/ai-news/api/stats/dashboard"): string {
+	const totals = report.totals;
 	const current = report.comparison.current;
 	const previous = report.comparison.previous;
+	const articleMax = Math.max(1, ...report.articles.map((article) => article.views));
+	const rangeQuery = (from: string, to: string) => `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+	const keep = report.range.from && report.range.to ? rangeQuery(report.range.from, report.range.to) : "";
+	const articles = report.articles.map((article) => {
+		const href = `/ai-news/api/stats/article/${encodeURIComponent(article.slug)}${keep}`;
+		const title = article.title || article.slug;
+		return `<tr><td><a href="${href}">${escapeHtml(title)}</a></td>${cell(article.slug)}${viewCell(article.views, articleMax)}${cell(formatCount(article.uniques))}${cell(formatCount(article.last24h))}${cell(formatCount(article.last7d))}${cell(formatDuration(article.avgEngagedMs))}${cell(formatPercent(article.avgScrollPct / 100))}</tr>`;
+	});
+	const referrers = countedRows(report.referrers.map((row) => ({ label: escapeHtml(row.host), extra: [row.path || "/"], views: row.views })));
+	const sources = countedRows(report.sources.map((row) => ({ label: escapeHtml(row.source), views: row.views })));
+	const queries = countedRows(report.queries.map((row) => ({ label: escapeHtml(row.engine || "utm"), extra: [row.query], views: row.views })));
+	const countries = countedRows(report.countries.map((row) => ({ label: escapeHtml(row.country), views: row.views })));
+	const devices = countedRows(report.devices.map((row) => ({ label: escapeHtml(row.device), views: row.views })));
+	const campaigns = report.campaigns.map((row) => `<tr>${cell(row.source)}${cell(row.medium)}${cell(row.campaign)}${cell(row.term)}${cell(formatCount(row.views))}</tr>`);
+	const publish = report.publishLog.map((row) => `<tr>${cell(row.publishedAt)}${cell(row.title)}${cell(row.author)}${cell(row.category)}${cell(row.words)}${cell(row.tags)}</tr>`);
+	const topDay = countedRows(report.topByDay.map((row) => ({ label: escapeHtml(row.day), extra: [row.title || row.slug], views: row.views })));
+	const since = report.since ? escapeHtml(report.since) : "no views yet";
+	const notice = report.ready ? "" : `<p class="warn">Stats storage is not ready. Apply migrations 0004 and 0005, then reload.</p>`;
+	const truncated = report.truncated ? `<p class="warn">Bounce and session detail used the newest 400 raw events. Charts and totals come from daily rollups.</p>` : "";
+	const from = report.range.from ?? "";
+	const to = report.range.to ?? "";
+	const period = `${current.from} to ${current.to}`;
+	const cards = [
+		kpi("Views", formatCount(current.views), current.views, previous.views, `Last 24 hours: ${formatCount(totals.last24h)}`),
+		kpi("Uniques", formatCount(current.uniques), current.uniques, previous.uniques, "Daily hashes, not people"),
+		kpi("Avg engaged time", formatDuration(current.avgEngagedMs), current.avgEngagedMs, previous.avgEngagedMs, `Scroll ${current.avgScrollPct}%`),
+		kpi("Scroll depth", formatPercent(current.avgScrollPct / 100), current.avgScrollPct, previous.avgScrollPct, "Mean of beacon samples"),
+		kpi("Bounce", formatPercent(current.bounceRate), current.bounceRate, previous.bounceRate, `${formatCount(report.audience.bounces)} single-page sessions`, true),
+		kpi("Bot hits", formatCount(current.bots), current.bots, previous.bots, `${formatCount(totals.botHitsExcluded)} excluded from human counts`, true),
+	].join("");
+	const end = report.generatedAt.slice(0, 10);
+	const ranges = [
+		["Last 7 days", dayShift(end, -6), end],
+		["Last 30 days", dayShift(end, -29), end],
+		["Last 90 days", dayShift(end, -89), end],
+	] as const;
+	const rangeLinks = ranges.map(([label, fromDay, toDay]) => `<a href="${escapeHtml(path)}${rangeQuery(fromDay, toDay)}">${escapeHtml(label)}</a>`).join("");
+	const charts = [
+		seriesChart(report.series.hour, "Views by hour"),
+		seriesChart(report.series.day, "Views by day"),
+		seriesChart(report.series.week, "Views by week"),
+		seriesChart(report.series.month, "Views by month"),
+	].join("");
+	const clickTable = (rows: NewsStatsReport["outbound"]) => table(
+		["Host", "Path", "Clicks"],
+		countedRows(rows.map((row) => ({ label: escapeHtml(row.host), extra: [row.path || "/"], views: row.views }))),
+	);
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -147,141 +290,90 @@ export function renderStatsDashboard(report: NewsStatsReport, heading = "Newsroo
 <meta name="robots" content="noindex, nofollow">
 <title>${escapeHtml(heading)}</title>
 <style>
-body { margin: 0; font: 15px/1.45 "Segoe UI", system-ui, sans-serif; color: #1a1a1a; background: #fff; }
-main { width: min(76rem, calc(100% - 2rem)); margin: 1.5rem auto 3rem; }
-h1 { font-size: 1.6rem; margin: 0 0 0.4rem; }
-h2 { font-size: 1rem; margin: 1.6rem 0 0.4rem; }
-p, td, th { color: #1a1a1a; }
+:root { color-scheme: light; }
+body { margin: 0; font: 15px/1.45 "Segoe UI", system-ui, sans-serif; color: #1a1a1a; background: #f3f5f7; }
+main { width: min(76rem, calc(100% - 1.5rem)); margin: 1rem auto 3rem; }
+h1 { font-size: 1.55rem; margin: 0 0 0.35rem; }
 a { color: #143d66; }
-.meta, .note { color: #595959; font-size: 0.85rem; }
-table { width: 100%; border-collapse: collapse; margin: 0 0 0.5rem; }
-th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #e4e4e4; vertical-align: top; }
-th { font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; color: #595959; }
-.warn { background: #f7f4ef; padding: 0.6rem 0.75rem; }
-form { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 0.8rem 0 0.2rem; }
-label { font-size: 0.85rem; color: #595959; display: grid; gap: 0.2rem; }
-input { font: inherit; color: #1a1a1a; border: 1px solid #c8c8c8; padding: 0.3rem 0.4rem; }
-button { font: inherit; background: #143d66; color: #fff; border: 0; padding: 0.4rem 0.7rem; }
-.charts { display: grid; gap: 1rem; }
-.heatmap { display: grid; grid-template-columns: repeat(12, 1fr); gap: 0.25rem; }
-.hour { min-height: 3.2rem; padding: 0.25rem; font-size: 0.75rem; }
+.meta, .note, .kpi-sub { color: #595959; }
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.kpi, .panel, .chart { background: #fff; border: 1px solid #e1e4e8; border-radius: 10px; }
+.kpi { padding: 0.85rem 1rem 0.7rem; }
+.kpi h2 { margin: 0; font-size: 0.78rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: #595959; }
+.kpi-value { margin: 0.2rem 0 0; font-size: 1.7rem; font-weight: 680; letter-spacing: -0.03em; }
+.delta { margin: 0.15rem 0 0; font-size: 0.82rem; font-weight: 650; }
+.delta.up { color: #0b6b2f; }
+.delta.down { color: #9b1c1c; }
+.delta.flat { color: #595959; }
+.kpi-sub { margin: 0.25rem 0 0; font-size: 0.8rem; }
+.ranges { display: flex; flex-wrap: wrap; gap: 0.45rem 0.9rem; margin: 0.4rem 0 0.2rem; }
+.ranges a { font-size: 0.9rem; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.chart { padding: 0.4rem 0.6rem 0.2rem; }
+.chart figcaption { font-size: 0.85rem; font-weight: 650; }
+.legend { color: #595959; font-size: 0.78rem; }
+.swatch { display: inline-block; width: 0.7rem; height: 0.7rem; margin: 0 0.2rem 0 0.6rem; vertical-align: -1px; }
+.swatch.views { background: #1d4f91; }
+.swatch.uniques { background: #c45c26; }
+.panel { margin: 0.75rem 0; }
+.panel summary { cursor: pointer; padding: 0.75rem 1rem; font-weight: 680; }
+.panel-body { padding: 0 1rem 1rem; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e6e8eb; vertical-align: middle; }
+th { font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; color: #595959; }
+.metric { min-width: 7rem; }
+.metric-n { display: inline-block; min-width: 2.4rem; font-variant-numeric: tabular-nums; }
+.meter { display: inline-block; height: 0.45rem; margin-left: 0.35rem; background: #1d4f91; border-radius: 99px; vertical-align: middle; }
+.warn { background: #fff6e8; border: 1px solid #ecd7b2; padding: 0.6rem 0.75rem; border-radius: 8px; }
+.heatmap { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0.3rem; }
+.hour { min-height: 3.1rem; padding: 0.25rem; font-size: 0.72rem; border-radius: 6px; }
 .hour strong { display: block; font-size: 0.95rem; }
-@media (max-width: 720px) { .heatmap { grid-template-columns: repeat(6, 1fr); } }
+.empty { color: #595959; }
+@media (max-width: 800px) {
+  .kpis, .chart-grid { grid-template-columns: 1fr 1fr; }
+  .heatmap { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  h1 { font-size: 1.3rem; }
+}
+@media (max-width: 520px) {
+  .kpis { grid-template-columns: 1fr; }
+  .chart-grid { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
 <main>
+<p class="meta"><a href="/ai-news/api/stats/dashboard${keep}">Newsroom</a></p>
 <h1>${escapeHtml(heading)}</h1>
-<p class="meta">Generated ${escapeHtml(report.generatedAt)}. Since ${since}. Human counts leave bots out. Bot hits are listed in their own table.</p>
+<p class="meta">Generated ${escapeHtml(report.generatedAt)}. Since ${since}. Period ${escapeHtml(period)} compared with ${escapeHtml(previous.from)} to ${escapeHtml(previous.to)}. Human counts leave bots out.</p>
 ${notice}
 ${truncated}
-<form method="get">
-<label>From <input name="from" type="date" value="${escapeHtml(from)}"></label>
-<label>To <input name="to" type="date" value="${escapeHtml(to)}"></label>
-<button type="submit">Apply range</button>
-</form>
-<p class="note">Send the same Authorization bearer header again with this filtered URL. The token is not read from the query string. CSV: <code>/ai-news/api/stats.csv</code></p>
-<h2>Totals</h2>
-<table><tbody>
-<tr><th>Views</th>${cell(totals.views)}</tr>
-<tr><th>Unique visitors</th>${cell(audience.uniques)}</tr>
-<tr><th>Last 24 hours</th>${cell(totals.last24h)}</tr>
-<tr><th>Last 7 days</th>${cell(totals.last7d)}</tr>
-<tr><th>Last 30 minutes</th>${cell(report.realtime.views)}</tr>
-<tr><th>Sessions</th>${cell(audience.sessions)}</tr>
-<tr><th>Single-page sessions</th>${cell(audience.bounces)}</tr>
-<tr><th>Bounce rate</th>${cell(audience.bounceRate)}</tr>
-<tr><th>Average engaged time (ms)</th>${cell(audience.avgEngagedMs)}</tr>
-<tr><th>Average scroll depth (%)</th>${cell(audience.avgScrollPct)}</tr>
-<tr><th>New (flagged)</th>${cell(audience.newVisitors)}</tr>
-<tr><th>Returning (flagged)</th>${cell(audience.returningVisitors)}</tr>
-<tr><th>Bot hits excluded</th>${cell(totals.botHitsExcluded)}</tr>
-</tbody></table>
-<h2>Period comparison</h2>
-<table><thead><tr><th></th><th>From</th><th>To</th><th>Views</th><th>Uniques</th></tr></thead><tbody>
-<tr>${cell("This period")}${cell(current.from)}${cell(current.to)}${cell(current.views)}${cell(current.uniques)}</tr>
-<tr>${cell("Previous period")}${cell(previous.from)}${cell(previous.to)}${cell(previous.views)}${cell(previous.uniques)}</tr>
-</tbody></table>
-<h2>Views by hour</h2>
-${barChart(report.series.hour, "Views by hour")}
-<h2>Views by day</h2>
-${barChart(report.series.day, "Views by day")}
-<h2>Views by week</h2>
-${barChart(report.series.week, "Views by week")}
-<h2>Views by month</h2>
-${barChart(report.series.month, "Views by month")}
-<h2>Last 30 minutes</h2>
-${table(["Page", "Views"], pageRows(report.realtime.pages))}
-<h2>Hour of day, UTC</h2>
-${heatmap(report.heatmap.utc, "Hour of day UTC")}
-<h2>Hour of day, Asia/Karachi</h2>
-${heatmap(report.heatmap.karachi, "Hour of day Asia/Karachi")}
-<h2>Articles</h2>
-${table(["Title", "Slug", "Views", "Uniques", "24h", "7d", "Engaged ms", "Scroll %"], articles)}
-<h2>Top pages</h2>
-${table(["Page", "Views"], pageRows(report.pages))}
-<h2>Top article by day</h2>
-${table(["Day", "Article", "Views"], topDay)}
-<h2>Referrer groups</h2>
-${table(["Group", "Views"], namedRows(report.referrerGroups))}
-<h2>Referrers</h2>
-${table(["Host", "Path", "Views"], referrers)}
-<h2>Landing sources</h2>
-${table(["Source", "Views"], sources)}
-<h2>Search queries</h2>
-${table(["Engine", "Query", "Views"], queries)}
-<h2>Campaigns</h2>
-${table(["Source", "Medium", "Campaign", "Term", "Views"], campaigns)}
-<h2>Outbound link clicks</h2>
-${table(["Host", "Path", "Clicks"], clicks(report.outbound))}
-<h2>Source link clicks</h2>
-${table(["Host", "Path", "Clicks"], clicks(report.sourceClicks))}
-<h2>Countries</h2>
-${table(["Country", "Views"], countries)}
-<h2>Cities</h2>
-${table(["City", "Views"], namedRows(report.cities))}
-<h2>Regions</h2>
-${table(["Region", "Views"], namedRows(report.regions))}
-<h2>Continents</h2>
-${table(["Continent", "Views"], namedRows(report.continents))}
-<h2>Devices</h2>
-${table(["Device", "Views"], devices)}
-<h2>Browsers</h2>
-${table(["Browser", "Views"], namedRows(report.browsers))}
-<h2>Operating systems</h2>
-${table(["OS", "Views"], namedRows(report.operatingSystems))}
-<h2>Screen size</h2>
-${table(["Bucket", "Samples"], namedRows(report.screens))}
-<h2>Languages</h2>
-${table(["Language", "Views"], namedRows(report.languages))}
-<h2>Landing pages</h2>
-${table(["Page", "Sessions"], namedRows(report.landing))}
-<h2>Exit pages</h2>
-${table(["Page", "Sessions"], namedRows(report.exit))}
-<h2>Categories</h2>
-${table(["Category", "Views"], namedRows(report.categories))}
-<h2>Tags</h2>
-${table(["Tag", "Views"], namedRows(report.tags))}
-<h2>Authors</h2>
-${table(["Author", "Views"], namedRows(report.authors))}
-<h2>Bot traffic</h2>
-${table(["Bot", "Hits"], namedRows(report.bots))}
-<h2>Not found under /ai-news</h2>
-${table(["Path", "Hits"], namedRows(report.notFound))}
-<h2>RSS and sitemaps</h2>
-${table(["Path", "Fetches"], namedRows(report.feeds))}
-<h2>Publish log</h2>
-${table(["Published", "Title", "Author", "Category", "Words", "Tags"], publish)}
-<p class="note">${escapeHtml(report.note)}</p>
+<nav class="ranges" aria-label="Date range">
+${rangeLinks}
+<a href="${escapeHtml(path)}">All recent</a>
+<a href="/ai-news/api/stats.csv${keep}">CSV</a>
+</nav>
+<p class="note">These are plain GET links. The stats bearer still has to be on the request. It is not read from the query string. ${from || to ? `Showing ${escapeHtml(from || "…")} to ${escapeHtml(to || "…")}.` : ""}</p>
+<section class="kpis" aria-label="Summary">${cards}</section>
+${section("Views by hour, day, week, and month", `<div class="chart-grid">${charts}</div>`, true)}
+${section("Time of day", `<h2>Last 30 minutes</h2>${pageTable(report.realtime.pages)}<h2>Hour of day, UTC</h2>${heatmap(report.heatmap.utc, "Hour of day UTC")}<h2>Hour of day, Asia/Karachi</h2>${heatmap(report.heatmap.karachi, "Hour of day Asia/Karachi")}`, true)}
+${section("Articles and pages", `${table(["Title", "Slug", "Views", "Uniques", "24h", "7d", "Engaged", "Scroll"], articles)}${pageTable(report.pages)}${table(["Day", "Article", "Views"], topDay)}`, true)}
+${section("Referrers", `${namedTable(["Group", "Views"], report.referrerGroups)}${table(["Host", "Path", "Views"], referrers)}${table(["Source", "Views"], sources)}${table(["Engine", "Query", "Views"], queries)}${table(["Source", "Medium", "Campaign", "Term", "Views"], campaigns)}`)}
+${section("Clicks", `${clickTable(report.outbound)}${clickTable(report.sourceClicks)}`)}
+${section("Places", `${table(["Country", "Views"], countries)}${namedTable(["City", "Views"], report.cities)}${namedTable(["Region", "Views"], report.regions)}${namedTable(["Continent", "Views"], report.continents)}`)}
+${section("Devices and languages", `${table(["Device", "Views"], devices)}${namedTable(["Browser", "Views"], report.browsers)}${namedTable(["OS", "Views"], report.operatingSystems)}${namedTable(["Bucket", "Samples"], report.screens)}${namedTable(["Language", "Views"], report.languages)}${namedTable(["Page", "Sessions"], report.landing)}${namedTable(["Page", "Sessions"], report.exit)}`)}
+${section("Sections and bots", `${namedTable(["Category", "Views"], report.categories)}${namedTable(["Tag", "Views"], report.tags)}${namedTable(["Author", "Views"], report.authors)}${namedTable(["Bot", "Hits"], report.bots)}${namedTable(["Path", "Hits"], report.notFound)}${namedTable(["Path", "Fetches"], report.feeds)}`)}
+${section("Publish log", table(["Published", "Title", "Author", "Category", "Words", "Tags"], publish))}
+<p class="note">${escapeHtml(report.note)} Sessions ${formatCount(report.audience.sessions)}. New ${formatCount(report.audience.newVisitors)}. Returning ${formatCount(report.audience.returningVisitors)}.</p>
 </main>
 </body>
 </html>`;
 }
 
 function csvCell(value: string | number): string {
-	const raw = String(value);
-	const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
-	return `"${safe.replaceAll('"', '""')}"`;
+	let raw = String(value);
+	if (/^[=+\-@\t\r ]/.test(raw)) raw = `'${raw}`;
+	return `"${raw.replaceAll('"', '""')}"`;
 }
 
 export function renderStatsCsv(report: NewsStatsReport): string {
@@ -333,7 +425,7 @@ function articleSlug(pathname: string): string | null {
 }
 
 export async function handleNewsStatsRequest(request: Request, env: NewsEnv, repo: NewsRepository | null, origin: string, now = new Date()): Promise<Response> {
-	const allowed = await statsAuthorized(request, env.AI_NEWS_INGEST_TOKEN);
+	const allowed = await statsAuthorized(request, env);
 	if (!allowed || (request.method !== "GET" && request.method !== "HEAD")) return hiddenNotFound(request, origin);
 	const url = new URL(request.url);
 	const path = url.pathname.replace(/\/$/, "") || "/";
@@ -361,7 +453,7 @@ export async function handleNewsStatsRequest(request: Request, env: NewsEnv, rep
 		const headers = statsHeaders("text/html; charset=utf-8");
 		if (request.method === "HEAD") return new Response(null, { status: 200, headers });
 		const heading = slug ? `Article stats: ${slug}` : "Newsroom stats";
-		return new Response(renderStatsDashboard(report, heading), { status: 200, headers });
+		return new Response(renderStatsDashboard(report, heading, path), { status: 200, headers });
 	}
 	const headers = statsHeaders("application/json; charset=utf-8");
 	if (request.method === "HEAD") return new Response(null, { status: 200, headers });

@@ -61,6 +61,7 @@ describe("news pages", () => {
 		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news/"), env, { repo: null });
 		const html = await index.text();
 		expect(index.status).toBe(200);
+		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
 		expect(html.split(ASSIST_LINE)).toHaveLength(2);
 		expect(html).not.toContain(ACCURACY_DISCLAIMER);
 		expect(html).not.toContain("AI-generated");
@@ -104,13 +105,18 @@ describe("news pages", () => {
 		expect(html).toContain("https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model");
 		expect(html).toContain("Source: <a href=\"https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model\" rel=\"noopener noreferrer\">The Verge</a>");
 		expect(html).toContain("<p class=\"dek\">");
-		expect(html.split(ASSIST_LINE)).toHaveLength(2);
+		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
+		expect(html.split(ASSIST_LINE)).toHaveLength(4);
 		expect(html).not.toContain("Mira Ellison is an editorial persona");
 		expect(html).not.toContain("automatically checked against source and quality rules before publishing");
 		expect(html).not.toContain(ACCURACY_DISCLAIMER);
 		expect(html).not.toContain("AI-generated");
 		expect(html).toContain('"@type":"Organization"');
-		expect(html).not.toContain('"@type":"Person"');
+		expect(html).toContain('"@type":"Person"');
+		expect(html).toContain('"creditText":"Written with AI assistance from cited reporting."');
+		expect(html).toContain('href="https://3aik.com/ai-news/about">Persona</a>');
+		expect(response.headers.get("cache-control")).toContain("private");
+		expect(response.headers.get("cache-control")).toContain("no-store");
 		expect(html).toContain('"name":"Mira Ellison"');
 		expect(html).toContain(`"dateModified":"${publishedAt}"`);
 		expect(html).toContain("1 min read");
@@ -167,6 +173,8 @@ describe("news pages", () => {
 
 		const sitemap = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap.xml"), env, { repo });
 		expect(await sitemap.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
+		const sitemapPage = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap/1.xml"), env, { repo });
+		expect(await sitemapPage.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
 		const fresh = article();
 		fresh.id = "33333333-3333-4333-8333-333333333333";
 		fresh.slug = "fresh-bulletin";
@@ -340,7 +348,8 @@ describe("magazine pages", () => {
 		expect(html).not.toContain('<aside class="sources">');
 		expect(html).not.toContain('<aside class="note">');
 		expect(html).not.toContain(ACCURACY_DISCLAIMER);
-		expect(html.split(ASSIST_LINE)).toHaveLength(2);
+		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
+		expect(html.split(ASSIST_LINE)).toHaveLength(4);
 		expect(html).toContain(">Related</h2>");
 		expect(html).toContain('class="rail"');
 		expect(html).toContain('class="kicker"');
