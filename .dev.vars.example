@@ -16,6 +16,10 @@ GITHUB_IMAGES_TOKEN=
 # Production already has this secret. Leave blank locally to hide the route (404).
 AI_NEWS_INGEST_TOKEN=
 
+# Real address for /ai-news/contact. Leave unset until you have one.
+# An empty or invalid value publishes no address. Do not invent one.
+# AI_NEWS_CONTACT_EMAIL=
+
 POLLINATIONS_API_KEY=
 OPENAI_API_KEY=
 AIORNOT_API_KEY=

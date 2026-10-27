@@ -70,16 +70,29 @@ ${entries}
 </feed>`;
 }
 
-export function renderSitemap(origin: string, articles: Array<Pick<SitemapEntry, "slug" | "updatedAt">>): string {
+export function renderSitemap(
+	origin: string,
+	articles: Array<Pick<SitemapEntry, "slug" | "updatedAt"> & { publishedAt?: string }>,
+	extraUrls: string[] = [],
+): string {
 	const staticUrls = [
 		`${origin}/ai-news`,
 		`${origin}/ai-news/about`,
+		`${origin}/ai-news/editorial-policy`,
+		`${origin}/ai-news/corrections`,
+		`${origin}/ai-news/contact`,
+		`${origin}/ai-news/archive`,
 		`${origin}/ai-news/disclaimer`,
 		...CATEGORIES.map((category) => `${origin}/ai-news/${category}`),
 		...AUTHORS.map((author) => `${origin}/ai-news/author/${author.id}`),
+		...extraUrls,
 	];
 	const staticEntries = staticUrls.map((url) => `<url><loc>${xmlEscape(url)}</loc></url>`).join("\n");
-	const articleEntries = articles.map((article) => `<url><loc>${xmlEscape(articleUrl(origin, article.slug))}</loc><lastmod>${xmlEscape(article.updatedAt)}</lastmod></url>`).join("\n");
+	const articleEntries = articles.map((article) => {
+		const modified = article.updatedAt.trim() || article.publishedAt?.trim() || "";
+		const lastmod = modified ? `<lastmod>${xmlEscape(modified)}</lastmod>` : "";
+		return `<url><loc>${xmlEscape(articleUrl(origin, article.slug))}</loc>${lastmod}</url>`;
+	}).join("\n");
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${staticEntries}
@@ -99,17 +112,29 @@ ${entries}
 </sitemapindex>`;
 }
 
-export function renderNewsSitemap(origin: string, articles: Array<Pick<SitemapEntry, "slug" | "title" | "publishedAt">>, now = new Date()): string {
+/**
+ * Google News sitemaps only accept articles published in the last 48 hours.
+ * Older stories stay in /ai-news/sitemap.xml with lastmod.
+ */
+export function renderNewsSitemap(
+	origin: string,
+	articles: Array<Pick<SitemapEntry, "slug" | "title" | "publishedAt"> & { updatedAt?: string }>,
+	now = new Date(),
+): string {
 	const cutoff = now.getTime() - 48 * 60 * 60 * 1000;
 	const recent = articles.filter((article) => Date.parse(article.publishedAt) >= cutoff);
-	const entries = recent.map((article) => `<url>
+	const entries = recent.map((article) => {
+		const modified = article.updatedAt?.trim() || article.publishedAt;
+		return `<url>
 <loc>${xmlEscape(articleUrl(origin, article.slug))}</loc>
+<lastmod>${xmlEscape(modified)}</lastmod>
 <news:news>
 <news:publication><news:name>${xmlEscape(SITE_NAME)}</news:name><news:language>en</news:language></news:publication>
 <news:publication_date>${xmlEscape(article.publishedAt)}</news:publication_date>
 <news:title>${xmlEscape(stripEditorialDashes(article.title))}</news:title>
 </news:news>
-</url>`).join("\n");
+</url>`;
+	}).join("\n");
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
 ${entries}
@@ -130,6 +155,10 @@ export function renderLlmsTxt(origin: string, articles: StoredArticle[]): string
 ## Read this first
 
 - [About the desk](${origin}/ai-news/about): how articles are made, and the rule that personas are not real humans.
+- [Editorial policy](${origin}/ai-news/editorial-policy): rewriting, source credit, picture credit, and corrections.
+- [Corrections](${origin}/ai-news/corrections): how a story is updated when a cited source was misstated.
+- [Contact](${origin}/ai-news/contact): where to send a correction when an address is published.
+- [Archive](${origin}/ai-news/archive): every published story, by date.
 - [Disclaimer](${origin}/ai-news/disclaimer): accuracy limits and source checking.
 
 ## Sections

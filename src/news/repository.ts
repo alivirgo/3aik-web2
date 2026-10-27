@@ -9,8 +9,8 @@ import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, S
 import { isCategory, wordCount } from "./text";
 
 export interface NewsRepository {
-	listRecent(limit: number, category?: Category): Promise<StoredArticle[]>;
-	listByAuthor(authorId: string, limit: number): Promise<StoredArticle[]>;
+	listRecent(limit: number, category?: Category, offset?: number): Promise<StoredArticle[]>;
+	listByAuthor(authorId: string, limit: number, offset?: number): Promise<StoredArticle[]>;
 	getBySlug(slug: string): Promise<StoredArticle | null>;
 	getById(id: string): Promise<StoredArticle | null>;
 	hasSource(url: string): Promise<boolean>;
@@ -25,7 +25,8 @@ export interface NewsRepository {
 	rejectSource(url: string, reason: string, expiresAt: string): Promise<void>;
 	forgetExpiredRejections(nowIso: string): Promise<void>;
 	listSitemap(limit: number, offset?: number): Promise<SitemapEntry[]>;
-	countArticles(): Promise<number>;
+	countArticles(category?: Category): Promise<number>;
+	countByAuthor(authorId: string): Promise<number>;
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
@@ -131,22 +132,25 @@ export class D1NewsRepository implements NewsRepository {
 		return (result.results ?? []).map((row) => articleFromRow(row)).filter((article): article is StoredArticle => Boolean(article));
 	}
 
-	async listRecent(limit: number, category?: Category): Promise<StoredArticle[]> {
+	async listRecent(limit: number, category?: Category, offset = 0): Promise<StoredArticle[]> {
+		const start = Math.max(0, offset);
 		if (category) {
 			return this.rows(
-				`SELECT {{columns}} FROM articles WHERE category = ? ORDER BY published_at DESC LIMIT ?`,
+				`SELECT {{columns}} FROM articles WHERE category = ? ORDER BY published_at DESC LIMIT ? OFFSET ?`,
 				category,
 				limit,
+				start,
 			);
 		}
-		return this.rows(`SELECT {{columns}} FROM articles ORDER BY published_at DESC LIMIT ?`, limit);
+		return this.rows(`SELECT {{columns}} FROM articles ORDER BY published_at DESC LIMIT ? OFFSET ?`, limit, start);
 	}
 
-	async listByAuthor(authorId: string, limit: number): Promise<StoredArticle[]> {
+	async listByAuthor(authorId: string, limit: number, offset = 0): Promise<StoredArticle[]> {
 		return this.rows(
-			`SELECT {{columns}} FROM articles WHERE author_id = ? ORDER BY published_at DESC LIMIT ?`,
+			`SELECT {{columns}} FROM articles WHERE author_id = ? ORDER BY published_at DESC LIMIT ? OFFSET ?`,
 			authorId,
 			limit,
+			Math.max(0, offset),
 		);
 	}
 
@@ -463,8 +467,16 @@ export class D1NewsRepository implements NewsRepository {
 		}
 	}
 
-	async countArticles(): Promise<number> {
-		const row = await this.db.prepare("SELECT COUNT(*) AS n FROM articles").bind().first<Record<string, unknown>>();
+	async countArticles(category?: Category): Promise<number> {
+		const row = category
+			? await this.db.prepare("SELECT COUNT(*) AS n FROM articles WHERE category = ?").bind(category).first<Record<string, unknown>>()
+			: await this.db.prepare("SELECT COUNT(*) AS n FROM articles").bind().first<Record<string, unknown>>();
+		const value = Number(row?.n);
+		return Number.isFinite(value) ? value : 0;
+	}
+
+	async countByAuthor(authorId: string): Promise<number> {
+		const row = await this.db.prepare("SELECT COUNT(*) AS n FROM articles WHERE author_id = ?").bind(authorId).first<Record<string, unknown>>();
 		const value = Number(row?.n);
 		return Number.isFinite(value) ? value : 0;
 	}
@@ -866,18 +878,20 @@ export class MemoryNewsRepository implements NewsRepository {
 	private lockUntil = 0;
 	private rejections = new Map<string, { reason: string; expiresAt: string }>();
 
-	async listRecent(limit: number, category?: Category): Promise<StoredArticle[]> {
+	async listRecent(limit: number, category?: Category, offset = 0): Promise<StoredArticle[]> {
+		const start = Math.max(0, offset);
 		return this.articles
 			.filter((article) => !category || article.category === category)
 			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
-			.slice(0, limit);
+			.slice(start, start + limit);
 	}
 
-	async listByAuthor(authorId: string, limit: number): Promise<StoredArticle[]> {
+	async listByAuthor(authorId: string, limit: number, offset = 0): Promise<StoredArticle[]> {
+		const start = Math.max(0, offset);
 		return this.articles
 			.filter((article) => article.authorId === authorId)
 			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
-			.slice(0, limit);
+			.slice(start, start + limit);
 	}
 
 	async getBySlug(slug: string): Promise<StoredArticle | null> {
@@ -971,8 +985,12 @@ export class MemoryNewsRepository implements NewsRepository {
 			}));
 	}
 
-	async countArticles(): Promise<number> {
-		return this.articles.length;
+	async countArticles(category?: Category): Promise<number> {
+		return this.articles.filter((article) => !category || article.category === category).length;
+	}
+
+	async countByAuthor(authorId: string): Promise<number> {
+		return this.articles.filter((article) => article.authorId === authorId).length;
 	}
 
 	async persistDaySalt(day: string, saltHex: string): Promise<string> {

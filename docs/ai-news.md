@@ -190,20 +190,30 @@ Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technol
 
 | Path | Page |
 | --- | --- |
-| `/ai-news` | Latest stories |
-| `/ai-news/ai`, `/technology`, `/fashion`, `/showbiz` | Sections |
-| `/ai-news/author/<id>` | Persona |
+| `/ai-news` | Latest stories. Page 1 keeps the front layout and links every story on that page. Later pages are `?page=N` |
+| `/ai-news/ai`, `/technology`, `/fashion`, `/showbiz` | Sections, paginated the same way |
+| `/ai-news/archive` | Every published story, grouped by date, paginated the same way |
+| `/ai-news/author/<id>` | Persona, with a link from the story byline, paginated the same way |
 | `/ai-news/article/<slug>` | Story, with canonical URL, Open Graph, NewsArticle JSON-LD, breadcrumbs, TL;DR, and FAQ |
-| `/ai-news/about` | How the desk works |
+| `/ai-news/about` | How the desk works. NewsArticle publisher JSON-LD points here |
+| `/ai-news/editorial-policy` | Rewriting from cited sources, source and picture credit, corrections |
+| `/ai-news/corrections` | How a story is updated. No separate public log |
+| `/ai-news/contact` | Contact. Shows `AI_NEWS_CONTACT_EMAIL` only when that var is a real address |
 | `/ai-news/disclaimer` | Accuracy disclaimer |
 | `/ai-news/feed.xml`, `/ai-news/atom.xml` | Site feeds |
 | `/ai-news/<category>/feed.xml` and `atom.xml` | Section feeds |
-| `/ai-news/sitemap.xml` | News section sitemap |
-| `/ai-news/news-sitemap.xml` | Google News sitemap (stories from the last 48 hours) |
+| `/ai-news/sitemap.xml` | Every article, plus listing pages, with `lastmod` |
+| `/ai-news/news-sitemap.xml` | Google News sitemap. Only stories from the last 48 hours, each with `lastmod`. Google rejects older articles here |
 | `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp` | Illustration, proxied from the public image repo at that commit SHA |
 | `/llms.txt` | Notes for answer engines, including `/ai-news` |
 
-`public/robots.txt` still allows all crawlers at `/` and still lists `https://3aik.com/sitemap.xml`. It also names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers, and adds the two news sitemaps. `public/sitemap.xml` still lists the home page and adds the news section URLs.
+`public/robots.txt` is the site-wide file for 3aik.com, including the home page. The worker does not serve `/robots.txt` itself. Requests for it fall through to static assets. This indexing change does not edit that file or `public/sitemap.xml`. The robots file already lists `Sitemap: https://3aik.com/sitemap.xml`, `Sitemap: https://3aik.com/ai-news/sitemap.xml`, and `Sitemap: https://3aik.com/ai-news/news-sitemap.xml`. It still allows crawlers at `/` and names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers.
+
+Pagination uses `LIMIT` and `OFFSET` on the existing `articles` table. No D1 migration is required for these pages.
+
+Set `AI_NEWS_CONTACT_EMAIL` to a real address when one exists. Leave it unset until then. `/ai-news/contact` then says the desk has not published an address. Do not invent an address, a phone number, or a staff name.
+
+Page 1 of the index, a section, an author, and the archive uses a canonical URL with no `page` query. Later pages use `?page=N` and a self-referencing canonical. `/page/N` redirects to that query URL. A page past the end, or a page value that is not a plain positive integer, is a 404. The edge cache keeps `page` in the key, except `page=1`, which shares the clean URL. Tracking parameters are still stripped.
 
 The service worker does not cache `/ai-news` or `/llms.txt` into the app shell, so opening a story cannot replace the cached home page.
 

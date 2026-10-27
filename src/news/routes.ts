@@ -1,11 +1,16 @@
 import type { Env } from "../types";
-import { publishingEnabled, siteOrigin } from "./config";
+import { AUTHORS } from "./authors";
+import { contactEmail, publishingEnabled, siteOrigin } from "./config";
 import {
 	renderAbout,
+	renderArchive,
 	renderArticle,
 	renderAuthor,
 	renderCategory,
+	renderContact,
+	renderCorrections,
 	renderDisclaimer,
+	renderEditorialPolicy,
 	renderIndex,
 	renderNotFound,
 } from "./html";
@@ -17,11 +22,13 @@ import { isFeedPath, isTrackedMiss, pageViewFromRequest, trackedPage, type PageV
 import { allowStatsLane } from "./ratelimit";
 import { htmlCsp, publicNotFoundResponse, scriptSourceHashes, securityHeaders } from "./responses";
 import type { NewsHtml } from "./html";
+import { LIST_PAGE_SIZE, pageCount, pageHref, parsePageParam } from "./paging";
 import { D1NewsRepository, type NewsRepository, type NewsStatsOptions } from "./repository";
 import { handleNewsStatsRequest, isNewsStatsPath } from "./stats";
 import { runPublishCycle } from "./pipeline";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap, renderSitemapIndex } from "./syndication";
-import type { SitemapEntry, StoredArticle } from "./types";
+import type { Category, SitemapEntry, StoredArticle } from "./types";
+import { CATEGORIES } from "./types";
 import { isCategory } from "./text";
 
 export interface NewsRequestDeps {
@@ -82,11 +89,17 @@ function edgeCache(): Cache | null {
 	return store?.default ?? null;
 }
 
-/** Query strings must not split the cache. Tracking params would otherwise store a copy per click. */
+/**
+ * Tracking params must not split the cache. A page query stays in the key so
+ * page 2 is not stored as page 1. `?page=1` collapses onto the clean URL.
+ * Invalid page values stay distinct so a 404 cannot overwrite the index.
+ */
 export function newsCacheRequest(request: Request): Request {
 	const url = new URL(request.url);
+	const page = url.searchParams.get("page");
 	url.search = "";
 	url.hash = "";
+	if (page !== null && page !== "1") url.searchParams.set("page", page.slice(0, 16));
 	return new Request(url.toString(), { method: "GET" });
 }
 
@@ -123,12 +136,22 @@ function logReadError(path: string, error: unknown): void {
 	}));
 }
 
-async function loadRecent(repo: NewsRepository | null, limit: number, category?: Parameters<NewsRepository["listRecent"]>[1]): Promise<StoredArticle[]> {
+async function loadRecent(repo: NewsRepository | null, limit: number, category?: Category, offset = 0): Promise<StoredArticle[]> {
 	if (!repo) return [];
 	try {
-		return await repo.listRecent(limit, category);
+		return await repo.listRecent(limit, category, offset);
 	} catch (error) {
 		logReadError("list", error);
+		return [];
+	}
+}
+
+async function loadByAuthor(repo: NewsRepository | null, authorId: string, limit: number, offset: number): Promise<StoredArticle[]> {
+	if (!repo) return [];
+	try {
+		return await repo.listByAuthor(authorId, limit, offset);
+	} catch (error) {
+		logReadError("author", error);
 		return [];
 	}
 }
@@ -143,14 +166,46 @@ async function loadSitemap(repo: NewsRepository | null, limit: number, offset = 
 	}
 }
 
-async function countArticles(repo: NewsRepository | null): Promise<number> {
+async function countArticles(repo: NewsRepository | null, category?: Category): Promise<number> {
 	if (!repo) return 0;
 	try {
-		return await repo.countArticles();
+		return await repo.countArticles(category);
 	} catch (error) {
-		logReadError("sitemap-count", error);
+		logReadError("count", error);
 		return 0;
 	}
+}
+
+async function countAuthor(repo: NewsRepository | null, authorId: string): Promise<number> {
+	if (!repo) return 0;
+	try {
+		return await repo.countByAuthor(authorId);
+	} catch (error) {
+		logReadError("count-author", error);
+		return 0;
+	}
+}
+
+function listingFromQuery(raw: string | null, total: number): { page: number; pages: number; offset: number } | null {
+	const parsed = parsePageParam(raw);
+	if (parsed === "invalid") return null;
+	const page = parsed === "missing" ? 1 : parsed;
+	const pages = pageCount(total);
+	if (page > pages) return null;
+	return { page, pages, offset: (page - 1) * LIST_PAGE_SIZE };
+}
+
+function redirectResponse(location: string): Response {
+	const headers = securityHeaders("text/plain; charset=utf-8", "public, max-age=3600", PAGE_CSP);
+	headers.set("location", location);
+	return new Response(null, { status: 301, headers });
+}
+
+function pagedLocs(base: string, total: number): string[] {
+	const pages = pageCount(total);
+	const urls: string[] = [];
+	for (let page = 2; page <= pages; page += 1) urls.push(pageHref(base, page));
+	return urls;
 }
 
 function statsOptions(env: Env): NewsStatsOptions {
@@ -259,11 +314,24 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 		}
 
 		if (path === "/ai-news") {
-			const articles = await loadRecent(repo, 24);
-			return await htmlResponse(request, renderIndex(origin, articles), 200, "public, max-age=60");
+			const total = await countArticles(repo);
+			const listing = listingFromQuery(url.searchParams.get("page"), total);
+			if (!listing) return await publicNotFoundResponse(request, origin);
+			const articles = await loadRecent(repo, LIST_PAGE_SIZE, undefined, listing.offset);
+			return await htmlResponse(request, renderIndex(origin, articles, listing), 200, "public, max-age=60");
 		}
 		if (path === "/ai-news/about") return await htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/disclaimer") return await htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
+		if (path === "/ai-news/editorial-policy") return await htmlResponse(request, renderEditorialPolicy(origin), 200, "public, max-age=3600");
+		if (path === "/ai-news/corrections") return await htmlResponse(request, renderCorrections(origin, contactEmail(env)), 200, "public, max-age=3600");
+		if (path === "/ai-news/contact") return await htmlResponse(request, renderContact(origin, contactEmail(env)), 200, "public, max-age=3600");
+		const pagePath = /^\/ai-news(?:\/(ai|technology|fashion|showbiz|archive|author\/[a-z0-9-]{1,80}))?\/page\/([1-9]\d{0,4})$/.exec(path);
+		if (pagePath) {
+			const section = pagePath[1] ?? "";
+			const page = Number(pagePath[2]);
+			const base = section ? `${origin}/ai-news/${section}` : `${origin}/ai-news`;
+			return redirectResponse(pageHref(base, page));
+		}
 		const sitemapPage = /^\/ai-news\/sitemap\/([1-9]\d{0,2})\.xml$/.exec(path);
 		if (path === "/ai-news/sitemap.xml" || sitemapPage) {
 			const count = await countArticles(repo);
@@ -274,10 +342,22 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			}
 			const index = requested === 0 ? 1 : requested;
 			const articles = index > pages ? [] : await loadSitemap(repo, SITEMAP_PAGE_SIZE, (index - 1) * SITEMAP_PAGE_SIZE);
-			return xmlResponse(request, renderSitemap(origin, articles), "application/xml; charset=utf-8");
+			const extras: string[] = [];
+			if (index === 1) {
+				extras.push(...pagedLocs(`${origin}/ai-news`, count));
+				extras.push(...pagedLocs(`${origin}/ai-news/archive`, count));
+				for (const category of CATEGORIES) {
+					extras.push(...pagedLocs(`${origin}/ai-news/${category}`, await countArticles(repo, category)));
+				}
+				for (const author of AUTHORS) {
+					extras.push(...pagedLocs(`${origin}/ai-news/author/${author.id}`, await countAuthor(repo, author.id)));
+				}
+			}
+			return xmlResponse(request, renderSitemap(origin, articles, extras), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/news-sitemap.xml") {
-			const articles = await loadSitemap(repo, FEED_ARTICLE_LIMIT);
+			// Google News rejects stories older than two days. Scan past the feed cap so that window is complete.
+			const articles = await loadSitemap(repo, SITEMAP_PAGE_SIZE);
 			return xmlResponse(request, renderNewsSitemap(origin, articles, new Date()), "application/xml; charset=utf-8");
 		}
 		if (path === "/ai-news/feed.xml") {
@@ -338,22 +418,30 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 		if (isCategory(path.slice("/ai-news/".length)) && path.startsWith("/ai-news/")) {
 			const category = path.slice("/ai-news/".length);
 			if (isCategory(category)) {
-				const articles = await loadRecent(repo, 24, category);
-				return await htmlResponse(request, renderCategory(origin, category, articles), 200, "public, max-age=60");
+				const total = await countArticles(repo, category);
+				const listing = listingFromQuery(url.searchParams.get("page"), total);
+				if (!listing) return await publicNotFoundResponse(request, origin);
+				const articles = await loadRecent(repo, LIST_PAGE_SIZE, category, listing.offset);
+				return await htmlResponse(request, renderCategory(origin, category, articles, listing), 200, "public, max-age=60");
 			}
+		}
+
+		if (path === "/ai-news/archive") {
+			const total = await countArticles(repo);
+			const listing = listingFromQuery(url.searchParams.get("page"), total);
+			if (!listing) return await publicNotFoundResponse(request, origin);
+			const articles = await loadRecent(repo, LIST_PAGE_SIZE, undefined, listing.offset);
+			return await htmlResponse(request, renderArchive(origin, articles, listing), 200, "public, max-age=60");
 		}
 
 		const authorMatch = /^\/ai-news\/author\/([a-z0-9-]{1,80})$/.exec(path);
 		if (authorMatch?.[1]) {
-			let articles: StoredArticle[] = [];
-			if (repo) {
-				try {
-					articles = await repo.listByAuthor(authorMatch[1], 24);
-				} catch (error) {
-					logReadError(path, error);
-				}
-			}
-			const page = renderAuthor(origin, authorMatch[1], articles);
+			const authorId = authorMatch[1];
+			const total = await countAuthor(repo, authorId);
+			const listing = listingFromQuery(url.searchParams.get("page"), total);
+			if (!listing) return await publicNotFoundResponse(request, origin);
+			const articles = await loadByAuthor(repo, authorId, LIST_PAGE_SIZE, listing.offset);
+			const page = renderAuthor(origin, authorId, articles, listing);
 			if (!page) return await publicNotFoundResponse(request, origin);
 			return await htmlResponse(request, page, 200, "public, max-age=120");
 		}

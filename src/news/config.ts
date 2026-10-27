@@ -195,6 +195,20 @@ export interface NewsEnv {
 	 * including unset, leaves stats on. Pages, ingest, and the cron stay up.
 	 */
 	AI_NEWS_STATS_ENABLED?: string;
+	/**
+	 * Real address for /ai-news/contact. Unset or invalid means the page
+	 * publishes no address. Do not invent one.
+	 */
+	AI_NEWS_CONTACT_EMAIL?: string;
+}
+
+const CONTACT_EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+/** Empty when the env var is missing or not a single email address. */
+export function contactEmail(env: NewsEnv): string {
+	const raw = env.AI_NEWS_CONTACT_EMAIL?.trim() ?? "";
+	if (!raw || raw.length > 120 || !CONTACT_EMAIL.test(raw)) return "";
+	return raw;
 }
 
 export function articlesPerHour(env: NewsEnv): number {
