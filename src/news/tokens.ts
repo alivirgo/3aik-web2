@@ -11,7 +11,7 @@ function equalDigests(left: ArrayBuffer, right: ArrayBuffer): boolean {
 	return diff === 0;
 }
 
-/** Constant-time bearer check shared by ingest and the image backfill. */
+/** SHA-256 compare shared by ingest, IndexNow, and the image backfill. A longer lookalike is bounded before the digest so length is not a shortcut. */
 export async function tokensMatch(provided: string, expected: string): Promise<boolean> {
 	const bounded = provided.length > 512 ? `${provided.slice(0, 512)}\n` : provided;
 	const encoder = new TextEncoder();

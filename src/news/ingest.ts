@@ -17,12 +17,12 @@ import { readBodyCapped, sameSiteHost } from "./feeds";
 import { GITHUB_IMAGE_MAX_BYTES, deleteImageFile } from "./github-images";
 import { filesForStoredImage, imageCandidates, leadWideEnough, persistLeadVariants } from "./lead";
 import { isBlockedHost, publicHttpsUrl } from "./net";
-import { pingIndexNow } from "./pipeline";
+import { indexNowPublishUrls, pingIndexNow } from "./indexnow";
+import { bearerToken, tokensMatch } from "./tokens";
 import { SLOP_PATTERNS, assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
 import type { ArticleDraft, Category, FaqItem, SourceRef, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
-import { bearerToken, tokensMatch } from "./tokens";
 import {
 	decodeEntities,
 	detectImageType,
@@ -715,7 +715,14 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		return json({ error: "unavailable" }, 503);
 	}
 	const url = `${origin}/ai-news/article/${slug}`;
-	await pingIndexNow(env, [url], fetchImpl);
+	try {
+		await pingIndexNow(env, indexNowPublishUrls(origin, [url]), fetchImpl);
+	} catch (error) {
+		console.error(JSON.stringify({
+			message: "ai-news indexnow error",
+			error: error instanceof Error ? error.message : String(error),
+		}));
+	}
 	console.log(JSON.stringify({
 		message: "ai-news ingested",
 		slug,

@@ -177,6 +177,10 @@ export interface NewsEnv {
 	AI_NEWS_TEXT_TIMEOUT_MS?: string;
 	AI_NEWS_IMAGE_TIMEOUT_MS?: string;
 	AI_NEWS_RETENTION_DAYS?: string;
+	/**
+	 * Optional override of the committed public IndexNow key. Unset, blank, or
+	 * invalid values use `DEFAULT_INDEXNOW_KEY`. The key is public by design.
+	 */
 	INDEXNOW_KEY?: string;
 	/** Fine-grained token with contents:write on alivirgo/3aik-ai-news-images. Never commit it. */
 	GITHUB_IMAGES_TOKEN?: string;
@@ -205,6 +209,21 @@ export interface NewsEnv {
 }
 
 const CONTACT_EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+/**
+ * Public IndexNow key served at `https://3aik.com/<key>.txt`.
+ * IndexNow checks that file. It is not a secret.
+ */
+export const DEFAULT_INDEXNOW_KEY = "471520af56fd6ed6f2d37cf56f67f743";
+
+const INDEXNOW_KEY_PATTERN = /^[A-Za-z0-9-]{8,128}$/;
+
+/** Env override when it is a valid key. Otherwise the committed public key. */
+export function indexNowKey(env: { INDEXNOW_KEY?: string }): string {
+	const raw = env.INDEXNOW_KEY?.trim() ?? "";
+	if (raw && INDEXNOW_KEY_PATTERN.test(raw)) return raw;
+	return DEFAULT_INDEXNOW_KEY;
+}
 
 /** Empty when the env var is missing or not a single email address. */
 export function contactEmail(env: NewsEnv): string {

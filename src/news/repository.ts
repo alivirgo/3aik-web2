@@ -38,6 +38,11 @@ export interface NewsRepository {
 	listRecentSourceUrls(limit: number): Promise<string[]>;
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
 	consumeIngest(bucket: string, limit: number): Promise<boolean>;
+	/**
+	 * One IndexNow submit-all per window, stored in runtime_lock.
+	 * `allowed` is false when a previous claim is still inside the window.
+	 */
+	claimIndexNowSubmit(nowIso: string, untilIso: string): Promise<{ allowed: boolean; retryAfterSeconds: number }>;
 	recordPageView(event: PageViewEvent): Promise<void>;
 	persistDaySalt(day: string, saltHex: string): Promise<string>;
 	pageViewReport(now: Date, query?: StatsQuery): Promise<NewsStatsReport>;
@@ -507,6 +512,27 @@ export class D1NewsRepository implements NewsRepository {
 				.bind(name, limit),
 		]);
 		return (results[1]?.meta?.changes ?? 0) > 0;
+	}
+
+	async claimIndexNowSubmit(nowIso: string, untilIso: string): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+		const name = "indexnow-submit";
+		const result = await this.db
+			.prepare(
+				`INSERT INTO runtime_lock (name, locked_until) VALUES (?, ?)
+				 ON CONFLICT(name) DO UPDATE SET locked_until = excluded.locked_until
+				 WHERE runtime_lock.locked_until <= ?`,
+			)
+			.bind(name, untilIso, nowIso)
+			.run();
+		if ((result.meta?.changes ?? 0) > 0) return { allowed: true, retryAfterSeconds: 0 };
+		const row = await this.db
+			.prepare("SELECT locked_until FROM runtime_lock WHERE name = ?")
+			.bind(name)
+			.first<Record<string, unknown>>();
+		const until = Date.parse(typeof row?.locked_until === "string" ? row.locked_until : "");
+		const now = Date.parse(nowIso);
+		const retryAfterSeconds = Number.isFinite(until) ? Math.max(1, Math.ceil((until - now) / 1000)) : 600;
+		return { allowed: false, retryAfterSeconds };
 	}
 
 	async persistDaySalt(day: string, saltHex: string): Promise<string> {
@@ -1125,6 +1151,7 @@ export class MemoryNewsRepository implements NewsRepository {
 	}
 
 	private ingestHits = new Map<string, number>();
+	private indexNowUntil = 0;
 
 	async consumeIngest(bucket: string, limit: number): Promise<boolean> {
 		const cutoffMs = Date.parse(bucket) - 48 * 60 * 60 * 1000;
@@ -1135,6 +1162,17 @@ export class MemoryNewsRepository implements NewsRepository {
 		if (hits >= limit) return false;
 		this.ingestHits.set(bucket, hits + 1);
 		return true;
+	}
+
+	async claimIndexNowSubmit(nowIso: string, untilIso: string): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+		const now = Date.parse(nowIso);
+		const until = Date.parse(untilIso);
+		if (!Number.isFinite(now) || !Number.isFinite(until)) return { allowed: false, retryAfterSeconds: 600 };
+		if (this.indexNowUntil > now) {
+			return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((this.indexNowUntil - now) / 1000)) };
+		}
+		this.indexNowUntil = until;
+		return { allowed: true, retryAfterSeconds: 0 };
 	}
 
 	async recordPageView(event: PageViewEvent): Promise<void> {

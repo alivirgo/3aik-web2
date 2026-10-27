@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FEEDS } from "../src/news/config";
+import { DEFAULT_INDEXNOW_KEY, FEEDS } from "../src/news/config";
 import { pingIndexNow, runPublishCycle } from "../src/news/pipeline";
 import { MemoryNewsRepository } from "../src/news/repository";
 import type { ArticleDraft, StoredArticle } from "../src/news/types";
@@ -126,6 +126,13 @@ describe("publish cycle", () => {
 		expect(writeDraft).toHaveBeenCalledTimes(1);
 		expect(paint).toHaveBeenCalledTimes(1);
 		expect(ping).toHaveBeenCalledTimes(1);
+		expect(ping).toHaveBeenCalledWith([
+			`https://3aik.com/ai-news/article/${report.published[0]}`,
+			"https://3aik.com/ai-news",
+			"https://3aik.com/ai-news/archive",
+			"https://3aik.com/ai-news/sitemap.xml",
+			"https://3aik.com/ai-news/news-sitemap.xml",
+		]);
 		const article = await repo.getBySlug(report.published[0] ?? "");
 		expect(article?.authorId).toBe("adele-okonkwo");
 		expect(article?.sources[0]?.url).toBe("https://example.com/fresh-bulletin");
@@ -445,21 +452,45 @@ describe("publish cycle", () => {
 });
 
 describe("IndexNow", () => {
-	it("posts the article URL when a key is configured and ignores a bad key", async () => {
+	it("posts the article URL with the configured key, or the committed key when that value is unusable", async () => {
 		const calls: string[] = [];
 		const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			calls.push(`${typeof input === "string" ? input : input.toString()} ${init?.method ?? "GET"}`);
 			return new Response("ok");
 		});
 		await pingIndexNow({ INDEXNOW_KEY: "index-key" }, ["https://3aik.com/ai-news/article/demo"], fetchImpl as typeof fetch);
-		expect(calls[0]).toContain("https://api.indexnow.org/indexnow POST");
+		expect(calls).toEqual([
+			"https://www.bing.com/indexnow POST",
+			"https://yandex.com/indexnow POST",
+		]);
 		const body = JSON.parse(String((fetchImpl.mock.calls[0] ?? [])[1]?.body));
 		expect(body.urlList).toEqual(["https://3aik.com/ai-news/article/demo"]);
 		expect(body.keyLocation).toBe("https://3aik.com/index-key.txt");
 
-		const skipped = vi.fn();
-		await pingIndexNow({ INDEXNOW_KEY: "short" }, ["https://3aik.com/ai-news/article/demo"], skipped as typeof fetch);
-		expect(skipped).not.toHaveBeenCalled();
+		const fallback = vi.fn(async () => new Response("ok"));
+		await pingIndexNow({ INDEXNOW_KEY: "short" }, ["https://3aik.com/ai-news/article/demo"], fallback as typeof fetch);
+		const fallbackBody = JSON.parse(String((fallback.mock.calls[0] ?? [])[1]?.body));
+		expect(fallbackBody.key).toBe(DEFAULT_INDEXNOW_KEY);
+		expect(fallbackBody.host).toBe("3aik.com");
+		expect(fallbackBody.keyLocation).toBe(`https://3aik.com/${DEFAULT_INDEXNOW_KEY}.txt`);
+
+		const unset = vi.fn(async () => new Response("ok"));
+		await pingIndexNow({}, ["https://3aik.com/ai-news/article/demo"], unset as typeof fetch);
+		const unsetBody = JSON.parse(String((unset.mock.calls[0] ?? [])[1]?.body));
+		expect(unsetBody.key).toBe(DEFAULT_INDEXNOW_KEY);
+	});
+
+	it("still publishes when the IndexNow request throws", async () => {
+		const state = harness();
+		state.deps.ping = undefined;
+		state.deps.fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.includes("indexnow")) throw new Error("indexnow down");
+			return state.fetchImpl(input, init);
+		}) as typeof fetch;
+		const report = await runPublishCycle(state.deps);
+		expect(report.skipped).toBe("published");
+		expect(report.published).toHaveLength(1);
 	});
 });
 

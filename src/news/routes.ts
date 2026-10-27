@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { AUTHORS } from "./authors";
-import { contactEmail, publishingEnabled, siteOrigin } from "./config";
+import { contactEmail, indexNowKey, publishingEnabled, siteOrigin } from "./config";
 import {
 	renderAbout,
 	renderArchive,
@@ -15,6 +15,7 @@ import {
 	renderNotFound,
 } from "./html";
 import { loadPublicImage, parseMediaRequest } from "./github-images";
+import { handleIndexNowSubmit, isIndexNowSubmitPath } from "./indexnow";
 import { handleIngestRequest, ingestApiPath } from "./ingest";
 import { beaconSource, handleCollectRequest, isNewsCollectPath } from "./collect";
 import { statsBudgetCharge, statsBudgetOpen } from "./budget";
@@ -288,6 +289,13 @@ export async function handleNewsRequest(request: Request, env: Env, override: Ne
 			now: override.now,
 		});
 	}
+	if (isIndexNowSubmitPath(earlyPath)) {
+		return handleIndexNowSubmit(request, env, {
+			repo: resolveRepo(env, override),
+			fetchImpl: override.fetchImpl ?? fetch,
+			now: override.now,
+		});
+	}
 	if (isNewsStatsPath(earlyPath)) {
 		return handleNewsStatsRequest(request, env, resolveRepo(env, override), siteOrigin(env, request), override.now);
 	}
@@ -315,8 +323,8 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 	const fetchImpl = override.fetchImpl ?? fetch;
 
 	try {
-		const key = env.INDEXNOW_KEY?.trim();
-		if (key && /^[A-Za-z0-9-]{8,128}$/.test(key) && path === `/${key}.txt`) {
+		const key = indexNowKey(env);
+		if (path === `/${key}.txt`) {
 			return textResponse(request, key, "public, max-age=3600");
 		}
 		if (path === "/llms.txt") {
