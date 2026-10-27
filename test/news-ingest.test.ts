@@ -257,8 +257,11 @@ describe("ingest publish", () => {
 		expect(stats.authors["adele-okonkwo"]?.count).toBe(1);
 		expect(stats.categories.ai?.count).toBe(1);
 		expect(state.ai.run).not.toHaveBeenCalled();
-		const indexNowCall = state.fetchImpl.mock.calls.find((call) => String(call[0]).includes("api.indexnow.org"));
+		const indexNowCall = state.fetchImpl.mock.calls.find((call) => String(call[0]) === "https://www.bing.com/indexnow");
+		const yandexCall = state.fetchImpl.mock.calls.find((call) => String(call[0]) === "https://yandex.com/indexnow");
 		expect(indexNowCall?.[1]?.method).toBe("POST");
+		expect(yandexCall?.[1]?.body).toBe(indexNowCall?.[1]?.body);
+		expect(state.fetchImpl.mock.calls.some((call) => String(call[0]).includes("api.indexnow.org"))).toBe(false);
 		const posted = JSON.parse(String(indexNowCall?.[1]?.body)) as { host: string; urlList: string[] };
 		expect(posted.host).toBe("3aik.com");
 		expect(posted.urlList).toEqual([

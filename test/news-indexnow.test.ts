@@ -114,10 +114,21 @@ describe("IndexNow submit-all", () => {
 		const state = submit();
 		const first = await state.send();
 		expect(first.status).toBe(200);
-		const body = await first.json() as { batches: Array<{ status: number; count: number }> };
+		const body = await first.json() as { batches: Array<{ count: number; engines: Array<{ engine: string; status: number }> }> };
 		const catalog = indexNowCatalogUrls("https://3aik.com");
-		expect(body.batches).toEqual([{ status: 202, count: catalog.length + 1 }]);
+		expect(body.batches).toEqual([{
+			count: catalog.length + 1,
+			engines: [
+				{ engine: "bing", status: 202 },
+				{ engine: "yandex", status: 202 },
+			],
+		}]);
+		expect(state.fetchImpl.mock.calls.map((call) => String(call[0]))).toEqual([
+			"https://www.bing.com/indexnow",
+			"https://yandex.com/indexnow",
+		]);
 		const posted = JSON.parse(String(state.fetchImpl.mock.calls[0]?.[1]?.body)) as { host: string; key: string; keyLocation: string; urlList: string[] };
+		expect(state.fetchImpl.mock.calls[1]?.[1]?.body).toBe(state.fetchImpl.mock.calls[0]?.[1]?.body);
 		expect(posted.host).toBe("3aik.com");
 		expect(posted.key).toBe(DEFAULT_INDEXNOW_KEY);
 		expect(posted.keyLocation).toBe(`https://3aik.com/${DEFAULT_INDEXNOW_KEY}.txt`);
@@ -136,11 +147,11 @@ describe("IndexNow submit-all", () => {
 		expect(early.status).toBe(429);
 		expect(early.headers.get("retry-after")).toBe("540");
 		expect(await early.json()).toEqual({ error: "rate_limited", retryAfterSeconds: 540 });
-		expect(state.fetchImpl).toHaveBeenCalledTimes(1);
+		expect(state.fetchImpl).toHaveBeenCalledTimes(2);
 
 		const later = await state.send(new Date(NOW.getTime() + 10 * 60 * 1000));
 		expect(later.status).toBe(200);
-		expect(state.fetchImpl).toHaveBeenCalledTimes(2);
+		expect(state.fetchImpl).toHaveBeenCalledTimes(4);
 	});
 
 	it("allows GET to hide behind 404 until the bearer matches", async () => {
@@ -157,21 +168,65 @@ describe("IndexNow submit-all", () => {
 		expect(state.fetchImpl).not.toHaveBeenCalled();
 	});
 
-	it("splits a large list into batches of 10000 and records a dead connection as status 0", async () => {
+	it("posts Bing and Yandex, and calls api.indexnow.org only when both fail", async () => {
 		const urls = Array.from({ length: INDEXNOW_BATCH_SIZE + 1 }, (_, index) => `https://3aik.com/ai-news/article/story-${index}`);
-		const sizes: number[] = [];
-		const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+		const seen: Array<{ endpoint: string; count: number }> = [];
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const endpoint = String(input);
 			const body = JSON.parse(String(init?.body)) as { urlList: string[] };
-			sizes.push(body.urlList.length);
-			if (sizes.length === 1) return new Response("ok", { status: 200 });
-			throw new Error("down");
+			seen.push({ endpoint, count: body.urlList.length });
+			if (body.urlList.length === INDEXNOW_BATCH_SIZE) {
+				if (endpoint.includes("bing.com")) return new Response("ok", { status: 202 });
+				if (endpoint.includes("yandex.com")) return new Response("ok", { status: 200 });
+			}
+			if (endpoint.includes("bing.com")) return new Response("limited", { status: 429 });
+			if (endpoint.includes("yandex.com")) return new Response("no", { status: 403 });
+			if (endpoint.includes("api.indexnow.org")) return new Response("ok", { status: 200 });
+			throw new Error(`unexpected ${endpoint}`);
 		});
 		const batches = await submitIndexNow({ AI_NEWS_SITE_ORIGIN: "https://3aik.com" }, urls, fetchImpl as typeof fetch);
-		expect(sizes).toEqual([INDEXNOW_BATCH_SIZE, 1]);
-		expect(batches).toEqual([
-			{ status: 200, count: INDEXNOW_BATCH_SIZE },
-			{ status: 0, count: 1 },
+		expect(seen).toEqual([
+			{ endpoint: "https://www.bing.com/indexnow", count: INDEXNOW_BATCH_SIZE },
+			{ endpoint: "https://yandex.com/indexnow", count: INDEXNOW_BATCH_SIZE },
+			{ endpoint: "https://www.bing.com/indexnow", count: 1 },
+			{ endpoint: "https://yandex.com/indexnow", count: 1 },
+			{ endpoint: "https://api.indexnow.org/indexnow", count: 1 },
 		]);
+		expect(batches).toEqual([
+			{
+				count: INDEXNOW_BATCH_SIZE,
+				engines: [
+					{ engine: "bing", status: 202 },
+					{ engine: "yandex", status: 200 },
+				],
+			},
+			{
+				count: 1,
+				engines: [
+					{ engine: "bing", status: 429 },
+					{ engine: "yandex", status: 403 },
+					{ engine: "indexnow", status: 200 },
+				],
+			},
+		]);
+
+		const partial = vi.fn(async (input: RequestInfo | URL) => {
+			if (String(input).includes("bing.com")) return new Response("ok", { status: 202 });
+			throw new Error("yandex down");
+		});
+		const one = await submitIndexNow({}, ["https://3aik.com/ai-news"], partial as typeof fetch);
+		expect(one).toEqual([{
+			count: 1,
+			engines: [
+				{ engine: "bing", status: 202 },
+				{ engine: "yandex", status: 0 },
+			],
+		}]);
+		expect(partial.mock.calls.map((call) => String(call[0]))).toEqual([
+			"https://www.bing.com/indexnow",
+			"https://yandex.com/indexnow",
+		]);
+
 		await expect(pingIndexNow({}, ["https://3aik.com/ai-news/article/demo"], vi.fn(async () => {
 			throw new Error("down");
 		}) as typeof fetch)).resolves.toBeUndefined();

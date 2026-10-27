@@ -229,9 +229,15 @@ The committed key is `471520af56fd6ed6f2d37cf56f67f743`. The worker serves it as
 npx wrangler secret put INDEXNOW_KEY
 ```
 
-Every successful publish pings `https://api.indexnow.org/indexnow` with `host` `3aik.com`, the key, `keyLocation`, the new article URL, `/ai-news`, `/ai-news/archive`, `/ai-news/sitemap.xml`, and `/ai-news/news-sitemap.xml`. That includes the cron and `POST /ai-news/api/ingest`. A failed ping is logged and does not change the publish result.
+Every successful publish POSTs the same JSON body to `https://www.bing.com/indexnow` and `https://yandex.com/indexnow`. The body has `host` `3aik.com`, the key, `keyLocation`, the new article URL, `/ai-news`, `/ai-news/archive`, `/ai-news/sitemap.xml`, and `/ai-news/news-sitemap.xml`. That includes the cron and `POST /ai-news/api/ingest`. `https://api.indexnow.org/indexnow` is called only when both Bing and Yandex return a non-2xx status or a network error. A failed ping is logged and does not change the publish result.
 
-`POST /ai-news/api/indexnow/submit-all` sends every article URL plus the index, archive, section, author, and trust pages (`about`, `editorial-policy`, `corrections`, `contact`, `disclaimer`). URLs go out in batches of up to 10,000. The JSON body is `{ "batches": [{ "status": 200, "count": 32 }] }`, where `status` is the HTTP status IndexNow returned for that batch. A network failure is `status` 0. The route uses the ingest bearer, compared by SHA-256. A missing secret or a wrong bearer is `{ "error": "not_found" }` with status 404. One successful claim is allowed every 10 minutes, stored in the existing `runtime_lock` row `indexnow-submit`. A second call in that window is 429 with `retry-after`. No D1 migration.
+`POST /ai-news/api/indexnow/submit-all` sends every article URL plus the index, archive, section, author, and trust pages (`about`, `editorial-policy`, `corrections`, `contact`, `disclaimer`). URLs go out in batches of up to 10,000. Each batch is posted to Bing and Yandex, with `api.indexnow.org` only when both fail. The JSON body reports one status per engine:
+
+```json
+{ "batches": [{ "count": 32, "engines": [{ "engine": "bing", "status": 202 }, { "engine": "yandex", "status": 202 }] }] }
+```
+
+`indexnow` appears in `engines` only for a batch that needed the fallback. A network failure is `status` 0. The route uses the ingest bearer, compared by SHA-256. A missing secret or a wrong bearer is `{ "error": "not_found" }` with status 404. One successful claim is allowed every 10 minutes, stored in the existing `runtime_lock` row `indexnow-submit`. A second call in that window is 429 with `retry-after`. No D1 migration.
 
 IndexNow docs: [indexnow.org/documentation](https://www.indexnow.org/documentation).
 
