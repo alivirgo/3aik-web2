@@ -17,10 +17,25 @@ const TRUST_PATHS = [
 	"/ai-news/disclaimer",
 ];
 
-export interface IndexNowBatch {
+export interface IndexNowEngineStatus {
+	engine: "bing" | "yandex" | "indexnow";
 	status: number;
-	count: number;
 }
+
+export interface IndexNowBatch {
+	count: number;
+	engines: IndexNowEngineStatus[];
+}
+
+const DIRECT_ENGINES: Array<{ engine: IndexNowEngineStatus["engine"]; endpoint: string }> = [
+	{ engine: "bing", endpoint: "https://www.bing.com/indexnow" },
+	{ engine: "yandex", endpoint: "https://yandex.com/indexnow" },
+];
+
+const FALLBACK_ENGINE: { engine: IndexNowEngineStatus["engine"]; endpoint: string } = {
+	engine: "indexnow",
+	endpoint: "https://api.indexnow.org/indexnow",
+};
 
 export interface IndexNowSubmitDeps {
 	repo: NewsRepository | null;
@@ -65,9 +80,38 @@ function json(body: unknown, status: number, extra?: HeadersInit): Response {
 	return new Response(JSON.stringify(body), { status, headers });
 }
 
+function accepted(status: number): boolean {
+	return status >= 200 && status < 300;
+}
+
+async function postEngine(
+	endpoint: string,
+	engine: IndexNowEngineStatus["engine"],
+	body: string,
+	fetchImpl: typeof fetch,
+): Promise<number> {
+	try {
+		const response = await fetchImpl(endpoint, {
+			method: "POST",
+			headers: { "content-type": "application/json; charset=utf-8" },
+			body,
+		});
+		const status = response.status;
+		await response.body?.cancel().catch(() => undefined);
+		return status;
+	} catch (error) {
+		console.error(JSON.stringify({
+			message: "ai-news indexnow error",
+			engine,
+			error: error instanceof Error ? error.message : String(error),
+		}));
+		return 0;
+	}
+}
+
 /**
- * POST url batches to IndexNow. A network error becomes status 0 for that
- * batch and does not throw. Callers that publish must keep going either way.
+ * POST each URL batch to Bing and Yandex. api.indexnow.org is used only when
+ * both of those refuse the batch. A network error is status 0 and does not throw.
  */
 export async function submitIndexNow(env: NewsEnv, urls: string[], fetchImpl: typeof fetch = fetch): Promise<IndexNowBatch[]> {
 	const list = urls.filter(Boolean);
@@ -83,26 +127,26 @@ export async function submitIndexNow(env: NewsEnv, urls: string[], fetchImpl: ty
 	const results: IndexNowBatch[] = [];
 	for (let offset = 0; offset < list.length; offset += INDEXNOW_BATCH_SIZE) {
 		const batch = list.slice(offset, offset + INDEXNOW_BATCH_SIZE);
-		try {
-			const response = await fetchImpl("https://api.indexnow.org/indexnow", {
-				method: "POST",
-				headers: { "content-type": "application/json; charset=utf-8" },
-				body: JSON.stringify({
-					host,
-					key,
-					keyLocation: `${origin}/${key}.txt`,
-					urlList: batch,
-				}),
+		const body = JSON.stringify({
+			host,
+			key,
+			keyLocation: `${origin}/${key}.txt`,
+			urlList: batch,
+		});
+		const engines: IndexNowEngineStatus[] = [];
+		for (const target of DIRECT_ENGINES) {
+			engines.push({
+				engine: target.engine,
+				status: await postEngine(target.endpoint, target.engine, body, fetchImpl),
 			});
-			results.push({ status: response.status, count: batch.length });
-			await response.body?.cancel().catch(() => undefined);
-		} catch (error) {
-			console.error(JSON.stringify({
-				message: "ai-news indexnow error",
-				error: error instanceof Error ? error.message : String(error),
-			}));
-			results.push({ status: 0, count: batch.length });
 		}
+		if (!engines.some((entry) => accepted(entry.status))) {
+			engines.push({
+				engine: FALLBACK_ENGINE.engine,
+				status: await postEngine(FALLBACK_ENGINE.endpoint, FALLBACK_ENGINE.engine, body, fetchImpl),
+			});
+		}
+		results.push({ count: batch.length, engines });
 	}
 	return results;
 }
@@ -112,8 +156,12 @@ export async function pingIndexNow(env: NewsEnv, urls: string[], fetchImpl: type
 	try {
 		const results = await submitIndexNow(env, urls, fetchImpl);
 		for (const batch of results) {
-			if (batch.status < 200 || batch.status >= 300) {
-				console.error(JSON.stringify({ message: "ai-news indexnow failed", status: batch.status, count: batch.count }));
+			if (!batch.engines.some((entry) => accepted(entry.status))) {
+				console.error(JSON.stringify({
+					message: "ai-news indexnow failed",
+					count: batch.count,
+					engines: batch.engines,
+				}));
 			}
 		}
 	} catch (error) {

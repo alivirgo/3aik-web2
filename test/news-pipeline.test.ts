@@ -458,7 +458,10 @@ describe("IndexNow", () => {
 			return new Response("ok");
 		});
 		await pingIndexNow({ INDEXNOW_KEY: "index-key" }, ["https://3aik.com/ai-news/article/demo"], fetchImpl as typeof fetch);
-		expect(calls[0]).toContain("https://api.indexnow.org/indexnow POST");
+		expect(calls).toEqual([
+			"https://www.bing.com/indexnow POST",
+			"https://yandex.com/indexnow POST",
+		]);
 		const body = JSON.parse(String((fetchImpl.mock.calls[0] ?? [])[1]?.body));
 		expect(body.urlList).toEqual(["https://3aik.com/ai-news/article/demo"]);
 		expect(body.keyLocation).toBe("https://3aik.com/index-key.txt");
@@ -481,7 +484,7 @@ describe("IndexNow", () => {
 		state.deps.ping = undefined;
 		state.deps.fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-			if (url.includes("api.indexnow.org")) throw new Error("indexnow down");
+			if (url.includes("indexnow")) throw new Error("indexnow down");
 			return state.fetchImpl(input, init);
 		}) as typeof fetch;
 		const report = await runPublishCycle(state.deps);
