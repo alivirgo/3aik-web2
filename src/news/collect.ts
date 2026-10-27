@@ -3,6 +3,7 @@ import { publicHttpsUrl } from "./net";
 import {
 	hexToSalt,
 	knownDaySalt,
+	applyBeaconContext,
 	pageViewFromRequest,
 	randomDaySalt,
 	saltToHex,
@@ -100,7 +101,10 @@ export function beaconToEvent(body: unknown, request: Request, now: Date, siteHo
 	const slug = typeof record.slug === "string" ? record.slug : "";
 	const tracked = trackedPage(page === "index" ? "/ai-news" : page === "article" ? `/ai-news/article/${slug}` : page.startsWith("section:") ? `/ai-news/${page.slice(8)}` : page.startsWith("author:") ? `/ai-news/author/${page.slice(7)}` : page === "about" || page === "disclaimer" ? `/ai-news/${page}` : "");
 	if (!tracked || tracked.page !== "article" || !tracked.slug || tracked.page !== page || tracked.slug !== slug) return null;
-	const event = pageViewFromRequest(request, tracked, now, siteHost);
+	const event = applyBeaconContext(pageViewFromRequest(request, tracked, now, siteHost), {
+		ref: record.ref,
+		search: record.search,
+	}, siteHost);
 	event.eventKind = kind as EventKind;
 	event.returning = returningOf(record.returning);
 	event.screen = screenOf(record.screen);
@@ -120,7 +124,7 @@ export function beaconToEvent(body: unknown, request: Request, now: Date, siteHo
 
 export function beaconSource(page: string, slug: string): string {
 	const meta = JSON.stringify({ page, slug }).replace(/</g, "\\u003c");
-	return `(function(){var meta=${meta};var key="3aik-news-seen";var returning=0;try{returning=localStorage.getItem(key)==="1"?1:0;if(!returning)localStorage.setItem(key,"1");}catch(e){}var start=Date.now();var maxScroll=0;function depth(){var el=document.documentElement;var h=el.scrollHeight-el.clientHeight;if(h<=0)return 100;return Math.max(0,Math.min(100,Math.round(100*(window.scrollY||el.scrollTop)/h)));}addEventListener("scroll",function(){maxScroll=Math.max(maxScroll,depth());},{passive:true});function send(payload){var body=JSON.stringify(payload);if(navigator.sendBeacon){navigator.sendBeacon("/ai-news/api/collect",new Blob([body],{type:"application/json"}));return;}fetch("/ai-news/api/collect",{method:"POST",body:body,headers:{"content-type":"application/json"},keepalive:true,credentials:"omit"}).catch(function(){});}send({kind:"view",page:meta.page,slug:meta.slug,returning:returning});document.addEventListener("click",function(ev){var node=ev.target;var link=node&&node.closest?node.closest("a"):null;if(!link||!link.href)return;var url;try{url=new URL(link.href);}catch(err){return;}var clickKind="";if(link.closest&&link.closest(".source-line"))clickKind="source";else if(url.origin!==location.origin)clickKind="outbound";else return;send({kind:"click",page:meta.page,slug:meta.slug,href:url.origin+url.pathname,clickKind:clickKind,returning:returning});},true);var sent=false;document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="hidden"||sent)return;sent=true;var w=(screen&&screen.width)||0;var bucket=w<480?"xs":w<768?"sm":w<1200?"md":"lg";send({kind:"engage",page:meta.page,slug:meta.slug,engagedMs:Date.now()-start,scroll:Math.max(maxScroll,depth()),screen:bucket,returning:returning});});})();`;
+	return `(function(){var meta=${meta};var key="3aik-news-seen";var returning=0;try{returning=localStorage.getItem(key)==="1"?1:0;if(!returning)localStorage.setItem(key,"1");}catch(e){}var start=Date.now();var maxScroll=0;function depth(){var el=document.documentElement;var h=el.scrollHeight-el.clientHeight;if(h<=0)return 100;return Math.max(0,Math.min(100,Math.round(100*(window.scrollY||el.scrollTop)/h)));}addEventListener("scroll",function(){maxScroll=Math.max(maxScroll,depth());},{passive:true});function send(payload){var body=JSON.stringify(payload);if(navigator.sendBeacon){navigator.sendBeacon("/ai-news/api/collect",new Blob([body],{type:"application/json"}));return;}fetch("/ai-news/api/collect",{method:"POST",body:body,headers:{"content-type":"application/json"},keepalive:true,credentials:"omit"}).catch(function(){});}function bucket(){var w=(screen&&screen.width)||0;return w<480?"xs":w<768?"sm":w<1200?"md":"lg";}function clip(value){return String(value||"").slice(0,500);}send({kind:"view",page:meta.page,slug:meta.slug,returning:returning,ref:clip(document.referrer),search:clip(location.search),screen:bucket()});document.addEventListener("click",function(ev){var node=ev.target;var link=node&&node.closest?node.closest("a"):null;if(!link||!link.href)return;var url;try{url=new URL(link.href);}catch(err){return;}var clickKind="";if(link.closest&&link.closest(".source-line"))clickKind="source";else if(url.origin!==location.origin)clickKind="outbound";else return;send({kind:"click",page:meta.page,slug:meta.slug,href:url.origin+url.pathname,clickKind:clickKind,returning:returning});},true);var sent=false;document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="hidden"||sent)return;sent=true;send({kind:"engage",page:meta.page,slug:meta.slug,engagedMs:Date.now()-start,scroll:Math.max(maxScroll,depth()),screen:bucket(),returning:returning});});})();`;
 }
 
 export async function handleCollectRequest(

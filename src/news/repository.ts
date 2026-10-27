@@ -4,7 +4,7 @@ import { flushAggregates, queueAggregate, rowsWrittenOf } from "./aggregates";
 import { STATS_DAILY_WRITE_CAP, type StatsBudget } from "./budget";
 import { loadD1StatsReport } from "./d1-stats";
 import { writeNewsEvent } from "./events";
-import { emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, saltToHex, summarizePageViews } from "./pageviews";
+import { continentLabel, emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, saltToHex, summarizePageViews } from "./pageviews";
 import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
 import { isCategory, wordCount } from "./text";
 
@@ -558,7 +558,7 @@ export class D1NewsRepository implements NewsRepository {
 			if (!inserted) return;
 			uniques = inserted.meta?.changes ?? 0;
 		}
-		await this.runCharged(
+		const hour = await this.runCharged(
 			day,
 			`INSERT INTO stats_article_hour (day, hour_utc, slug, views, uniques, engaged_ms, engage_n, scroll_sum)
 			 VALUES (?, ?, ?, 1, ?, 0, 0, 0)
@@ -570,6 +570,30 @@ export class D1NewsRepository implements NewsRepository {
 			event.slug || event.page || "article",
 			uniques,
 		);
+		if (!hour) return;
+		await this.rollupFacets(event, day);
+	}
+
+	/** One counter row per dimension. No IP, user agent, cookie, or visitor hash. */
+	private async rollupFacets(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
+		const slug = event.slug || event.page || "article";
+		for (const [facet, value] of facetPairs(event, slug)) {
+			try {
+				const wrote = await this.runCharged(
+					day,
+					`INSERT INTO stats_facet_daily (day, slug, facet, value, hits) VALUES (?, ?, ?, ?, 1)
+					 ON CONFLICT(day, slug, facet, value) DO UPDATE SET hits = hits + 1`,
+					day,
+					slug,
+					facet,
+					value,
+				);
+				if (!wrote) return;
+			} catch (error) {
+				if (!missingSchema(error)) throw error;
+				return;
+			}
+		}
 	}
 
 	private async rollupEngage(event: ReturnType<typeof normalizeEvent>, day: string): Promise<void> {
@@ -626,6 +650,7 @@ export class D1NewsRepository implements NewsRepository {
 			[`DELETE FROM stats_feed_daily WHERE day < ?`, keepDaily],
 			[`DELETE FROM stats_daily WHERE day < ?`, keepDaily],
 			[`DELETE FROM stats_click_daily WHERE day < ?`, keepDaily],
+			[`DELETE FROM stats_facet_daily WHERE day < ?`, keepDaily],
 			[`DELETE FROM stats_write_budget WHERE day < ?`, keepDaily],
 		] as const;
 		for (const [sql, bind] of statements) {
@@ -675,6 +700,51 @@ function reportBounds(query: StatsQuery, now: Date): { start: string | null; end
 		start: new Date(startMs - length).toISOString(),
 		end: new Date(endMs - 1).toISOString(),
 	};
+}
+
+function referrerGroup(source: PageViewEvent["sourceClass"]): string {
+	if (source === "search" || source === "social") return source;
+	if (source === "other") return "other sites";
+	return "direct";
+}
+
+function facetValue(value: string): string {
+	// Tab is the field separator. Component text is already clipped without control characters.
+	return value.replace(/[\u0000-\u0008\u000a-\u001f\u007f]/g, "").trim().slice(0, 400);
+}
+
+/** Counters for one human view. A view is one session because raw timestamps are not stored. */
+function facetPairs(event: ReturnType<typeof normalizeEvent>, slug: string): Array<[string, string]> {
+	const pairs: Array<[string, string]> = [];
+	const add = (facet: string, value: string) => {
+		const cleaned = facetValue(value);
+		if (!cleaned) return;
+		pairs.push([facet, cleaned]);
+	};
+	add("country", event.country);
+	add("city", event.city);
+	add("region", event.region);
+	add("continent", event.continent ? continentLabel(event.continent) : "");
+	if (event.referrerHost) add("referrer", `${event.referrerHost}\t${event.referrerPath || "/"}`);
+	add("referrer_group", referrerGroup(event.sourceClass));
+	add("source", event.sourceClass);
+	if (event.searchQuery) add("query", `${event.searchEngine}\t${event.searchQuery}`);
+	if (event.utmTerm && event.utmTerm !== event.searchQuery) add("query", `utm\t${event.utmTerm}`);
+	add("device", event.deviceClass);
+	add("browser", event.browser);
+	add("os", event.os);
+	if (event.screen) add("screen", event.screen);
+	if (event.lang) add("language", event.lang);
+	if (event.utmSource || event.utmMedium || event.utmCampaign || event.utmTerm) {
+		add("campaign", [event.utmSource, event.utmMedium, event.utmCampaign, event.utmTerm].join("\t"));
+	}
+	const page = event.page === "article" && slug ? `/ai-news/article/${slug}` : (event.page || slug);
+	add("landing", page);
+	add("exit", page);
+	add("audience", "session");
+	if (event.returning === 0) add("audience", "new");
+	if (event.returning === 1) add("audience", "returning");
+	return pairs;
 }
 
 function asSource(value: string): PageViewEvent["sourceClass"] {

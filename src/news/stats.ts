@@ -241,10 +241,10 @@ function deltaLabel(current: number, previous: number, lowerIsBetter = false): {
 }
 
 function bounceCard(current: number | null, previous: number | null, bounces: number): string {
-	if (current == null || previous == null) {
-		return `<article class="kpi"><h2>Bounce</h2><p class="kpi-value">n/a</p><p class="delta flat">Not computed from rollups</p><p class="kpi-sub">Raw sessions are not stored in D1</p></article>`;
+	if (current == null) {
+		return `<article class="kpi"><h2>Bounce</h2><p class="kpi-value">n/a</p><p class="delta flat">Not computed from rollups</p><p class="kpi-sub">No session counters in this range</p></article>`;
 	}
-	return kpi("Bounce", formatPercent(current), current, previous, `${formatCount(bounces)} single-page sessions`, true);
+	return kpi("Bounce", formatPercent(current), current, previous ?? 0, `${formatCount(bounces)} single-page sessions`, true);
 }
 
 function kpi(label: string, value: string, current: number, previous: number, detail: string, lowerIsBetter = false): string {

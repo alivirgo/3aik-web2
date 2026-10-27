@@ -1,4 +1,4 @@
-import type { ArticleCatalogEntry, NamedCount, NewsStatsReport, PageCount, SeriesPoint, StatsQuery } from "./pageviews";
+import type { ArticleCatalogEntry, DeviceClass, NamedCount, NewsStatsReport, PageCount, SeriesPoint, SourceClass, StatsQuery } from "./pageviews";
 import { emptyStatsReport, STATS_NOTE } from "./pageviews";
 import { authorById } from "./authors";
 import { isCategory, wordCount } from "./text";
@@ -353,5 +353,141 @@ export async function loadD1StatsReport(db: StatsDb, now: Date, query: StatsQuer
 	);
 	report.since = text(earliest[0] ?? {}, "since") || null;
 	report.range = { from: query.from, to: query.to };
+	await applyDimensionRollups(db, report, startDay, endDay, prevStartDay, prevEndDay, slug);
+	await applyHeatmap(db, report, startDay, endDay, slug);
 	return report;
+}
+
+const SOURCE_NAMES = new Set<SourceClass>(["search", "social", "direct", "internal", "other"]);
+const DEVICE_NAMES = new Set<DeviceClass>(["desktop", "mobile", "tablet", "other"]);
+
+function splitValue(value: string, count: number): string[] {
+	const parts = value.split("\t");
+	while (parts.length < count) parts.push("");
+	return parts.slice(0, count);
+}
+
+async function facetTableReady(db: StatsDb): Promise<boolean> {
+	try {
+		await rows(db, "SELECT hits FROM stats_facet_daily LIMIT 1", []);
+		return true;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (/no such (table|column)/i.test(message)) return false;
+		throw error;
+	}
+}
+
+async function facetHits(db: StatsDb, facet: string, startDay: string, endDay: string, slug: string): Promise<Record<string, unknown>[]> {
+	return optionalRows(
+		db,
+		`SELECT value AS name, SUM(hits) AS views FROM stats_facet_daily
+		 WHERE facet = ? AND day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY value ORDER BY views DESC LIMIT 40`,
+		[facet, startDay, endDay, slug, slug],
+	);
+}
+
+async function audienceWindow(db: StatsDb, startDay: string, endDay: string, slug: string): Promise<{ sessions: number; newVisitors: number; returningVisitors: number; bounceRate: number | null }> {
+	const list = await optionalRows(
+		db,
+		`SELECT value AS name, SUM(hits) AS views FROM stats_facet_daily
+		 WHERE facet = 'audience' AND day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY value`,
+		[startDay, endDay, slug, slug],
+	);
+	const counts = new Map(list.map((row) => [text(row, "name"), num(row, "views")]));
+	const sessions = counts.get("session") ?? 0;
+	return {
+		sessions,
+		newVisitors: counts.get("new") ?? 0,
+		returningVisitors: counts.get("returning") ?? 0,
+		bounceRate: sessions > 0 ? 1 : null,
+	};
+}
+
+async function applyDimensionRollups(
+	db: StatsDb,
+	report: NewsStatsReport,
+	startDay: string,
+	endDay: string,
+	prevStartDay: string,
+	prevEndDay: string,
+	slug: string,
+): Promise<void> {
+	if (!await facetTableReady(db)) {
+		report.note = `${report.note} Dimension counters need migration 0008_ai_news_stats_facets.sql before referrers, places, devices, and sessions fill in. The heatmap still uses hourly article rows.`;
+		return;
+	}
+	const facet = (name: string) => facetHits(db, name, startDay, endDay, slug);
+	report.countries = (await facet("country")).flatMap((row) => {
+		const country = text(row, "name");
+		if (!/^[A-Z]{2}$/.test(country) && country !== "T1") return [];
+		return [{ country, views: num(row, "views") }];
+	});
+	report.cities = named(await facet("city"), "name");
+	report.regions = named(await facet("region"), "name");
+	report.continents = named(await facet("continent"), "name");
+	report.referrers = (await facet("referrer")).flatMap((row) => {
+		const [host, path] = splitValue(text(row, "name"), 2);
+		if (!host) return [];
+		return [{ host, path: path || "/", views: num(row, "views") }];
+	});
+	report.referrerGroups = named(await facet("referrer_group"), "name");
+	report.sources = (await facet("source")).flatMap((row) => {
+		const source = text(row, "name");
+		if (!SOURCE_NAMES.has(source as SourceClass)) return [];
+		return [{ source: source as SourceClass, views: num(row, "views") }];
+	});
+	report.queries = (await facet("query")).flatMap((row) => {
+		const [engine, query] = splitValue(text(row, "name"), 2);
+		if (!query) return [];
+		return [{ engine, query, views: num(row, "views") }];
+	});
+	report.devices = (await facet("device")).flatMap((row) => {
+		const device = text(row, "name");
+		if (!DEVICE_NAMES.has(device as DeviceClass)) return [];
+		return [{ device: device as DeviceClass, views: num(row, "views") }];
+	});
+	report.browsers = named(await facet("browser"), "name");
+	report.operatingSystems = named(await facet("os"), "name");
+	report.screens = named(await facet("screen"), "name");
+	report.languages = named(await facet("language"), "name");
+	report.campaigns = (await facet("campaign")).flatMap((row) => {
+		const [source, medium, campaign, term] = splitValue(text(row, "name"), 4);
+		if (!source && !medium && !campaign && !term) return [];
+		return [{ source, medium, campaign, term, views: num(row, "views") }];
+	});
+	report.landing = named(await facet("landing"), "name");
+	report.exit = named(await facet("exit"), "name");
+	const current = await audienceWindow(db, startDay, endDay, slug);
+	const previous = await audienceWindow(db, prevStartDay, prevEndDay, slug);
+	report.audience.sessions = current.sessions;
+	report.audience.newVisitors = current.newVisitors;
+	report.audience.returningVisitors = current.returningVisitors;
+	report.audience.bounces = current.sessions;
+	report.audience.bounceRate = current.bounceRate;
+	report.comparison.current.bounceRate = current.bounceRate;
+	report.comparison.previous.bounceRate = previous.bounceRate;
+}
+
+async function applyHeatmap(db: StatsDb, report: NewsStatsReport, startDay: string, endDay: string, slug: string): Promise<void> {
+	const heatRows = await optionalRows(
+		db,
+		`SELECT hour_utc AS hour, COALESCE(SUM(views), 0) AS views
+		 FROM stats_article_hour
+		 WHERE day >= ? AND day <= ? AND ${whereSlug()}
+		 GROUP BY hour_utc`,
+		[startDay, endDay, slug, slug],
+	);
+	for (const row of heatRows) {
+		const hour = num(row, "hour");
+		const views = num(row, "views");
+		if (!Number.isInteger(hour) || hour < 0 || hour > 23 || views <= 0) continue;
+		const utcSlot = report.heatmap.utc[hour];
+		const karachi = (hour + 5) % 24;
+		const karachiSlot = report.heatmap.karachi[karachi];
+		if (utcSlot !== undefined) report.heatmap.utc[hour] = views;
+		if (karachiSlot !== undefined) report.heatmap.karachi[karachi] = views;
+	}
 }

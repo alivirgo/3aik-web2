@@ -578,7 +578,7 @@ describe("private stats", () => {
 		});
 		await repo.pruneStatsRetention(new Date("2026-10-26T13:00:00.000Z"));
 		const packed = calls.join("\n");
-		expect(charged).toEqual(Array(10).fill(3));
+		expect(charged).toEqual(Array(11).fill(3));
 		expect(packed).toContain("delete from stats_visitor_day");
 		expect(packed).toContain("delete from stats_day_salt");
 		expect(packed).toContain("delete from stats_article_hour");
@@ -586,6 +586,7 @@ describe("private stats", () => {
 		expect(packed).toContain("delete from stats_miss_daily");
 		expect(packed).toContain("delete from stats_feed_daily");
 		expect(packed).toContain("delete from stats_click_daily");
+		expect(packed).toContain("delete from stats_facet_daily");
 		expect(packed).toContain("delete from stats_write_budget");
 		expect(packed).toContain("stats-prune");
 	});
@@ -623,6 +624,7 @@ describe("private stats", () => {
 		await repo.recordPageView(event);
 		expect(points).toBe(1);
 		expect(calls.join("\n")).not.toContain("stats_article_hour");
+		expect(calls.join("\n")).not.toContain("stats_facet_daily");
 		expect(calls.join("\n")).not.toContain("page_views");
 	});
 
@@ -711,21 +713,25 @@ describe("private stats", () => {
 		);
 		event.visitorHash = "ab".repeat(32);
 		await repo.recordPageView(event);
-		expect(charged).toEqual([5, 5]);
+		const viewWrites = charged.length;
+		expect(viewWrites).toBe(10);
+		expect(charged).toEqual(Array(viewWrites).fill(5));
 		expect(calls.join("\n")).toContain("stats_visitor_day");
 		expect(calls.join("\n")).toContain("stats_article_hour");
+		expect(calls.filter((sql) => sql.includes("stats_facet_daily"))).toHaveLength(8);
 		calls.length = 0;
 		open = false;
 		await repo.recordPageView(event);
 		expect(calls).toHaveLength(0);
-		expect(charged).toEqual([5, 5]);
+		expect(charged).toEqual(Array(viewWrites).fill(5));
 		open = true;
 		await repo.pruneStatsRetention(new Date("2026-10-26T13:00:00.000Z"));
 		const deletes = calls.filter((sql) => sql.startsWith("delete from"));
 		expect(deletes.length).toBeGreaterThan(0);
-		expect(charged.slice(2)).toEqual(deletes.map(() => 5));
+		expect(charged.slice(viewWrites)).toEqual(deletes.map(() => 5));
 		expect(calls.some((sql) => sql.includes("stats-prune"))).toBe(true);
-		expect(charged.length).toBe(2 + deletes.length);
+		expect(calls.some((sql) => sql.includes("stats_facet_daily"))).toBe(true);
+		expect(charged.length).toBe(viewWrites + deletes.length);
 	});
 
 	it("clamps a stats range to 400 days and does not present a fake bounce rate", () => {
@@ -788,6 +794,7 @@ describe("private stats", () => {
 		expect(deletes.some((sql) => sql.includes("stats_visitor_day"))).toBe(true);
 		expect(deletes.some((sql) => sql.includes("stats_day_salt"))).toBe(true);
 		expect(deletes.some((sql) => sql.includes("stats_article_hour"))).toBe(false);
+		expect(deletes.some((sql) => sql.includes("stats_facet_daily"))).toBe(false);
 		expect(charged).toEqual([2, 2]);
 	});
 
