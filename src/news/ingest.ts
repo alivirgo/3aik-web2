@@ -21,7 +21,8 @@ import {
 	githubImagePath,
 } from "./github-images";
 import { isBlockedHost, publicHttpsUrl } from "./net";
-import { pingIndexNow } from "./pipeline";
+import { indexNowPublishUrls, pingIndexNow } from "./indexnow";
+import { bearerToken, tokensMatch } from "./tokens";
 import { SLOP_PATTERNS, assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
 import type { ArticleDraft, Category, FaqItem, SourceRef, StoredArticle } from "./types";
@@ -56,33 +57,7 @@ export function ingestApiPath(pathname: string): "post" | "meta" | null {
 	return null;
 }
 
-function equalDigests(left: ArrayBuffer, right: ArrayBuffer): boolean {
-	const subtle = crypto.subtle as SubtleCrypto & {
-		timingSafeEqual?: (a: ArrayBuffer, b: ArrayBuffer) => boolean;
-	};
-	if (typeof subtle.timingSafeEqual === "function") return subtle.timingSafeEqual(left, right);
-	const a = new Uint8Array(left);
-	const b = new Uint8Array(right);
-	if (a.byteLength !== b.byteLength) return false;
-	let diff = 0;
-	for (let index = 0; index < a.byteLength; index += 1) diff |= (a[index] ?? 0) ^ (b[index] ?? 0);
-	return diff === 0;
-}
-
-export async function tokensMatch(provided: string, expected: string): Promise<boolean> {
-	const bounded = provided.length > 512 ? `${provided.slice(0, 512)}\n` : provided;
-	const encoder = new TextEncoder();
-	const [left, right] = await Promise.all([
-		crypto.subtle.digest("SHA-256", encoder.encode(bounded)),
-		crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-	]);
-	return equalDigests(left, right);
-}
-
-function bearerToken(header: string | null): string {
-	const match = /^Bearer\s+(\S+)\s*$/i.exec(header ?? "");
-	return match?.[1] ?? "";
-}
+export { tokensMatch };
 
 function json(body: unknown, status: number, extra?: HeadersInit): Response {
 	const headers = new Headers(extra);
@@ -733,7 +708,14 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		return json({ error: "unavailable" }, 503);
 	}
 	const url = `${origin}/ai-news/article/${slug}`;
-	await pingIndexNow(env, [url], fetchImpl);
+	try {
+		await pingIndexNow(env, indexNowPublishUrls(origin, [url]), fetchImpl);
+	} catch (error) {
+		console.error(JSON.stringify({
+			message: "ai-news indexnow error",
+			error: error instanceof Error ? error.message : String(error),
+		}));
+	}
 	console.log(JSON.stringify({
 		message: "ai-news ingested",
 		slug,

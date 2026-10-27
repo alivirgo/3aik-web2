@@ -27,3 +27,9 @@ description = "Historical stats test bearer fixture"
 condition = "AND"
 paths = ['''(?:^|/)test/news-(?:stats|analytics)\.test\.ts$''']
 regexes = ['''stats-desk-bearer-0123456789abcdef0123456789abcd''']
+
+[[rules.allowlists]]
+description = "Public IndexNow key. The protocol requires this value in git and at /<key>.txt."
+condition = "AND"
+paths = ['''(?:^|/)src/news/config\.ts$''', '''(?:^|/)docs/ai-news\.md$''', '''(?:^|/)\.gitleaks\.toml$''']
+regexes = ['''471520af56fd6ed6f2d37cf56f67f743''']

@@ -2,8 +2,9 @@
 # Copy to `.dev.vars` (gitignored) and fill in only what you need.
 # Never commit real values.
 
-# Optional hex key (8 to 128 letters, numbers, or hyphens) for IndexNow pings.
-# Leave blank to publish without pings. The worker serves https://3aik.com/<key>.txt itself.
+# Optional override of the committed public IndexNow key.
+# Leave blank to serve and ping with the key in src/news/config.ts.
+# A set value must be 8 to 128 letters, numbers, or hyphens.
 INDEXNOW_KEY=
 
 # Fine-grained GitHub token with contents:write on alivirgo/3aik-ai-news-images only.

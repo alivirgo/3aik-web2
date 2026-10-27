@@ -1,5 +1,7 @@
 import { ADSENSE_HOSTS } from "./adsense";
+import { indexNowKey } from "./news/config";
 import { ingestApiPath } from "./news/ingest";
+import { isIndexNowSubmitPath } from "./news/indexnow";
 import { isNewsCollectPath } from "./news/collect";
 import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
 import { isNewsStatsPath, noteStatsDigest } from "./news/stats";
@@ -141,8 +143,9 @@ export default {
 		const url = new URL(request.url);
 
 		try {
-			if (isNewsRequestPath(url.pathname, env.INDEXNOW_KEY)) {
-				if (!ingestApiPath(url.pathname) && !isNewsStatsPath(url.pathname) && !isNewsCollectPath(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
+			if (isNewsRequestPath(url.pathname, indexNowKey(env))) {
+				const postAllowed = ingestApiPath(url.pathname) || isNewsStatsPath(url.pathname) || isNewsCollectPath(url.pathname) || isIndexNowSubmitPath(url.pathname);
+				if (!postAllowed && request.method !== "GET" && request.method !== "HEAD") {
 					return methodNotAllowed(["GET", "HEAD"]);
 				}
 				return handleNewsRequest(request, env, {}, ctx);

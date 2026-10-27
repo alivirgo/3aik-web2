@@ -21,6 +21,7 @@ import {
 	type NewsEnv,
 } from "./config";
 import { fetchStories } from "./feeds";
+import { indexNowPublishUrls, pingIndexNow } from "./indexnow";
 import {
 	GITHUB_DELETE_PACE_MS,
 	GITHUB_IMAGE_MAX_BYTES,
@@ -310,33 +311,7 @@ async function pruneDesk(deps: PublishDependencies, nowIso: string): Promise<boo
 	return paused;
 }
 
-export async function pingIndexNow(env: NewsEnv, urls: string[], fetchImpl: typeof fetch = fetch): Promise<void> {
-	const key = env.INDEXNOW_KEY?.trim();
-	if (!key || !/^[A-Za-z0-9-]{8,128}$/.test(key) || urls.length === 0) return;
-	const origin = siteOrigin(env);
-	const host = new URL(origin).host;
-	try {
-		const response = await fetchImpl("https://api.indexnow.org/indexnow", {
-			method: "POST",
-			headers: { "content-type": "application/json; charset=utf-8" },
-			body: JSON.stringify({
-				host,
-				key,
-				keyLocation: `${origin}/${key}.txt`,
-				urlList: urls.slice(0, 100),
-			}),
-		});
-		if (!response.ok) {
-			console.error(JSON.stringify({ message: "ai-news indexnow failed", status: response.status }));
-		}
-		await response.body?.cancel();
-	} catch (error) {
-		console.error(JSON.stringify({
-			message: "ai-news indexnow error",
-			error: error instanceof Error ? error.message : String(error),
-		}));
-	}
-}
+export { pingIndexNow };
 
 export async function runPublishCycle(deps: PublishDependencies): Promise<PublishReport> {
 	if (!publishingEnabled(deps.env)) {
@@ -465,9 +440,16 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 		}
 
 		if (published.length) {
-			const urls = published.map((slug) => `${origin}/ai-news/article/${slug}`);
-			if (deps.ping) await deps.ping(urls);
-			else await pingIndexNow(deps.env, urls);
+			const urls = indexNowPublishUrls(origin, published.map((slug) => `${origin}/ai-news/article/${slug}`));
+			try {
+				if (deps.ping) await deps.ping(urls);
+				else await pingIndexNow(deps.env, urls, deps.fetchImpl ?? fetch);
+			} catch (error) {
+				console.error(JSON.stringify({
+					message: "ai-news indexnow error",
+					error: error instanceof Error ? error.message : String(error),
+				}));
+			}
 		}
 		return { published, skipped: published.length ? "published" : "none", failures };
 	} catch (error) {
