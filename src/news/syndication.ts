@@ -1,36 +1,61 @@
-import { AUTHORS, authorById } from "./authors";
+import { AUTHORS } from "./authors";
 import { ASSIST_LINE, CATEGORY_LABEL, SITE_NAME } from "./config";
+import { mediaContentUrl } from "./lead";
 import type { Category, SitemapEntry, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
-import { escapeMarkdown, rfc822, stripEditorialDashes, xmlEscape } from "./text";
+import { escapeHtml, escapeMarkdown, rfc822, sentenceCaseHeadline, stripEditorialDashes, xmlEscape } from "./text";
 
 function articleUrl(origin: string, slug: string): string {
 	return `${origin}/ai-news/article/${slug}`;
 }
 
+function feedTitle(article: StoredArticle): string {
+	return sentenceCaseHeadline(stripEditorialDashes(article.title));
+}
+
+function encodedHtml(article: StoredArticle): string {
+	const points = article.keyPoints.map((point) => `<li>${escapeHtml(stripEditorialDashes(point))}</li>`).join("");
+	const paragraphs = article.bodyText
+		.split(/\n{2,}/)
+		.map((paragraph) => paragraph.trim())
+		.filter(Boolean)
+		.map((paragraph) => `<p>${escapeHtml(stripEditorialDashes(paragraph))}</p>`)
+		.join("");
+	const summary = article.keyPoints.length ? `<p><strong>TL;DR</strong></p><ul>${points}</ul>` : "";
+	return `${summary}${paragraphs}`.replace(/]]>/g, "]]]]><![CDATA[>");
+}
+
+function mediaTag(origin: string, article: StoredArticle): string {
+	const url = mediaContentUrl(origin, article.imageKey, article.imageCommit);
+	if (!url) return "";
+	return `<media:content url="${xmlEscape(url)}" medium="image" type="image/webp" width="1600" height="900"/>`;
+}
+
 export function renderRss(origin: string, articles: StoredArticle[], category?: Category): string {
 	const link = category ? `${origin}/ai-news/${category}` : `${origin}/ai-news`;
+	const self = `${link}/feed.xml`;
 	const title = category ? `${SITE_NAME}: ${CATEGORY_LABEL[category]}` : SITE_NAME;
 	const items = articles.map((article) => {
-		const author = authorById(article.authorId);
-		const name = author?.name ?? "Desk";
 		const url = articleUrl(origin, article.slug);
-		const description = article.description;
+		const media = mediaTag(origin, article);
 		return `<item>
-<title>${xmlEscape(stripEditorialDashes(article.title))}</title>
+<title>${xmlEscape(feedTitle(article))}</title>
 <link>${xmlEscape(url)}</link>
 <guid isPermaLink="true">${xmlEscape(url)}</guid>
 <pubDate>${xmlEscape(rfc822(article.publishedAt))}</pubDate>
 <category>${xmlEscape(CATEGORY_LABEL[article.category])}</category>
-<dc:creator>${xmlEscape(name)}</dc:creator>
-<description>${xmlEscape(description)}</description>
+<dc:creator>3aik News Desk</dc:creator>
+<description>${xmlEscape(article.description)}</description>
+${media}
+<content:encoded><![CDATA[${encodedHtml(article)}]]></content:encoded>
 </item>`;
 	}).join("\n");
 	return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/">
 <channel>
 <title>${xmlEscape(title)}</title>
 <link>${xmlEscape(link)}</link>
+<atom:link href="${xmlEscape(self)}" rel="self" type="application/rss+xml"/>
 <description>${xmlEscape(ASSIST_LINE)}</description>
 <language>en</language>
 <lastBuildDate>${xmlEscape(new Date().toUTCString())}</lastBuildDate>
@@ -41,28 +66,31 @@ ${items}
 
 export function renderAtom(origin: string, articles: StoredArticle[], category?: Category): string {
 	const link = category ? `${origin}/ai-news/${category}` : `${origin}/ai-news`;
+	const self = `${link}/atom.xml`;
 	const title = category ? `${SITE_NAME}: ${CATEGORY_LABEL[category]}` : SITE_NAME;
 	const updated = articles[0]?.publishedAt ?? new Date().toISOString();
 	const entries = articles.map((article) => {
-		const author = authorById(article.authorId);
-		const name = author?.name ?? "Desk";
 		const url = articleUrl(origin, article.slug);
-		const summary = article.description;
+		const media = mediaTag(origin, article);
+		const body = encodedHtml(article);
 		return `<entry>
-<title>${xmlEscape(stripEditorialDashes(article.title))}</title>
+<title>${xmlEscape(feedTitle(article))}</title>
 <link href="${xmlEscape(url)}" rel="alternate" type="text/html"/>
 <id>${xmlEscape(url)}</id>
 <updated>${xmlEscape(article.publishedAt)}</updated>
 <published>${xmlEscape(article.publishedAt)}</published>
-<author><name>${xmlEscape(name)}</name></author>
-<summary>${xmlEscape(summary)}</summary>
+<author><name>3aik News Desk</name></author>
+<summary>${xmlEscape(article.description)}</summary>
+${media}
+<content type="html"><![CDATA[${body}]]></content>
+<content:encoded><![CDATA[${body}]]></content:encoded>
 </entry>`;
 	}).join("\n");
 	return `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:media="http://search.yahoo.com/mrss/">
 <title>${xmlEscape(title)}</title>
 <link href="${xmlEscape(link)}" rel="alternate" type="text/html"/>
-<link href="${xmlEscape(`${link}${category ? "" : ""}/atom.xml`)}" rel="self"/>
+<link href="${xmlEscape(self)}" rel="self" type="application/atom+xml"/>
 <id>${xmlEscape(link)}</id>
 <updated>${xmlEscape(updated)}</updated>
 <subtitle>${xmlEscape(ASSIST_LINE)}</subtitle>
@@ -102,13 +130,15 @@ ${articleEntries}
 
 export function renderSitemapIndex(origin: string, pages: number): string {
 	const count = Math.max(1, Math.min(pages, 50));
-	const entries = Array.from({ length: count }, (_, index) => {
+	const pageEntries = Array.from({ length: count }, (_, index) => {
 		const loc = `${origin}/ai-news/sitemap/${index + 1}.xml`;
 		return `<sitemap><loc>${xmlEscape(loc)}</loc></sitemap>`;
 	}).join("\n");
+	const news = `<sitemap><loc>${xmlEscape(`${origin}/ai-news/news-sitemap.xml`)}</loc></sitemap>`;
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${entries}
+${pageEntries}
+${news}
 </sitemapindex>`;
 }
 
@@ -131,7 +161,7 @@ export function renderNewsSitemap(
 <news:news>
 <news:publication><news:name>${xmlEscape(SITE_NAME)}</news:name><news:language>en</news:language></news:publication>
 <news:publication_date>${xmlEscape(article.publishedAt)}</news:publication_date>
-<news:title>${xmlEscape(stripEditorialDashes(article.title))}</news:title>
+<news:title>${xmlEscape(sentenceCaseHeadline(stripEditorialDashes(article.title)))}</news:title>
 </news:news>
 </url>`;
 	}).join("\n");

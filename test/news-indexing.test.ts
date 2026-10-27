@@ -137,14 +137,18 @@ describe("news indexing", () => {
 		expect(archive.html.split(ASSIST_LINE)).toHaveLength(2);
 
 		const sitemap = await html("/ai-news/sitemap.xml", repo);
+		expect(sitemap.html).toContain("https://3aik.com/ai-news/sitemap/1.xml");
+		expect(sitemap.html).toContain("https://3aik.com/ai-news/news-sitemap.xml");
+		expect(sitemap.html).not.toContain("https://3aik.com/ai-news/article/");
+		const page = await html("/ai-news/sitemap/1.xml", repo);
 		for (const article of repo.articles) {
-			expect(sitemap.html).toContain(`https://3aik.com/ai-news/article/${article.slug}`);
-			expect(sitemap.html).toContain(`<lastmod>${article.updatedAt}</lastmod>`);
+			expect(page.html).toContain(`https://3aik.com/ai-news/article/${article.slug}`);
+			expect(page.html).toContain(`<lastmod>${article.updatedAt}</lastmod>`);
 		}
-		expect(sitemap.html).toContain("https://3aik.com/ai-news?page=2");
-		expect(sitemap.html).toContain("https://3aik.com/ai-news/archive");
-		expect(sitemap.html).toContain("https://3aik.com/ai-news/editorial-policy");
-		expect(sitemap.html).not.toContain("https://3aik.com/ai-news?page=1");
+		expect(page.html).toContain("https://3aik.com/ai-news?page=2");
+		expect(page.html).toContain("https://3aik.com/ai-news/archive");
+		expect(page.html).toContain("https://3aik.com/ai-news/editorial-policy");
+		expect(page.html).not.toContain("https://3aik.com/ai-news?page=1");
 
 		const fresh = story(40);
 		fresh.publishedAt = new Date().toISOString();
@@ -199,11 +203,11 @@ describe("news indexing", () => {
 		const page = await html("/ai-news/article/story-00", repo);
 		expect(page.html).toContain('property="og:image" content="https://3aik.com/og.png"');
 		expect(page.html).toContain('name="twitter:card" content="summary_large_image"');
-		expect(page.html).toContain('property="og:title" content="Story 00 stays inside the cited note | 3aik News"');
+		expect(page.html).toContain('property="og:title" content="Story 00 stays inside the cited note"');
 		expect(page.html).toContain('property="og:description" content="Description for story 00, kept inside the cited report."');
-		expect(page.html).toContain('name="twitter:title" content="Story 00 stays inside the cited note | 3aik News"');
+		expect(page.html).toContain('name="twitter:title" content="Story 00 stays inside the cited note"');
 		expect(page.html).toContain('name="twitter:description" content="Description for story 00, kept inside the cited report."');
-		expect(page.html).toContain('"publisher":{"@type":"Organization","name":"3aik","url":"https://3aik.com/ai-news/about"');
+		expect(page.html).toContain('"publisher":{"@type":"NewsMediaOrganization","name":"3aik News"');
 		expect(page.html).toContain('href="https://3aik.com/ai-news/author/mira-ellison"');
 		expect(page.html.match(/<p class="assist">/g)).toHaveLength(1);
 		expect(page.html.split(ASSIST_LINE)).toHaveLength(4);

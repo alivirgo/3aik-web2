@@ -73,6 +73,16 @@ export function slopHits(text: string): string[] {
 	return SLOP_PATTERNS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.id);
 }
 
+/** Clickbait lint. Runs on the raw headline, before sentence case. */
+export function clickbaitReason(title: string): "clickbait" | null {
+	const trimmed = title.trim();
+	if (trimmed.includes("!")) return "clickbait";
+	const letters = trimmed.replace(/[^A-Za-z]/g, "");
+	if (letters.length >= 4 && !/[a-z]/.test(letters)) return "clickbait";
+	if (/\b(you won'?t believe|shocking)\b/i.test(trimmed)) return "clickbait";
+	return null;
+}
+
 const CONNECTORS = new Set("a an and or of in on for to with from by at as nor but per via vs".split(" "));
 const LIST_LABELS = new Set(["brand", "brands", "label", "labels"]);
 const VERBS = new Set(
@@ -207,6 +217,7 @@ export function assessDraft(input: QualityInput): { ok: true } | { ok: false; re
 	if (draft.paragraphs.length < 5 || draft.paragraphs.length > 10) reasons.push("paragraph_count");
 	if (draft.title.trim().length < 20 || draft.title.trim().length > 110) reasons.push("title_length");
 	if (draft.title === draft.title.toUpperCase()) reasons.push("title_case");
+	if (clickbaitReason(draft.title)) reasons.push("clickbait");
 	if (MISLEADING_TITLE.test(draft.title)) reasons.push("misleading_headline");
 	if (draft.description.length < 90 || draft.description.length > 170) reasons.push("description_length");
 	if (normalizeForMatch(draft.description) === normalizeForMatch(draft.title)) reasons.push("description_repeats_title");

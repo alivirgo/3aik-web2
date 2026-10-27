@@ -6,7 +6,13 @@ import { tokensMatch } from "../src/news/ingest";
 import { D1NewsRepository, MemoryNewsRepository } from "../src/news/repository";
 import { pageViewFromRequest } from "../src/news/pageviews";
 import type { StoredArticle } from "../src/news/types";
+import { solidPng } from "../src/news/image-crop";
 import { TINY_JPEG, TINY_PNG, slugify } from "../src/news/text";
+
+const WIDE_PNG = solidPng(1400, 800);
+function wideBase64(): string {
+	return Buffer.from(WIDE_PNG).toString("base64");
+}
 
 const TOKEN = "ab".repeat(32);
 const NOW = new Date("2026-10-23T12:07:00.000Z");
@@ -233,7 +239,7 @@ describe("ingest publish", () => {
 	it("stores a jpeg sent as a data URL and returns the public article url", async () => {
 		const state = desk({ page: "<p>Routine maintenance was mentioned on the status page.</p>" });
 		const payload = articleFields({
-			image: { data: `data:image/jpeg;base64,${jpegBase64()}`, alt: ALT },
+			image: { data: `data:image/png;base64,${wideBase64()}`, alt: ALT },
 		});
 		const { response } = await send(post(payload), state);
 		expect(response.status).toBe(201);
@@ -246,13 +252,13 @@ describe("ingest publish", () => {
 		expect(article?.category).toBe("ai");
 		expect(article?.imageAlt).toBe(ALT);
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
-		expect(article?.imageType).toBe("image/jpeg");
-		expect(article?.imageKey).toMatch(new RegExp(`^images/2026/10/${slug}-[a-f0-9]{8}\\.jpg$`));
+		expect(article?.imageType).toBe("image/webp");
+		expect(article?.imageKey).toMatch(new RegExp(`^images/2026/10/${slug}-[a-f0-9]{8}-16x9\\.webp$`));
 		expect(article?.sources[0]?.url).toBe("https://example.com/story");
-		expect(state.githubPuts).toHaveLength(1);
+		expect(state.githubPuts).toHaveLength(5);
 		expect(state.githubPuts[0]?.authorization).toBe("Bearer ghp-test");
-		expect(state.githubPuts[0]?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
-		expect(JSON.parse(state.githubPuts[0]?.body ?? "{}").content).toBe(jpegBase64());
+		expect(state.githubPuts.at(-1)?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
+		expect(JSON.parse(state.githubPuts.at(-1)?.body ?? "{}").content).not.toBe(wideBase64());
 		const stats = await state.repo.stats();
 		expect(stats.authors["adele-okonkwo"]?.count).toBe(1);
 		expect(stats.categories.ai?.count).toBe(1);
@@ -273,7 +279,7 @@ describe("ingest publish", () => {
 		const payload = articleFields({
 			category: "tech",
 			author_slug: "caleb-ortiz",
-			image: jpegBase64(),
+			image: wideBase64(),
 			image_alt: ALT,
 			sources: [{
 				url: "https://example.com/gadget",
@@ -286,24 +292,24 @@ describe("ingest publish", () => {
 		expect(response.status).toBe(201);
 		expect(state.repo.articles[0]?.category).toBe("technology");
 		expect(state.repo.articles[0]?.authorId).toBe("caleb-ortiz");
-		expect(state.repo.articles[0]?.imageKey.endsWith(".jpg")).toBe(true);
-		expect(JSON.parse(state.githubPuts[0]?.body ?? "{}").content).toBe(jpegBase64());
+		expect(state.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
+		expect(state.githubPuts).toHaveLength(5);
 	});
 
 	it("stores a png and publishes without a picture when GitHub fails or the image token is missing", async () => {
 		const png = desk();
 		const pngBody = articleFields({
-			image: { data: Buffer.from(TINY_PNG).toString("base64"), alt: ALT },
+			image: { data: wideBase64(), alt: ALT },
 			sources: [{ url: "https://example.com/png", publisher: "The Verge", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
 		});
 		const pngResponse = await send(post(pngBody), png);
 		expect(pngResponse.response.status).toBe(201);
-		expect(png.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
-		expect(png.githubPuts).toHaveLength(1);
+		expect(png.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
+		expect(png.githubPuts).toHaveLength(5);
 
 		const failed = desk({ githubStatus: 500 });
 		const failedResponse = await send(post(articleFields({
-			image: { data: jpegBase64(), alt: ALT },
+			image: { data: wideBase64(), alt: ALT },
 			sources: [{ url: "https://example.com/github-down", publisher: "The Verge", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
 		})), failed);
 		expect(failedResponse.response.status).toBe(201);
@@ -312,7 +318,7 @@ describe("ingest publish", () => {
 		const bare = desk();
 		bare.env.GITHUB_IMAGES_TOKEN = "";
 		const bareResponse = await send(post(articleFields({
-			image: { data: jpegBase64(), alt: ALT },
+			image: { data: wideBase64(), alt: ALT },
 			sources: [{ url: "https://example.com/no-token", publisher: "The Verge", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
 		})), bare);
 		expect(bareResponse.response.status).toBe(201);
@@ -448,13 +454,13 @@ describe("publisher images", () => {
 		const state = desk();
 		const imageUrl = "https://images.example.net/photo.jpg";
 		const { fetchImpl, seen } = imageFetch({
-			[imageUrl]: new Response(TINY_JPEG, { status: 200, headers: { "content-type": "image/jpeg" } }),
+			[imageUrl]: new Response(WIDE_PNG, { status: 200, headers: { "content-type": "image/png" } }),
 		});
 		state.fetchImpl = fetchImpl;
 		const { response } = await send(post(fields({ image_source_url: imageUrl, image_credit: "Image: WWD" })), state);
 		expect(response.status).toBe(201);
 		const article = state.repo.articles[0];
-		expect(article?.imageKey.endsWith(".jpg")).toBe(true);
+		expect(article?.imageKey.endsWith("-16x9.webp")).toBe(true);
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
 		expect(article?.imageCredit).toBe("Image: WWD");
 		expect(article?.imageSourceUrl).toBe(imageUrl);
@@ -477,11 +483,11 @@ describe("publisher images", () => {
 		const pngUrl = "https://images.example.net/photo.png";
 		const pngState = desk();
 		pngState.fetchImpl = imageFetch({
-			[pngUrl]: new Response(TINY_PNG, { status: 200, headers: { "content-type": "image/png" } }),
+			[pngUrl]: new Response(WIDE_PNG, { status: 200, headers: { "content-type": "image/png" } }),
 		}).fetchImpl;
 		const png = await send(post(fields({ image_source_url: pngUrl, image_credit: "WWD" })), pngState);
 		expect(png.response.status).toBe(201);
-		expect(pngState.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
+		expect(pngState.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
 		expect(pngState.repo.articles[0]?.imageCredit).toBe("Image: WWD");
 		expect(pngState.repo.articles[0]?.imageSourceUrl).toBe(pngUrl);
 		const page = await handleNewsRequest(
@@ -563,14 +569,14 @@ describe("publisher images", () => {
 		const state = desk();
 		const imageUrl = "https://images.example.net/chosen.jpg";
 		state.fetchImpl = imageFetch({
-			[imageUrl]: new Response(TINY_JPEG, { status: 200, headers: { "content-type": "image/jpeg" } }),
+			[imageUrl]: new Response(WIDE_PNG, { status: 200, headers: { "content-type": "image/png" } }),
 		}).fetchImpl;
 		const { response } = await send(post(fields({
 			image_source_url: imageUrl,
 			image: { data: Buffer.from(TINY_PNG).toString("base64"), alt: ALT },
 		})), state);
 		expect(response.status).toBe(201);
-		expect(state.repo.articles[0]?.imageKey.endsWith(".jpg")).toBe(true);
+		expect(state.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
 
 		const short = desk();
 		const rejected = await send(post(fields({ image_source_url: imageUrl, image_alt: "too short" })), short);

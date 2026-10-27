@@ -60,7 +60,7 @@ function rss() {
 function harness(options: { publishing?: string; rate?: string; indexNow?: string; token?: string; githubStatus?: number; generator?: string; omitGenerator?: boolean } = {}) {
 	const repo = new MemoryNewsRepository();
 	const writeDraft = vi.fn(async () => ({ text: JSON.stringify(draft()), model: "dry-run" }));
-	const paint = vi.fn(async () => ({ bytes: TINY_JPEG, contentType: "image/jpeg", model: "dry-run" }));
+	const paint = vi.fn(async () => ({ bytes: TINY_PNG, contentType: "image/png", model: "dry-run" }));
 	const ping = vi.fn(async () => undefined);
 	const githubCalls: Array<{ url: string; method: string; authorization: string; body: string }> = [];
 	const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -131,14 +131,15 @@ describe("publish cycle", () => {
 		expect(article?.sources[0]?.url).toBe("https://example.com/fresh-bulletin");
 		expect(article?.bodyText).toContain("The Verge");
 		expect(article?.bodyHtml).toBe("");
-		expect(article?.imageKey).toBe(`images/2026/10/${article?.slug}-${article?.id.slice(0, 8)}.jpg`);
+		expect(article?.imageKey).toBe(`images/2026/10/${article?.slug}-${article?.id.slice(0, 8)}-16x9.webp`);
+		expect(article?.imageType).toBe("image/webp");
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
-		expect(githubCalls).toHaveLength(1);
-		expect(githubCalls[0]?.method).toBe("PUT");
-		expect(githubCalls[0]?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
+		expect(githubCalls.filter((call) => call.method === "PUT")).toHaveLength(5);
+		expect(githubCalls.at(-1)?.method).toBe("PUT");
+		expect(githubCalls.at(-1)?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
 		expect(githubCalls[0]?.authorization).toBe("Bearer ghp-test");
 		expect(githubCalls[0]?.url).not.toContain("ghp-test");
-		expect(JSON.parse(githubCalls[0]?.body ?? "{}").content).toBe(Buffer.from(TINY_JPEG).toString("base64"));
+		expect(JSON.parse(githubCalls.at(-1)?.body ?? "{}").content).not.toBe(Buffer.from(TINY_PNG).toString("base64"));
 	});
 
 	it("publishes with no image when the token is missing, the painter throws, or GitHub rejects the commit", async () => {
@@ -165,7 +166,7 @@ describe("publish cycle", () => {
 		const png = harness({ token: "ghp-test" });
 		png.paint.mockResolvedValue({ bytes: TINY_PNG, contentType: "image/png", model: "dry-run" });
 		const pngReport = await runPublishCycle(png.deps);
-		expect((await png.repo.getBySlug(pngReport.published[0] ?? ""))?.imageKey.endsWith(".png")).toBe(true);
+		expect((await png.repo.getBySlug(pngReport.published[0] ?? ""))?.imageKey.endsWith("-16x9.webp")).toBe(true);
 		expect(png.githubCalls.some((call) => call.method === "PUT")).toBe(true);
 	});
 
@@ -432,7 +433,7 @@ describe("publish cycle", () => {
 		const secondArticle = repo.articles[0];
 		expect(second.published).toEqual([firstArticle?.slug]);
 		expect(secondArticle?.slug).toBe(firstArticle?.slug);
-		expect(secondArticle?.imageKey).toBe(`images/2026/10/${secondArticle?.slug}-${secondArticle?.id.slice(0, 8)}.jpg`);
+		expect(secondArticle?.imageKey).toBe(`images/2026/10/${secondArticle?.slug}-${secondArticle?.id.slice(0, 8)}-16x9.webp`);
 		expect(secondArticle?.imageKey).not.toBe(firstArticle?.imageKey);
 	});
 

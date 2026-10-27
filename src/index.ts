@@ -1,4 +1,5 @@
 import { ADSENSE_HOSTS } from "./adsense";
+import { AI_NEWS_CSS_PATH } from "./news/css-asset";
 import { ingestApiPath } from "./news/ingest";
 import { isNewsCollectPath } from "./news/collect";
 import { handleNewsRequest, isNewsRequestPath, publishScheduled } from "./news/routes";
@@ -210,6 +211,19 @@ export default {
 
 			if (url.pathname.startsWith("/api/")) {
 				return problem(404, "not_found", "That API route does not exist.");
+			}
+
+			if (url.pathname === AI_NEWS_CSS_PATH && (request.method === "GET" || request.method === "HEAD")) {
+				const assetUrl = new URL("/ai-news.css", request.url);
+				const asset = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method }));
+				const headers = new Headers(asset.headers);
+				headers.set("content-type", "text/css; charset=utf-8");
+				headers.set("cache-control", "public, max-age=31536000, immutable");
+				return withSecurityHeaders(new Response(request.method === "HEAD" ? null : asset.body, {
+					status: asset.status,
+					statusText: asset.statusText,
+					headers,
+				}));
 			}
 
 			const assetResponse = await env.ASSETS.fetch(request);

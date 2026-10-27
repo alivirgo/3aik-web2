@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ADSENSE_SCRIPT } from "../src/adsense";
 import worker from "../src/index";
 import { ACCURACY_DISCLAIMER, ASSIST_LINE } from "../src/news/config";
+import { AI_NEWS_CSS_PATH } from "../src/news/css-asset";
 import { authorInitials } from "../src/news/html";
 import { handleNewsRequest, newsCacheRequest } from "../src/news/routes";
 import { scriptSourceHash } from "../src/news/responses";
@@ -59,7 +60,10 @@ function desk() {
 describe("news pages", () => {
 	it("serves the section, about, and disclaimer without a database", async () => {
 		const env = { AI_NEWS_SITE_ORIGIN: "https://3aik.com" };
-		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news/"), env, { repo: null });
+		const slashed = await handleNewsRequest(new Request("https://3aik.test/ai-news/"), env, { repo: null });
+		expect(slashed.status).toBe(301);
+		expect(slashed.headers.get("location")).toBe("https://3aik.com/ai-news");
+		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news"), env, { repo: null });
 		const html = await index.text();
 		expect(index.status).toBe(200);
 		expect(html.match(/<p class="assist">/g)).toHaveLength(1);
@@ -67,7 +71,9 @@ describe("news pages", () => {
 		expect(html).not.toContain(ACCURACY_DISCLAIMER);
 		expect(html).not.toContain("AI-generated");
 		expect(html).not.toContain("editorial persona");
-		expect(html).toContain('href="/ai-news.css"');
+		expect(html).toContain(`href="${AI_NEWS_CSS_PATH}"`);
+		expect(html).toContain('<h1 class="visually-hidden">3aik News</h1>');
+		expect(html).toContain('property="og:image" content="https://3aik.com/ai-news-og.png"');
 		expect(withoutAdLoader(html)).not.toMatch(/<script[^>]+src=/i);
 
 		const about = await handleNewsRequest(new Request("https://3aik.test/ai-news/about"), env, { repo: null });
@@ -101,7 +107,7 @@ describe("news pages", () => {
 		expect(html).toContain('"@type":"NewsArticle"');
 		expect(html).toContain(`"datePublished":"${publishedAt}"`);
 		expect(html).toContain('"@type":"BreadcrumbList"');
-		expect(html).toContain('"@type":"FAQPage"');
+		expect(html).not.toContain('"@type":"FAQPage"');
 		expect(html).toContain("TL;DR");
 		expect(html).toContain("https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model");
 		expect(html).toContain("Source: <a href=\"https://www.theverge.com/ai-artificial-intelligence/1017151/canva-craft-in-house-ai-model\" rel=\"noopener noreferrer\">The Verge</a>");
@@ -114,7 +120,8 @@ describe("news pages", () => {
 		expect(html).not.toContain("AI-generated");
 		expect(html).toContain('"@type":"Organization"');
 		expect(html).not.toContain('"@type":"Person"');
-		expect(html).toContain('"description":"Not a real person."');
+		expect(html).not.toContain('"description":"Not a real person."');
+		expect(html).toContain('"name":"3aik News Desk"');
 		expect(html).toContain('"creditText":"Written with AI assistance from cited reporting."');
 		expect(html).toContain('href="https://3aik.com/ai-news/about">AI persona</a>');
 		expect(html).toContain('"url":"https://3aik.com/ai-news/about"');
@@ -131,7 +138,7 @@ describe("news pages", () => {
 		if (beacon?.[1]) expected.push(await scriptSourceHash(beacon[1]));
 		expect(hashes).toEqual(expected);
 		expect(csp).not.toContain(await scriptSourceHash("alert(1)"));
-		expect(html).toContain('"name":"Mira Ellison"');
+		expect(html).toContain(">Mira Ellison</a>");
 		expect(html).toContain(`"dateModified":"${publishedAt}"`);
 		expect(html).toContain("1 min read");
 		expect(html).toContain("The Verge reported a narrow product note.");
@@ -186,7 +193,10 @@ describe("news pages", () => {
 		expect(await category.text()).toContain("short-bulletin");
 
 		const sitemap = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap.xml"), env, { repo });
-		expect(await sitemap.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
+		const sitemapXml = await sitemap.text();
+		expect(sitemapXml).toContain("https://3aik.com/ai-news/sitemap/1.xml");
+		expect(sitemapXml).toContain("https://3aik.com/ai-news/news-sitemap.xml");
+		expect(sitemapXml).not.toContain("https://3aik.com/ai-news/article/short-bulletin");
 		const sitemapPage = await handleNewsRequest(new Request("https://3aik.test/ai-news/sitemap/1.xml"), env, { repo });
 		expect(await sitemapPage.text()).toContain("https://3aik.com/ai-news/article/short-bulletin");
 		const fresh = article();
@@ -421,7 +431,9 @@ describe("magazine pages", () => {
 		expect(css).toContain("width: min(72ch, 100%)");
 		expect(css).toContain("line-height: 1.75");
 		expect(css).toContain("aspect-ratio: 16 / 9");
-		expect(css).toContain("aspect-ratio: 3 / 2");
+		expect(css).toContain("min-height: 280px");
+		expect(css).toContain(".visually-hidden");
+		expect(css).not.toContain("aspect-ratio: 3 / 2");
 		expect(css).toContain("text-transform: uppercase");
 		expect(css).toContain(":focus-visible");
 		expect(css).not.toContain("box-shadow:");
@@ -482,7 +494,8 @@ describe("crawler files", () => {
 		}
 		const sitemap = readFileSync(resolve(root, "public/sitemap.xml"), "utf8");
 		expect(sitemap).toContain("https://3aik.com/</loc>");
-		expect(sitemap).toContain("https://3aik.com/ai-news/</loc>");
+		expect(sitemap).toContain("https://3aik.com/ai-news</loc>");
+		expect(sitemap).not.toContain("https://3aik.com/ai-news/</loc>");
 		const serviceWorker = readFileSync(resolve(root, "public/sw.js"), "utf8");
 		expect(serviceWorker).toContain('url.pathname.startsWith("/api/")');
 		expect(serviceWorker).toContain('url.pathname.startsWith("/privacy/")');

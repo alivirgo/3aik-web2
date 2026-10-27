@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS stats_facet_daily (
 
 Until that table exists, a beacon still updates `stats_article_hour` and `stats_visitor_day`. The facet insert is skipped, and the stats note says the migration is missing. Views that happened before the migration do not gain a country or referrer later. The address was never stored.
 
-Illustrations are PNG, WebP, or JPEG files at or under 1 MB, committed to `images/YYYY/MM/<slug>-<8-char-id>.webp` (JPEG uses `.jpg`, PNG uses `.png`) through the GitHub Contents API. The suffix is the first 8 characters of the article id, so a leftover file from a failed delete does not block a later article that reuses the title. The desk stores `commit.sha` from the create response in `image_commit`. It does not store the blob sha, and it does not pin `@main`.
+New lead pictures are five WebP crops from one source: `images/YYYY/MM/<slug>-<8-char-id>-16x9.webp` at 1600x900, plus `-16x9-1200.webp`, `-16x9-800.webp`, `-4x3.webp` (1600x1200), and `-1x1.webp` (1200x1200). The desk stores the 16:9 path and the last commit SHA, which contains the earlier files. A publisher or upload lead under 1200px wide is not stored. The desk tries a larger source URL first, then a generated illustration. The visible credit stays only when the stored lead is the publisher picture. Older `.jpg` and `.png` keys stay until backfill. The suffix is the first 8 characters of the article id, so a leftover file from a failed delete does not block a later article that reuses the title. The desk does not store the blob sha, and it does not pin `@main`.
 
 ## Rate, schedule, and pause
 
@@ -121,7 +121,7 @@ DELETE FROM articles WHERE published_at < '2026-01-01T00:00:00.000Z';
 DELETE FROM source_rejections WHERE expires_at <= datetime('now');
 ```
 
-Delete the matching `images/YYYY/MM/<slug>-<8-char-id>.webp`, `.jpg`, or `.png` file from `alivirgo/3aik-ai-news-images` as well. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not PNG, JPEG, or WebP, are not uploaded. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
+Delete the matching lead files from `alivirgo/3aik-ai-news-images` as well. A finished Discover set is five WebP files. An older article is still one `.webp`, `.jpg`, or `.png`. The Contents API call is skipped when `GITHUB_IMAGES_TOKEN` is unset. Files over 1 MB, and anything that is not PNG, JPEG, or WebP, are not uploaded. Lossy WebP (the `VP8 ` chunk), lossless `VP8L`, and extended `VP8X` are all accepted.
 
 A 422 from GitHub means the path already exists. If those bytes match the file being uploaded, the desk reuses the commit SHA from the commits list and does not write again. If the bytes differ, the existing file is left alone and the article is published with no image. A network error during that lookup is caught inside the upload, so the draft is kept and the article still publishes with no image.
 
@@ -202,12 +202,13 @@ Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technol
 | `/ai-news/disclaimer` | Accuracy disclaimer |
 | `/ai-news/feed.xml`, `/ai-news/atom.xml` | Site feeds |
 | `/ai-news/<category>/feed.xml` and `atom.xml` | Section feeds |
-| `/ai-news/sitemap.xml` | Every article, plus listing pages, with `lastmod` |
+| `/ai-news/sitemap.xml` | Sitemap index. Lists `/ai-news/sitemap/1.xml` and `/ai-news/news-sitemap.xml` |
+| `/ai-news/sitemap/1.xml` | Article URLs and listing pages, with `lastmod` |
 | `/ai-news/news-sitemap.xml` | Google News sitemap. Only stories from the last 48 hours, each with `lastmod`. Google rejects older articles here |
 | `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp` | Illustration, proxied from the public image repo at that commit SHA |
 | `/llms.txt` | Notes for answer engines, including `/ai-news` |
 
-`public/robots.txt` is the site-wide file for 3aik.com, including the home page. The worker does not serve `/robots.txt` itself. Requests for it fall through to static assets. This indexing change does not edit that file or `public/sitemap.xml`. The robots file already lists `Sitemap: https://3aik.com/sitemap.xml`, `Sitemap: https://3aik.com/ai-news/sitemap.xml`, and `Sitemap: https://3aik.com/ai-news/news-sitemap.xml`. It still allows crawlers at `/` and names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers.
+`public/robots.txt` is the site-wide file for 3aik.com, including the home page. The worker does not serve `/robots.txt` itself. Requests for it fall through to static assets. `public/sitemap.xml` lists `https://3aik.com/ai-news` with no trailing slash. The robots file is unchanged. The robots file already lists `Sitemap: https://3aik.com/sitemap.xml`, `Sitemap: https://3aik.com/ai-news/sitemap.xml`, and `Sitemap: https://3aik.com/ai-news/news-sitemap.xml`. It still allows crawlers at `/` and names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers.
 
 Pagination uses `LIMIT` and `OFFSET` on the existing `articles` table. No D1 migration is required for these pages.
 
@@ -274,12 +275,12 @@ JSON fields:
 | `tags` | 2 to 4 lowercase hyphenated tags |
 | `sources` | 1 to 4 `{ "url", "publisher", "title" }`. At least one. Showbiz requires one. Optional `excerpt` |
 | `image` | Optional. `{ "data": "<base64 or data URL>", "alt": "..." }` or a base64 string plus `image_alt`. JPEG, PNG, or WebP, up to about 1.5 MB |
-| `image_source_url` | Optional https publisher image, such as `og:image`. Fetched and stored like a generated image. Private hosts, redirects to them, non-image bytes, and files over 1 MB are rejected. If the copy cannot be stored, the article has no picture. The page never hotlinks the publisher URL. A failed fetch publishes with no picture. Wins over `image` when both are sent |
+| `image_source_url` | Optional https publisher image, such as `og:image`. The desk strips resize parameters and reads srcset, and it keeps the picture only when the file is at least 1200px wide. A smaller file falls back to a generated illustration with no credit. Private hosts are rejected. The page never hotlinks the publisher URL. Wins over `image` when both are sent |
 | `image_credit` | Optional, for example `Image: WWD`. Shown once under the picture |
 
 The gate rejects em dashes, en dashes used as clause breaks, `---` and spaced `--`, slop words, an 8-word copy of the source title or fetched page, a missing outlet name, and (for fashion and showbiz) an unattributed dispute. A slug or source URL already on the desk returns 409 before those quality reasons, so a retry is not reported as a bad draft. `GET /ai-news/api/ingest/meta` returns the persona list, categories, those limits, and recent source URLs.
 
-A PNG, JPEG, or WebP at or under 1 MB is committed to `alivirgo/3aik-ai-news-images` with `GITHUB_IMAGES_TOKEN`. A larger upload, a missing token, or a failed commit still returns 201 and publishes with no picture. A publisher image that cannot be stored is omitted. The page does not hotlink it. A failed or unsafe fetch stores no image.
+A wide PNG, JPEG, or WebP is cropped to WebP and committed to `alivirgo/3aik-ai-news-images` with `GITHUB_IMAGES_TOKEN`. Each stored file stays at or under 1 MB. A lead under 1200px wide, a missing token, or a failed commit still returns 201 and publishes with no picture. The page does not hotlink a publisher URL.
 
 ```sh
 IMG=$(base64 -w 0 photo.jpg)
@@ -294,6 +295,17 @@ curl -sS -X POST https://3aik.com/ai-news/api/ingest \
 ```sh
 curl -sS https://3aik.com/ai-news/api/ingest/meta \
   -H "Authorization: Bearer $AI_NEWS_INGEST_TOKEN"
+```
+
+### POST /ai-news/api/ingest/backfill
+
+Regenerates the five WebP crops for articles whose `image_key` does not already end in `-16x9.webp`. The same bearer as ingest. This route does not count against the hourly ingest cap. Optional JSON body `{ "limit": 4 }` (max 8). Repeat until `remaining` is 0.
+
+```sh
+curl -sS -X POST https://3aik.com/ai-news/api/ingest/backfill \
+  -H "Authorization: Bearer $AI_NEWS_INGEST_TOKEN" \
+  -H "content-type: application/json" \
+  --data '{"limit":4}'
 ```
 
 To let the cron call Workers AI again, set `AI_NEWS_GENERATOR` to `workers-ai`. Leave it `off` to keep the neuron spend at zero. Cleanup still runs while publishing is on.
