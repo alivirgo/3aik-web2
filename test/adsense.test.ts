@@ -78,6 +78,10 @@ describe("AdSense on public HTML", () => {
 			"/ai-news/author/mira-ellison",
 			"/ai-news/article/short-bulletin",
 			"/ai-news/about",
+			"/ai-news/editorial-policy",
+			"/ai-news/corrections",
+			"/ai-news/contact",
+			"/ai-news/archive",
 			"/ai-news/disclaimer",
 		]) {
 			const page = await newsHtml(path);

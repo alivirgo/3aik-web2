@@ -36,6 +36,8 @@ export interface Env {
 	AI_NEWS_STATS_TOKEN_SHA256?: string;
 	/** `false` stops collect writes and hides the stats desk. Default `true`. */
 	AI_NEWS_STATS_ENABLED?: string;
+	/** Optional real address for /ai-news/contact. Unset means the page shows none. */
+	AI_NEWS_CONTACT_EMAIL?: string;
 	INDEXNOW_KEY?: string;
 }
 

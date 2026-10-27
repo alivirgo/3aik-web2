@@ -43,6 +43,7 @@
     "AI_NEWS_IMAGE_TIMEOUT_MS": "20000",
     "AI_NEWS_RETENTION_DAYS": "180",
     "AI_NEWS_STATS_ENABLED": "true"
+    // AI_NEWS_CONTACT_EMAIL is optional. Set a real address in the dashboard when one exists. Leave it unset until then.
   },
   "ratelimits": [
     {

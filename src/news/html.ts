@@ -9,6 +9,7 @@ import {
 	SITE_NAME,
 } from "./config";
 import { readerImageUrl } from "./github-images";
+import { pageHref } from "./paging";
 import type { Category, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
 import {
@@ -105,6 +106,13 @@ interface PageOptions {
 	tags?: string[];
 	navCurrent?: NavCurrent;
 	footerNote?: string;
+	prev?: string;
+	next?: string;
+}
+
+export interface ListingPage {
+	page: number;
+	pages: number;
 }
 
 function sectionNav(origin: string, current?: NavCurrent): string {
@@ -147,6 +155,8 @@ export function renderPage(options: PageOptions): NewsHtml {
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(description)}">
 <link rel="canonical" href="${escapeHtml(options.canonical)}">
+${options.prev ? `<link rel="prev" href="${escapeHtml(options.prev)}">` : ""}
+${options.next ? `<link rel="next" href="${escapeHtml(options.next)}">` : ""}
 <meta name="robots" content="${escapeHtml(options.robots ?? "index,follow,max-image-preview:large")}">
 <meta property="og:site_name" content="${SITE_NAME}">
 <meta property="og:type" content="${escapeHtml(options.ogType ?? "website")}">
@@ -184,7 +194,7 @@ ${sectionNav(options.origin, options.navCurrent)}
 <footer class="site-foot">
 <div class="wrap">
 ${options.footerNote ? `<p class="assist">${escapeHtml(options.footerNote)}</p>` : ""}
-<p class="foot-links"><a href="${options.origin}/ai-news/about">About this desk</a><a href="${options.origin}/ai-news/disclaimer">Disclaimer</a><a href="${options.origin}/">3aik home</a></p>
+<p class="foot-links"><a href="${options.origin}/ai-news/about">About</a><a href="${options.origin}/ai-news/editorial-policy">Editorial policy</a><a href="${options.origin}/ai-news/corrections">Corrections</a><a href="${options.origin}/ai-news/contact">Contact</a><a href="${options.origin}/ai-news/archive">Archive</a><a href="${options.origin}/ai-news/disclaimer">Disclaimer</a><a href="${options.origin}/">3aik home</a></p>
 </div>
 </footer>
 </body>
@@ -327,6 +337,52 @@ ${note}
 ${bands}`;
 }
 
+function storyLinks(origin: string, articles: StoredArticle[]): string {
+	if (!articles.length) return "";
+	const items = articles.map((article) => {
+		return `<li><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time> <a href="${categoryHref(origin, article.category)}">${escapeHtml(CATEGORY_LABEL[article.category])}</a> <a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></li>`;
+	}).join("");
+	return `<ol class="story-index">${items}</ol>`;
+}
+
+function renderPager(base: string, listing: ListingPage): string {
+	if (listing.pages <= 1) return "";
+	const links: string[] = [];
+	if (listing.page > 1) links.push(`<a rel="prev" href="${escapeHtml(pageHref(base, listing.page - 1))}">Previous</a>`);
+	const numbers = listing.pages <= 12
+		? Array.from({ length: listing.pages }, (_, index) => index + 1)
+		: windowedPages(listing.page, listing.pages);
+	for (const number of numbers) {
+		if (number === null) {
+			links.push(`<span class="pager-gap">…</span>`);
+			continue;
+		}
+		const current = number === listing.page ? ` aria-current="page"` : "";
+		links.push(`<a href="${escapeHtml(pageHref(base, number))}"${current}>${number}</a>`);
+	}
+	if (listing.page < listing.pages) links.push(`<a rel="next" href="${escapeHtml(pageHref(base, listing.page + 1))}">Next</a>`);
+	return `<nav class="pager" aria-label="Pages">${links.join("")}</nav>`;
+}
+
+function windowedPages(page: number, pages: number): Array<number | null> {
+	const wanted = new Set<number>([1, pages, page - 1, page, page + 1, page - 2, page + 2]);
+	const ordered = [...wanted].filter((number) => number >= 1 && number <= pages).sort((left, right) => left - right);
+	const result: Array<number | null> = [];
+	for (const number of ordered) {
+		const previous = result[result.length - 1];
+		if (typeof previous === "number" && number - previous > 1) result.push(null);
+		result.push(number);
+	}
+	return result;
+}
+
+function listingNeighbors(base: string, listing: ListingPage): { prev?: string; next?: string } {
+	return {
+		prev: listing.page > 1 ? pageHref(base, listing.page - 1) : undefined,
+		next: listing.page < listing.pages ? pageHref(base, listing.page + 1) : undefined,
+	};
+}
+
 function shareNav(canonical: string, title: string): string {
 	const url = encodeURIComponent(canonical);
 	const text = encodeURIComponent(title);
@@ -337,24 +393,30 @@ function shareNav(canonical: string, title: string): string {
 <nav class="share" aria-label="Share this article"><a href="${escapeHtml(canonical)}">Article link</a><a href="${escapeHtml(email)}">Email</a><a href="${escapeHtml(tweet)}" rel="noopener noreferrer">X</a><a href="${escapeHtml(linkedin)}" rel="noopener noreferrer">LinkedIn</a></nav>`;
 }
 
-export function renderIndex(origin: string, articles: StoredArticle[]): NewsHtml {
-	const canonical = `${origin}/ai-news`;
+export function renderIndex(origin: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml {
+	const base = `${origin}/ai-news`;
+	const canonical = pageHref(base, listing.page);
 	const description = "AI-assisted news on AI, technology, fashion, and showbiz, rewritten from credible outlets and linked back to them.";
 	const now = Date.now();
-	const body = articles.length
-		? frontPage(origin, articles, now)
+	const front = listing.page <= 1 && articles.length ? frontPage(origin, articles, now) : "";
+	const list = articles.length
+		? `<section class="index-list"><h2 class="section-label">Stories</h2>${storyLinks(origin, articles)}</section>`
 		: `<p class="empty">No stories are published yet. The desk publishes on a schedule from public reporting by named outlets.</p>`;
+	const neighbors = listingNeighbors(base, listing);
+	const title = listing.page <= 1 ? SITE_NAME : `${SITE_NAME}, page ${listing.page}`;
 	return renderPage({
 		origin,
-		title: `${SITE_NAME}`,
+		title,
 		description,
 		canonical,
+		prev: neighbors.prev,
+		next: neighbors.next,
 		footerNote: ASSIST_LINE,
-		body,
+		body: `${front}${list}${renderPager(base, listing)}`,
 		jsonLd: [{
 			"@context": "https://schema.org",
 			"@type": "CollectionPage",
-			name: SITE_NAME,
+			name: title,
 			description,
 			url: canonical,
 			isPartOf: { "@type": "WebSite", name: PUBLISHER_NAME, url: origin },
@@ -362,23 +424,30 @@ export function renderIndex(origin: string, articles: StoredArticle[]): NewsHtml
 	});
 }
 
-export function renderCategory(origin: string, category: Category, articles: StoredArticle[]): NewsHtml {
-	const canonical = categoryHref(origin, category);
+export function renderCategory(origin: string, category: Category, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml {
+	const base = categoryHref(origin, category);
+	const canonical = pageHref(base, listing.page);
 	const label = CATEGORY_LABEL[category];
 	const now = Date.now();
 	const trail = crumbs(origin, [
 		{ href: `${origin}/`, label: "3aik" },
 		{ href: `${origin}/ai-news`, label: "News" },
-		{ href: canonical, label },
+		{ href: base, label },
 	]);
+	const band = listing.page <= 1 ? sectionBand(origin, category, articles, now) : "";
+	const note = listing.page <= 1 && articles.length > 0 && articles.length < 5 && listing.pages <= 1 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
 	const list = articles.length
-		? `${sectionBand(origin, category, articles, now)}${articles.length < 5 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : ""}`
+		? `${band}${note}${storyLinks(origin, articles)}${renderPager(base, listing)}`
 		: `<p class="empty">No ${escapeHtml(label)} stories are published yet.</p>`;
+	const neighbors = listingNeighbors(base, listing);
+	const title = listing.page <= 1 ? `${label} news | ${SITE_NAME}` : `${label} news, page ${listing.page} | ${SITE_NAME}`;
 	return renderPage({
 		origin,
-		title: `${label} news | ${SITE_NAME}`,
+		title,
 		description: CATEGORY_DECK[category],
 		canonical,
+		prev: neighbors.prev,
+		next: neighbors.next,
 		navCurrent: category,
 		footerNote: ASSIST_LINE,
 		body: `${trail.html}<header class="section-head"><h1>${escapeHtml(label)}</h1><p class="deck">${escapeHtml(CATEGORY_DECK[category])}</p></header>${list}`,
@@ -386,19 +455,24 @@ export function renderCategory(origin: string, category: Category, articles: Sto
 	});
 }
 
-export function renderAuthor(origin: string, authorId: string, articles: StoredArticle[]): NewsHtml | null {
+export function renderAuthor(origin: string, authorId: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml | null {
 	const author = authorById(authorId);
 	if (!author) return null;
-	const canonical = authorHref(origin, author.id);
+	const base = authorHref(origin, author.id);
+	const canonical = pageHref(base, listing.page);
 	const now = Date.now();
 	const trail = crumbs(origin, [
 		{ href: `${origin}/`, label: "3aik" },
 		{ href: `${origin}/ai-news`, label: "News" },
 		{ href: categoryHref(origin, author.category), label: CATEGORY_LABEL[author.category] },
-		{ href: canonical, label: author.name },
+		{ href: base, label: author.name },
 	]);
+	const cards = listing.page <= 1 && articles.length
+		? `<div class="section-row">${articles.slice(0, 4).map((article) => storyCard(origin, article, now)).join("")}</div>`
+		: "";
+	const note = listing.page <= 1 && articles.length > 0 && articles.length < 5 && listing.pages <= 1 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
 	const list = articles.length
-		? `<h2 class="section-label">Stories</h2><div class="section-row">${articles.slice(0, 4).map((article) => storyCard(origin, article, now)).join("")}</div>${articles.length < 5 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : ""}`
+		? `<h2 class="section-label">Stories</h2>${cards}${note}${storyLinks(origin, articles)}${renderPager(base, listing)}`
 		: `<p class="empty">No stories from this persona yet.</p>`;
 	const body = `${trail.html}
 <header class="persona">
@@ -412,9 +486,11 @@ export function renderAuthor(origin: string, authorId: string, articles: StoredA
 ${list}`;
 	return renderPage({
 		origin,
-		title: `${author.name} | ${SITE_NAME}`,
+		title: listing.page <= 1 ? `${author.name} | ${SITE_NAME}` : `${author.name}, page ${listing.page} | ${SITE_NAME}`,
 		description: author.bio.slice(0, 160),
 		canonical,
+		prev: listingNeighbors(base, listing).prev,
+		next: listingNeighbors(base, listing).next,
 		navCurrent: author.category,
 		footerNote: ASSIST_LINE,
 		body,
@@ -466,6 +542,8 @@ export function renderArticle(origin: string, article: StoredArticle, latest: St
 	const prose = renderBodyHtml(paragraphsFromBody(article.bodyText), allow);
 	const now = Date.now();
 	const credit = article.imageCredit.trim();
+	const socialImage = image || `${origin}/og.png`;
+	const socialAlt = image ? article.imageAlt : `${SITE_NAME}`;
 	const hero = image
 		? `<figure class="hero">${heroImg(article, image)}${credit ? `<figcaption>${escapeHtml(credit)}</figcaption>` : ""}</figure>`
 		: "";
@@ -499,7 +577,7 @@ ${latestList(origin, others, now)}
 		"@type": "NewsArticle",
 		headline: title,
 		description: article.description,
-		...(image ? { image: [image] } : {}),
+		image: [socialImage],
 		datePublished: article.publishedAt,
 		dateModified: article.updatedAt,
 		timeRequired: `PT${minutes}M`,
@@ -516,7 +594,7 @@ ${latestList(origin, others, now)}
 		publisher: {
 			"@type": "Organization",
 			name: PUBLISHER_NAME,
-			url: origin,
+			url: `${origin}/ai-news/about`,
 			logo: { "@type": "ImageObject", url: `${origin}/icon-512.png` },
 		},
 		mainEntityOfPage: { "@type": "WebPage", "@id": canonical },
@@ -544,8 +622,8 @@ ${latestList(origin, others, now)}
 		canonical,
 		body,
 		ogType: "article",
-		image: image || undefined,
-		imageAlt: article.imageAlt,
+		image: socialImage,
+		imageAlt: socialAlt,
 		publishedAt: article.publishedAt,
 		modifiedAt: article.updatedAt,
 		section: CATEGORY_LABEL[article.category],
@@ -575,7 +653,7 @@ export function renderAbout(origin: string): NewsHtml {
 <p>Every article is built from at least one story already published by a configured outlet, then rewritten. The source is linked. Fashion and showbiz pieces repeat disputed claims only when that outlet reported them, and they attribute the claim. They do not add allegations about real people.</p>
 <h2>Pictures</h2>
 <p>A picture is either a generated illustration or the source outlet's own image, credited under the picture when it comes from that outlet. Generated pictures are not photographs of a real person and do not use a company logo.</p>
-<p><a href="${origin}/ai-news/disclaimer">Read the disclaimer</a>.</p>
+<p>See also the <a href="${origin}/ai-news/editorial-policy">editorial policy</a>, <a href="${origin}/ai-news/corrections">corrections</a>, <a href="${origin}/ai-news/contact">contact</a>, and <a href="${origin}/ai-news/disclaimer">disclaimer</a>.</p>
 </article>
 <h2 class="section-label">The roster</h2>
 <ul class="roster">${roster}</ul>`;
@@ -618,6 +696,143 @@ export function renderDisclaimer(origin: string): NewsHtml {
 		origin,
 		title: `Disclaimer | ${SITE_NAME}`,
 		description: "3aik.com takes no responsibility for the accuracy of news. Verify claims with the linked original sources.",
+		canonical,
+		body,
+		jsonLd: [trail.json],
+	});
+}
+
+export function renderArchive(origin: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml {
+	const base = `${origin}/ai-news/archive`;
+	const canonical = pageHref(base, listing.page);
+	const trail = crumbs(origin, [
+		{ href: `${origin}/`, label: "3aik" },
+		{ href: `${origin}/ai-news`, label: "News" },
+		{ href: base, label: "Archive" },
+	]);
+	const days: string[] = [];
+	let currentDay = "";
+	let bucket: StoredArticle[] = [];
+	const flush = () => {
+		const first = bucket[0];
+		if (!first) return;
+		const items = bucket.map((article) => {
+			return `<li><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time> <a href="${categoryHref(origin, article.category)}">${escapeHtml(CATEGORY_LABEL[article.category])}</a> <a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></li>`;
+		}).join("");
+		days.push(`<section class="archive-day"><h2>${escapeHtml(formatDate(first.publishedAt))}</h2><ul>${items}</ul></section>`);
+		bucket = [];
+	};
+	for (const article of articles) {
+		const day = article.publishedAt.slice(0, 10);
+		if (day !== currentDay) {
+			flush();
+			currentDay = day;
+		}
+		bucket.push(article);
+	}
+	flush();
+	const list = articles.length
+		? `${days.join("")}${renderPager(base, listing)}`
+		: `<p class="empty">No stories are published yet.</p>`;
+	const neighbors = listingNeighbors(base, listing);
+	const title = listing.page <= 1 ? `Archive | ${SITE_NAME}` : `Archive, page ${listing.page} | ${SITE_NAME}`;
+	return renderPage({
+		origin,
+		title,
+		description: "Every published story on 3aik News, listed by date.",
+		canonical,
+		prev: neighbors.prev,
+		next: neighbors.next,
+		footerNote: ASSIST_LINE,
+		body: `${trail.html}<header class="section-head"><h1>Archive</h1><p class="deck">Every published story, newest first.</p></header>${list}`,
+		jsonLd: [trail.json, {
+			"@context": "https://schema.org",
+			"@type": "CollectionPage",
+			name: title,
+			url: canonical,
+		}],
+	});
+}
+
+export function renderEditorialPolicy(origin: string): NewsHtml {
+	const canonical = `${origin}/ai-news/editorial-policy`;
+	const trail = crumbs(origin, [
+		{ href: `${origin}/`, label: "3aik" },
+		{ href: `${origin}/ai-news`, label: "News" },
+		{ href: canonical, label: "Editorial policy" },
+	]);
+	const body = `${trail.html}
+<article class="story">
+<h1>Editorial policy</h1>
+<p>Stories on this desk are rewritten with AI assistance from reporting already published by named outlets. A draft is checked against desk rules before it is published. The cited source stays linked.</p>
+<h2>Sources</h2>
+<p>Each story opens with a Source line. That line names the outlet and links to the original report. The rewrite stays inside what that report said. Fashion and showbiz pieces repeat a dispute only when the outlet reported it, and they name that outlet.</p>
+<h2>Pictures</h2>
+<p>A picture is either a generated illustration or the source outlet's own image. When the picture comes from the outlet, the credit sits under the picture. Generated pictures are not photographs of a real person and do not use a company logo.</p>
+<h2>Personas</h2>
+<p>Named bylines are editorial personas, not real people. A persona page describes a writing voice. It does not describe a degree, an employer, or a human career. <a href="${origin}/ai-news/about">About this desk</a>.</p>
+<h2>Corrections</h2>
+<p>When a rewrite misstates a cited source, or the source later corrects itself, the story is updated and the date modified changes. <a href="${origin}/ai-news/corrections">How corrections work</a>.</p>
+</article>`;
+	return renderPage({
+		origin,
+		title: `Editorial policy | ${SITE_NAME}`,
+		description: "How 3aik News rewrites cited reporting, credits sources and pictures, and corrects a story.",
+		canonical,
+		body,
+		jsonLd: [trail.json],
+	});
+}
+
+export function renderCorrections(origin: string, email: string): NewsHtml {
+	const canonical = `${origin}/ai-news/corrections`;
+	const trail = crumbs(origin, [
+		{ href: `${origin}/`, label: "3aik" },
+		{ href: `${origin}/ai-news`, label: "News" },
+		{ href: canonical, label: "Corrections" },
+	]);
+	const reach = email
+		? `<p>Send the story URL and the sentence that needs a correction to <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>.</p>`
+		: `<p>Send the story URL and the sentence that needs a correction to the contact address when one is published. <a href="${origin}/ai-news/contact">Contact</a>.</p>`;
+	const body = `${trail.html}
+<article class="story">
+<h1>Corrections</h1>
+<p>When a rewrite misstates a cited source, or the source later corrects itself, this desk updates the story. The date modified on the story changes. There is no separate public corrections log.</p>
+${reach}
+<p><a href="${origin}/ai-news/editorial-policy">Editorial policy</a></p>
+</article>`;
+	return renderPage({
+		origin,
+		title: `Corrections | ${SITE_NAME}`,
+		description: "How 3aik News updates a story when a cited source was misstated or later corrected.",
+		canonical,
+		body,
+		jsonLd: [trail.json],
+	});
+}
+
+export function renderContact(origin: string, email: string): NewsHtml {
+	const canonical = `${origin}/ai-news/contact`;
+	const trail = crumbs(origin, [
+		{ href: `${origin}/`, label: "3aik" },
+		{ href: `${origin}/ai-news`, label: "News" },
+		{ href: canonical, label: "Contact" },
+	]);
+	const address = email
+		? `<p>Email <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>.</p>`
+		: `<p>This desk has not published a contact address yet.</p>`;
+	const body = `${trail.html}
+<article class="story">
+<h1>Contact</h1>
+<p>Use this page for a correction, a source question, or a note about a story.</p>
+${address}
+<p>This page does not list a street address or a phone number.</p>
+<p><a href="${origin}/ai-news/corrections">Corrections</a></p>
+</article>`;
+	return renderPage({
+		origin,
+		title: `Contact | ${SITE_NAME}`,
+		description: "How to reach the 3aik News desk about a story or a correction.",
 		canonical,
 		body,
 		jsonLd: [trail.json],
