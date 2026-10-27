@@ -223,7 +223,7 @@ export function imageCandidates(explicit: string, html = "", base = ""): string[
 		const explicitUrl = absoluteUrl(explicit, base);
 		addCandidate(list, explicitUrl, 0, base);
 		const enlarged = enlargeImageUrl(explicitUrl);
-		if (enlarged) addCandidate(list, enlarged, 1_000_000, base);
+		if (enlarged) addCandidate(list, enlarged, 1, base);
 	}
 	const meta = html.matchAll(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)(?::src)?["'][^>]*>/gi);
 	for (const tag of meta) {
@@ -232,7 +232,7 @@ export function imageCandidates(explicit: string, html = "", base = ""): string[
 			const absolute = absoluteUrl(content[1], base);
 			addCandidate(list, absolute, 0, base);
 			const enlarged = enlargeImageUrl(absolute);
-			if (enlarged) addCandidate(list, enlarged, 1_000_000, base);
+			if (enlarged) addCandidate(list, enlarged, 1, base);
 		}
 	}
 	const srcsets = html.matchAll(/srcset=["']([^"']+)["']/gi);
