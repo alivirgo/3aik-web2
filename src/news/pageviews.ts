@@ -201,7 +201,7 @@ export interface NewsStatsReport {
 }
 
 export const RAW_RETENTION_DAYS = 90;
-export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is stored before the hash and is not derived from a token. The cron deletes that salt after the UTC day. D1 hourly article rollups are the source of truth. Analytics Engine is not bound on this worker. The daily cap counts D1 rows_written, including index rows and prune deletes, and stops at 25,000. Daily tables are kept 400 days. This D1 desk does not compute bounce, so that card stays n/a. An in-memory report still treats a bounce as one human page view inside a 30-minute session.";
+export const STATS_NOTE = "Unique visitors are an HMAC-SHA256 of a random per-UTC-day salt, the address, and the user agent. The salt is stored before the hash and is not derived from a token. The cron deletes that salt after the UTC day. D1 hourly article rollups are the source of truth. Analytics Engine is not bound on this worker. The daily cap counts D1 rows_written, including index rows and prune deletes, and stops at 25,000. Daily tables are kept 400 days. Country, referrer, device, and the other dimension lists are counters in stats_facet_daily. That table has no IP address, user agent, cookie, or visitor hash. Each human view is one session, so the D1 bounce rate is 100% of those sessions. An in-memory report still uses a 30-minute gap between page views. The heatmap sums hourly article rows by UTC hour. Asia/Karachi is that hour plus 5, with no daylight-saving shift.";
 
 const SEARCH_ENGINES: Array<{ name: string; hosts: string[]; keys: string[] }> = [
 	{ name: "Google", hosts: ["google.com"], keys: ["q"] },
@@ -614,23 +614,18 @@ function blankVisit(now: Date, tracked: TrackedPage): PageViewEvent {
 	};
 }
 
-export function pageViewFromRequest(request: Request, tracked: TrackedPage, now: Date, siteHost: string): PageViewEvent {
-	const ua = request.headers.get("user-agent") ?? "";
-	const bot: 0 | 1 = BOT_PATTERN.test(ua) ? 1 : 0;
-	const device = deviceClass(ua);
-	const pageUrl = new URL(request.url);
-	const utmSource = clip(redactContacts(pageUrl.searchParams.get("utm_source") ?? ""), 80);
-	const utmMedium = clip(redactContacts(pageUrl.searchParams.get("utm_medium") ?? ""), 80);
-	const utmCampaign = clip(redactContacts(pageUrl.searchParams.get("utm_campaign") ?? ""), 80);
-	const utmTerm = clip(redactContacts(pageUrl.searchParams.get("utm_term") ?? ""), 80);
-	const siteHosts = [siteHost, pageUrl.hostname, "3aik.com"];
-	const cf = cfOf(request);
-
+function classifyVisit(
+	referrer: string,
+	utmSource: string,
+	utmMedium: string,
+	utmCampaign: string,
+	utmTerm: string,
+	siteHosts: string[],
+): Pick<PageViewEvent, "referrerHost" | "referrerPath" | "sourceClass" | "searchEngine" | "searchQuery" | "utmSource" | "utmMedium" | "utmCampaign" | "utmTerm"> {
 	let referrerHost = "";
 	let referrerPath = "";
 	let engineName = "";
 	let referrerQuery = "";
-	const referrer = request.headers.get("referer") ?? request.headers.get("referrer") ?? "";
 	if (referrer) {
 		try {
 			const parsed = new URL(referrer);
@@ -662,9 +657,7 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 	let searchQuery = clip(redactContacts(referrerQuery), 80);
 	if (!searchQuery && utmTerm && (sourceClass === "search" || searchMedium(utmMedium))) searchQuery = clip(utmTerm, 80);
 
-	const continentCode = textOf(cf.continent).toUpperCase();
 	return {
-		...blankVisit(now, tracked),
 		referrerHost,
 		referrerPath,
 		sourceClass,
@@ -674,11 +667,88 @@ export function pageViewFromRequest(request: Request, tracked: TrackedPage, now:
 		utmMedium,
 		utmCampaign,
 		utmTerm,
+	};
+}
+
+const BEACON_CONTEXT_MAX = 500;
+
+function utmFromSearch(search: string): { utmSource: string; utmMedium: string; utmCampaign: string; utmTerm: string } | null {
+	const raw = search.trim();
+	if (!raw || raw.length > BEACON_CONTEXT_MAX) return null;
+	const query = raw.startsWith("?") ? raw.slice(1) : raw;
+	const params = new URLSearchParams(query);
+	return {
+		utmSource: clip(redactContacts(params.get("utm_source") ?? ""), 80),
+		utmMedium: clip(redactContacts(params.get("utm_medium") ?? ""), 80),
+		utmCampaign: clip(redactContacts(params.get("utm_campaign") ?? ""), 80),
+		utmTerm: clip(redactContacts(params.get("utm_term") ?? ""), 80),
+	};
+}
+
+/** http(s) referrer with no userinfo. Empty when the value is missing or not a usable URL. */
+function acceptedBeaconReferrer(raw: string): string {
+	const trimmed = raw.trim();
+	if (!trimmed || trimmed.length > BEACON_CONTEXT_MAX) return "";
+	try {
+		const parsed = new URL(trimmed);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+		if (parsed.username || parsed.password) return "";
+		return parsed.toString();
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * The collect request's Referer is the article URL. A beacon may send document.referrer
+ * and the article page's query string so the original referrer and utm_term are kept.
+ * javascript: URLs and URLs with userinfo are dropped.
+ */
+export function applyBeaconContext(
+	event: PageViewEvent,
+	input: { ref?: unknown; search?: unknown },
+	siteHost: string,
+): PageViewEvent {
+	const hasRef = typeof input.ref === "string";
+	const searchUtm = typeof input.search === "string" ? utmFromSearch(input.search) : null;
+	if (!hasRef && !searchUtm) return event;
+	const utm = searchUtm ?? {
+		utmSource: event.utmSource,
+		utmMedium: event.utmMedium,
+		utmCampaign: event.utmCampaign,
+		utmTerm: event.utmTerm,
+	};
+	const referrer = hasRef
+		? acceptedBeaconReferrer(input.ref as string)
+		: (event.referrerHost ? `https://${event.referrerHost}${event.referrerPath || "/"}` : "");
+	return {
+		...event,
+		...classifyVisit(referrer, utm.utmSource, utm.utmMedium, utm.utmCampaign, utm.utmTerm, [siteHost, "3aik.com"]),
+	};
+}
+
+export function pageViewFromRequest(request: Request, tracked: TrackedPage, now: Date, siteHost: string): PageViewEvent {
+	const ua = request.headers.get("user-agent") ?? "";
+	const bot: 0 | 1 = BOT_PATTERN.test(ua) ? 1 : 0;
+	const pageUrl = new URL(request.url);
+	const cf = cfOf(request);
+	const classified = classifyVisit(
+		request.headers.get("referer") ?? request.headers.get("referrer") ?? "",
+		clip(redactContacts(pageUrl.searchParams.get("utm_source") ?? ""), 80),
+		clip(redactContacts(pageUrl.searchParams.get("utm_medium") ?? ""), 80),
+		clip(redactContacts(pageUrl.searchParams.get("utm_campaign") ?? ""), 80),
+		clip(redactContacts(pageUrl.searchParams.get("utm_term") ?? ""), 80),
+		[siteHost, pageUrl.hostname, "3aik.com"],
+	);
+	const continentCode = textOf(cf.continent).toUpperCase();
+	return {
+		...blankVisit(now, tracked),
+		...classified,
 		country: countryOf(request),
 		region: placeName(cf.region, 80),
 		city: placeName(cf.city, 80),
 		continent: /^[A-Z]{2}$/.test(continentCode) ? continentCode : "",
-		deviceClass: device,
+		deviceClass: deviceClass(ua),
 		browser: browserName(ua),
 		os: osName(ua),
 		lang: languageOf(request.headers.get("accept-language")),
@@ -755,7 +825,7 @@ function pageLabel(page: string, slug: string): string {
 	return page || "/ai-news";
 }
 
-function continentLabel(code: string): string {
+export function continentLabel(code: string): string {
 	return CONTINENTS[code] ? `${CONTINENTS[code]} (${code})` : code;
 }
 
