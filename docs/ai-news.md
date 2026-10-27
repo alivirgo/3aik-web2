@@ -206,6 +206,8 @@ Twenty-four personas, fixed beats, no shared stock closer. Counts: AI 8, Technol
 | `/ai-news/news-sitemap.xml` | Google News sitemap. Only stories from the last 48 hours, each with `lastmod`. Google rejects older articles here |
 | `/ai-news/media/<commit-sha>/images/YYYY/MM/<slug>-<8-char-id>.webp` | Illustration, proxied from the public image repo at that commit SHA |
 | `/llms.txt` | Notes for answer engines, including `/ai-news` |
+| `/<indexnow-key>.txt` | Public IndexNow key. Default file is `https://3aik.com/471520af56fd6ed6f2d37cf56f67f743.txt` |
+| `POST /ai-news/api/indexnow/submit-all` | Submit every article and desk page to IndexNow. Ingest bearer. One call per 10 minutes |
 
 `public/robots.txt` is the site-wide file for 3aik.com, including the home page. The worker does not serve `/robots.txt` itself. Requests for it fall through to static assets. This indexing change does not edit that file or `public/sitemap.xml`. The robots file already lists `Sitemap: https://3aik.com/sitemap.xml`, `Sitemap: https://3aik.com/ai-news/sitemap.xml`, and `Sitemap: https://3aik.com/ai-news/news-sitemap.xml`. It still allows crawlers at `/` and names Googlebot, Bingbot, DuckDuckBot, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, and other common crawlers.
 
@@ -219,16 +221,17 @@ The service worker does not cache `/ai-news` or `/llms.txt` into the app shell, 
 
 ## IndexNow
 
-Optional. Create a key on your machine (8 to 128 letters, numbers, or hyphens). Do not commit it.
+IndexNow tells Bing, Yandex, Naver, and Seznam that a URL changed. Bing also shares that with Copilot, ChatGPT search, and DuckDuckGo. No webmaster account is required. The key is public: IndexNow fetches it to prove the host owns the URL.
+
+The committed key is `471520af56fd6ed6f2d37cf56f67f743`. The worker serves it as plain text at `https://3aik.com/471520af56fd6ed6f2d37cf56f67f743.txt`. Set `INDEXNOW_KEY` (8 to 128 letters, numbers, or hyphens) when you want a different key. An unset, blank, or invalid value uses the committed key. `public/robots.txt` is unchanged and still lists the sitemaps.
 
 ```sh
-node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
 npx wrangler secret put INDEXNOW_KEY
 ```
 
-Paste the key when prompted, not into git. For local dev, put it in `.dev.vars` (gitignored). See `.dev.vars.example`.
+Every successful publish pings `https://api.indexnow.org/indexnow` with `host` `3aik.com`, the key, `keyLocation`, the new article URL, `/ai-news`, `/ai-news/archive`, `/ai-news/sitemap.xml`, and `/ai-news/news-sitemap.xml`. That includes the cron and `POST /ai-news/api/ingest`. A failed ping is logged and does not change the publish result.
 
-On each successful publish the cron POSTs the new article URL to `https://api.indexnow.org/indexnow`. The worker serves the key at `https://3aik.com/<key>.txt`, which is the `keyLocation` IndexNow checks. If `INDEXNOW_KEY` is unset, publishing continues and the ping is skipped. A failed ping does not unpublish the story.
+`POST /ai-news/api/indexnow/submit-all` sends every article URL plus the index, archive, section, author, and trust pages (`about`, `editorial-policy`, `corrections`, `contact`, `disclaimer`). URLs go out in batches of up to 10,000. The JSON body is `{ "batches": [{ "status": 200, "count": 32 }] }`, where `status` is the HTTP status IndexNow returned for that batch. A network failure is `status` 0. The route uses the ingest bearer, compared by SHA-256. A missing secret or a wrong bearer is `{ "error": "not_found" }` with status 404. One successful claim is allowed every 10 minutes, stored in the existing `runtime_lock` row `indexnow-submit`. A second call in that window is 429 with `retry-after`. No D1 migration.
 
 IndexNow docs: [indexnow.org/documentation](https://www.indexnow.org/documentation).
 
@@ -340,6 +343,7 @@ A human view writes `stats_visitor_day`, `stats_article_hour`, and one `stats_fa
 
 - `src/news/pipeline.ts` cron cycle. With `AI_NEWS_GENERATOR` off it prunes and does not call Workers AI
 - `src/news/ingest.ts` external ingest API
+- `src/news/indexnow.ts` public key, publish pings, and `POST /ai-news/api/indexnow/submit-all`
 - `src/news/quality.ts` gate
 - `src/news/feeds.ts` RSS and Atom parser
 - `src/news/model.ts` Workers AI calls and prompts
