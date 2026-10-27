@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { LocalWorkspace, createApprovalPolicy } from "../src/index.js";
 import { windowsTaskkillPath } from "../src/workspace.js";
 
@@ -27,6 +27,20 @@ async function fixture(t, options = {}) {
   await writeFile(path.join(root, ".3aik", "config.json"), "{\"apiKey\":\"secret-value\"}\n");
   return { root, workspace: new LocalWorkspace(root, options) };
 }
+
+test("listFiles stays inside a symlinked workspace root", async (t) => {
+  const realRoot = await mkdtemp(path.join(os.tmpdir(), "3aik-workspace-real-"));
+  const linkParent = await mkdtemp(path.join(os.tmpdir(), "3aik-workspace-link-"));
+  const link = path.join(linkParent, "project");
+  t.after(() => rm(realRoot, { recursive: true, force: true }));
+  t.after(() => rm(linkParent, { recursive: true, force: true }));
+  await mkdir(path.join(realRoot, "src"));
+  await writeFile(path.join(realRoot, "src", "hello.txt"), "hello\n");
+  await symlink(realRoot, link);
+  const listed = await new LocalWorkspace(link).listFiles(".");
+  assert.equal(listed.path, ".");
+  assert.ok(listed.entries.includes(path.join("src", "hello.txt")));
+});
 
 test("reads line ranges, lists safely, and searches text", async (t) => {
   const { workspace } = await fixture(t);
