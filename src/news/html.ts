@@ -393,6 +393,7 @@ function frontPage(origin: string, articles: StoredArticle[], now: number, reads
 <article class="lead">
 ${media}
 ${kickerLink(origin, lead.category)}
+${badges(lead, now, reads?.get(lead.slug) ?? 0)}
 <h2><a href="${articleHref(origin, lead.slug)}">${escapeHtml(visibleTitle(lead.title))}</a></h2>
 <p class="dek">${escapeHtml(stripEditorialDashes(lead.description))}</p>
 ${byline(origin, lead, now)}
