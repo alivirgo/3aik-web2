@@ -308,13 +308,29 @@ curl -sS https://3aik.com/ai-news/api/ingest/meta \
 
 ### POST /ai-news/api/ingest/backfill
 
-Regenerates the five WebP crops for articles whose `image_key` does not already end in `-16x9.webp`. The same bearer as ingest. This route does not count against the hourly ingest cap. Optional JSON body `{ "limit": 4 }` (max 8). Repeat until `remaining` is 0.
+Regenerates the five WebP crops for one article per call. Cloudflare resizes the publisher URL or the stored jsDelivr file (`cf.image`, cover crop, WebP). The Worker does not decode the original. The same bearer as ingest. This route does not count against the hourly ingest cap. A body limit above 1 is ignored.
+
+Each attempt is recorded in `article_image_backfill` before the resize. A crashed call leaves `reason` `started` and that article is not picked again. A source that cannot be resized is stored with a reason (`no_source`, `unprocessable_source`, `resize_too_large`, `resize_incomplete`, `github_commit_failed`) and `remaining` drops. `resize_unavailable` and `github_rate_limit` do not flag the article. The response is HTTP 503 with `error` set, and the loop should stop. The Worker creates the table on the first call. `migrations/0009_ai_news_image_backfill.sql` is the same statement.
+
+Repeat until `remaining` is 0. Stop if the body contains `"error"`.
 
 ```sh
-curl -sS -X POST https://3aik.com/ai-news/api/ingest/backfill \
-  -H "Authorization: Bearer $AI_NEWS_INGEST_TOKEN" \
-  -H "content-type: application/json" \
-  --data '{"limit":4}'
+while true; do
+  body=$(curl -sS -w '\n%{http_code}' -X POST https://3aik.com/ai-news/api/ingest/backfill \
+    -H "Authorization: Bearer $AI_NEWS_INGEST_TOKEN" \
+    -H "content-type: application/json" \
+    --data '{"limit":1}')
+  code=${body##*$'\n'}
+  json=${body%$'\n'*}
+  printf '%s\n' "$json"
+  if [ "$code" != "200" ]; then
+    printf 'stopped: HTTP %s\n' "$code" >&2
+    break
+  fi
+  case "$json" in
+    *'"remaining":0'*) break ;;
+  esac
+done
 ```
 
 To let the cron call Workers AI again, set `AI_NEWS_GENERATOR` to `workers-ai`. Leave it `off` to keep the neuron spend at zero. Cleanup still runs while publishing is on.

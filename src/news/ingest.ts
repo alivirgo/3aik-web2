@@ -761,16 +761,16 @@ async function backfillResponse(request: Request, env: NewsEnv, deps: IngestDeps
 	if (!repo) return json({ error: "unavailable" }, 503);
 	const raw = await readBodyCapped(new Response(request.body), 20_000);
 	if (raw == null) return reasons(["body_too_large"]);
-	let limit = 4;
 	if (raw.trim()) {
 		try {
-			limit = backfillLimit(JSON.parse(raw));
+			backfillLimit(JSON.parse(raw));
 		} catch {
 			return reasons(["invalid_json"]);
 		}
 	}
 	try {
-		const report = await backfillLeads(env, { repo, fetchImpl: deps.fetchImpl, now: deps.now }, limit, fetchPublisherImage);
+		const report = await backfillLeads(env, { repo, fetchImpl: deps.fetchImpl, now: deps.now });
+		if (report.error) return json(report, 503);
 		return json(report, 200);
 	} catch (error) {
 		console.error(JSON.stringify({
