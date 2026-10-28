@@ -1,5 +1,5 @@
 import { commitImageFile, deleteImageFile, isGitHubImagePath, readerImageUrl, type GitHubWriteResult } from "./github-images";
-import { buildLeadVariants, type LeadVariant } from "./image-crop";
+import type { LeadVariant } from "./image-crop";
 import { imageDimensions } from "./text";
 
 export const PRIMARY_SUFFIX = "-16x9.webp";
@@ -88,6 +88,8 @@ export async function persistLeadVariants(
 	fetchImpl: typeof fetch,
 ): Promise<StoredLead> {
 	if (!token) return EMPTY_LEAD;
+	// Loaded only when a generated illustration is cropped. Ingest does not call this.
+	const { buildLeadVariants } = await import("./image-crop");
 	const variants = await buildLeadVariants(source);
 	if (!variants?.length) return EMPTY_LEAD;
 	const committed: string[] = [];

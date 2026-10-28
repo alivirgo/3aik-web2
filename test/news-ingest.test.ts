@@ -252,13 +252,13 @@ describe("ingest publish", () => {
 		expect(article?.category).toBe("ai");
 		expect(article?.imageAlt).toBe(ALT);
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
-		expect(article?.imageType).toBe("image/webp");
-		expect(article?.imageKey).toMatch(new RegExp(`^images/2026/10/${slug}-[a-f0-9]{8}-16x9\\.webp$`));
+		expect(article?.imageType).toBe("image/png");
+		expect(article?.imageKey).toMatch(new RegExp(`^images/2026/10/${slug}-[a-f0-9]{8}\\.png$`));
 		expect(article?.sources[0]?.url).toBe("https://example.com/story");
-		expect(state.githubPuts).toHaveLength(5);
+		expect(state.githubPuts).toHaveLength(1);
 		expect(state.githubPuts[0]?.authorization).toBe("Bearer ghp-test");
 		expect(state.githubPuts.at(-1)?.url).toBe(`https://api.github.com/repos/alivirgo/3aik-ai-news-images/contents/${article?.imageKey}`);
-		expect(JSON.parse(state.githubPuts.at(-1)?.body ?? "{}").content).not.toBe(wideBase64());
+		expect(JSON.parse(state.githubPuts.at(-1)?.body ?? "{}").content).toBe(wideBase64());
 		const stats = await state.repo.stats();
 		expect(stats.authors["adele-okonkwo"]?.count).toBe(1);
 		expect(stats.categories.ai?.count).toBe(1);
@@ -306,8 +306,8 @@ describe("ingest publish", () => {
 		expect(response.status).toBe(201);
 		expect(state.repo.articles[0]?.category).toBe("technology");
 		expect(state.repo.articles[0]?.authorId).toBe("caleb-ortiz");
-		expect(state.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
-		expect(state.githubPuts).toHaveLength(5);
+		expect(state.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
+		expect(state.githubPuts).toHaveLength(1);
 	});
 
 	it("stores a png and publishes without a picture when GitHub fails or the image token is missing", async () => {
@@ -318,8 +318,8 @@ describe("ingest publish", () => {
 		});
 		const pngResponse = await send(post(pngBody), png);
 		expect(pngResponse.response.status).toBe(201);
-		expect(png.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
-		expect(png.githubPuts).toHaveLength(5);
+		expect(png.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
+		expect(png.githubPuts).toHaveLength(1);
 
 		const failed = desk({ githubStatus: 500 });
 		const failedResponse = await send(post(articleFields({
@@ -474,7 +474,7 @@ describe("publisher images", () => {
 		const { response } = await send(post(fields({ image_source_url: imageUrl, image_credit: "Image: WWD" })), state);
 		expect(response.status).toBe(201);
 		const article = state.repo.articles[0];
-		expect(article?.imageKey.endsWith("-16x9.webp")).toBe(true);
+		expect(article?.imageKey.endsWith(".png")).toBe(true);
 		expect(article?.imageCommit).toBe(COMMIT_SHA);
 		expect(article?.imageCredit).toBe("Image: WWD");
 		expect(article?.imageSourceUrl).toBe(imageUrl);
@@ -501,7 +501,7 @@ describe("publisher images", () => {
 		}).fetchImpl;
 		const png = await send(post(fields({ image_source_url: pngUrl, image_credit: "WWD" })), pngState);
 		expect(png.response.status).toBe(201);
-		expect(pngState.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
+		expect(pngState.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
 		expect(pngState.repo.articles[0]?.imageCredit).toBe("Image: WWD");
 		expect(pngState.repo.articles[0]?.imageSourceUrl).toBe(pngUrl);
 		const page = await handleNewsRequest(
@@ -576,7 +576,7 @@ describe("publisher images", () => {
 		})), huge);
 		expect(oversized.response.status).toBe(201);
 		expect(huge.repo.articles[0]?.imageKey).toBe("");
-		expect(huge.repo.articles[0]?.imageSourceUrl).toBe("");
+		expect(huge.repo.articles[0]?.imageSourceUrl).toBe("https://images.example.net/huge.jpg");
 	});
 
 	it("prefers the publisher image over uploaded bytes and still checks alt text", async () => {
@@ -590,7 +590,7 @@ describe("publisher images", () => {
 			image: { data: Buffer.from(TINY_PNG).toString("base64"), alt: ALT },
 		})), state);
 		expect(response.status).toBe(201);
-		expect(state.repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
+		expect(state.repo.articles[0]?.imageKey.endsWith(".png")).toBe(true);
 
 		const short = desk();
 		const rejected = await send(post(fields({ image_source_url: imageUrl, image_alt: "too short" })), short);

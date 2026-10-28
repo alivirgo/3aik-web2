@@ -92,159 +92,173 @@ function sourceUrls(article: StoredArticle): string[] {
 	return urls.slice(0, 4);
 }
 
+const MAX_ATTEMPTS = 5;
+const RETRY_MS = 60 * 60 * 1000;
+
 type StoreOutcome =
-	| { kind: "updated"; lead: StoredLead }
-	| { kind: "failed"; reason: string }
-	| { kind: "next"; reason: string }
+	| { kind: "updated"; lead: StoredLead; pending: string }
+	| { kind: "defer"; reason: string }
+	| { kind: "terminal"; reason: string }
 	| { kind: "retry"; reason: string };
 
-async function storeFromUrl(
-	token: string,
-	article: StoredArticle,
-	sourceUrl: string,
-	fetchImpl: typeof fetch,
-): Promise<StoreOutcome> {
-	const suffix = article.id.replace(/-/g, "").slice(0, 8);
-	const probe = await fetchResizedWebp(sourceUrl, PRIMARY_RESIZE, fetchImpl);
-	if (!probe.ok) {
-		if (probe.reason === "unavailable") return { kind: "retry", reason: "resize_unavailable" };
-		if (probe.reason === "transient") return { kind: "next", reason: "transient" };
-		return { kind: "next", reason: probe.reason === "too_large" ? "resize_too_large" : "unprocessable_source" };
-	}
-	const rendered = new Map<string, Uint8Array>();
-	rendered.set(PRIMARY_RESIZE.suffix, probe.bytes);
-	for (const spec of BACKFILL_SPECS) {
-		if (rendered.has(spec.suffix)) continue;
-		const resized = await fetchResizedWebp(sourceUrl, spec, fetchImpl);
-		if (!resized.ok) {
-			if (resized.reason === "unavailable") return { kind: "retry", reason: "resize_unavailable" };
-			if (resized.reason === "transient") return { kind: "next", reason: "transient" };
-			return { kind: "next", reason: "resize_incomplete" };
-		}
-		rendered.set(spec.suffix, resized.bytes);
-	}
-	const committed: string[] = [];
-	let lastSha = "";
-	let pause = false;
-	for (const spec of BACKFILL_SPECS) {
-		const path = leadVariantPath(article.publishedAt, article.slug, suffix, spec);
-		const bytes = rendered.get(spec.suffix);
-		if (!path || !bytes) return { kind: "failed", reason: "resize_incomplete" };
-		const wrote = await commitImageFile(token, path, bytes, fetchImpl);
-		if (!wrote.ok || !wrote.commitSha) {
-			for (const stored of committed) await deleteImageFile(token, stored, fetchImpl);
-			if (wrote.pause) return { kind: "retry", reason: "github_rate_limit" };
-			return { kind: "failed", reason: "github_commit_failed" };
-		}
-		committed.push(path);
-		lastSha = wrote.commitSha;
-		pause = wrote.pause;
-	}
-	const imageKey = committed[committed.length - 1] ?? "";
-	if (!imageKey) return { kind: "failed", reason: "github_commit_failed" };
-	return {
-		kind: "updated",
-		lead: { imageKey, imageCommit: lastSha, imageType: "image/webp", pause },
-	};
+function nextSpec(article: StoredArticle, pending: string): { suffix: string; width: number; height: number } | null {
+	const wanted = pending.split(",").map((part) => part.trim()).filter(Boolean);
+	if (wanted.length) return BACKFILL_SPECS.find((spec) => wanted.includes(spec.suffix)) ?? null;
+	if (article.imageKey.endsWith(PRIMARY_RESIZE.suffix)) return null;
+	return PRIMARY_RESIZE;
 }
 
-async function storeArticle(
+function pendingAfter(specSuffix: string, pending: string, hadPrimary: boolean): string {
+	const rest = (pending ? pending.split(",") : BACKFILL_SPECS.map((spec) => spec.suffix))
+		.map((part) => part.trim())
+		.filter((part) => part && part !== specSuffix);
+	if (!hadPrimary && specSuffix === PRIMARY_RESIZE.suffix) {
+		return BACKFILL_SPECS.filter((spec) => spec.suffix !== PRIMARY_RESIZE.suffix).map((spec) => spec.suffix).join(",");
+	}
+	return rest.join(",");
+}
+
+async function storeOneVariant(
 	token: string,
 	article: StoredArticle,
+	spec: { suffix: string; width: number; height: number },
+	pending: string,
 	fetchImpl: typeof fetch,
 ): Promise<StoreOutcome> {
 	const urls = sourceUrls(article);
-	if (!urls.length) return { kind: "failed", reason: "no_source" };
-	let lastFailed = "unprocessable_source";
+	if (!urls.length) return { kind: "terminal", reason: "no_source" };
+	const suffix = article.id.replace(/-/g, "").slice(0, 8);
 	let sawTransient = false;
+	let sawRejected = false;
 	for (const url of urls) {
-		const outcome = await storeFromUrl(token, article, url, fetchImpl);
-		if (outcome.kind === "updated" || outcome.kind === "retry" || outcome.kind === "failed") return outcome;
-		if (outcome.reason === "transient") sawTransient = true;
-		else lastFailed = outcome.reason;
+		const resized = await fetchResizedWebp(url, spec, fetchImpl);
+		if (!resized.ok) {
+			if (resized.reason === "unavailable") return { kind: "retry", reason: "resize_unavailable" };
+			if (resized.reason === "transient") sawTransient = true;
+			else if (resized.reason === "too_large") return { kind: "defer", reason: "resize_too_large" };
+			else sawRejected = true;
+			continue;
+		}
+		const path = leadVariantPath(article.publishedAt, article.slug, suffix, spec);
+		if (!path) return { kind: "terminal", reason: "unprocessable_source" };
+		const wrote = await commitImageFile(token, path, resized.bytes, fetchImpl);
+		if (!wrote.ok || !wrote.commitSha) {
+			if (wrote.pause) return { kind: "retry", reason: "github_rate_limit" };
+			return { kind: "defer", reason: "github_commit_failed" };
+		}
+		const imageKey = spec.suffix === PRIMARY_RESIZE.suffix ? path : (article.imageKey || path);
+		return {
+			kind: "updated",
+			lead: { imageKey, imageCommit: wrote.commitSha, imageType: "image/webp", pause: wrote.pause },
+			pending: pendingAfter(spec.suffix, pending, article.imageKey.endsWith(PRIMARY_RESIZE.suffix)),
+		};
 	}
-	if (sawTransient) return { kind: "retry", reason: "resize_unavailable" };
-	return { kind: "failed", reason: lastFailed };
+	if (sawTransient && !sawRejected) return { kind: "defer", reason: "transient" };
+	if (spec.suffix !== PRIMARY_RESIZE.suffix) return { kind: "defer", reason: "resize_incomplete" };
+	return { kind: "terminal", reason: "unprocessable_source" };
 }
 
 function emptyReport(remaining: number, extra: Partial<BackfillReport> = {}): BackfillReport {
 	return { updated: 0, skipped: 0, failed: 0, remaining, results: [], ...extra };
 }
 
+function laterIso(now: Date, ms: number): string {
+	return new Date(now.getTime() + ms).toISOString();
+}
+
 /**
- * One article per call. Resizing happens in Cloudflare image transforms, not in
- * the Worker. A held row is never selected again, so a crashed attempt cannot
- * keep the same article at the head of the queue.
+ * One variant of one article per call. Cloudflare resizes it. A crash leaves
+ * retry_after an hour ahead so the manual loop moves on and cron tries again.
+ * resize_incomplete is deferred, not terminal.
  */
 export async function backfillLeads(
 	env: NewsEnv,
 	deps: BackfillDeps,
 ): Promise<BackfillReport> {
 	const fetchImpl = deps.fetchImpl ?? fetch;
-	const nowIso = (deps.now ?? new Date()).toISOString();
+	const now = deps.now ?? new Date();
+	const nowIso = now.toISOString();
 	const token = env.GITHUB_IMAGES_TOKEN?.trim() ?? "";
-	const remainingBefore = async () => deps.repo.countForBackfill();
-	if (!token) return emptyReport(await remainingBefore(), { error: "images_token_missing" });
-	const rows = await deps.repo.listForBackfill(1);
+	const remainingNow = async () => deps.repo.countForBackfill(nowIso);
+	if (!token) return emptyReport(await remainingNow(), { error: "images_token_missing" });
+	const rows = await deps.repo.listForBackfill(1, nowIso);
 	const article = rows[0];
 	if (!article) return emptyReport(0);
-	const held = await deps.repo.holdBackfill(article.id, nowIso);
-	if (!held) return emptyReport(await remainingBefore(), { skipped: 1 });
+	const job = await deps.repo.readBackfill(article.id);
+	const held = await deps.repo.holdBackfill(article.id, nowIso, laterIso(now, RETRY_MS));
+	if (!held) return emptyReport(await remainingNow(), { skipped: 1 });
+	const spec = nextSpec(article, job?.pending ?? "");
+	if (!spec) {
+		await deps.repo.clearBackfill(article.id);
+		return emptyReport(await remainingNow(), { skipped: 1 });
+	}
 	let outcome: StoreOutcome;
 	try {
-		outcome = await storeArticle(token, article, fetchImpl);
+		outcome = await storeOneVariant(token, article, spec, job?.pending ?? "", fetchImpl);
 	} catch (error) {
 		console.error(JSON.stringify({
 			message: "ai-news backfill article failed",
 			slug: article.slug,
 			error: error instanceof Error ? error.message : String(error),
 		}));
-		outcome = { kind: "failed", reason: "unprocessable_source" };
+		outcome = { kind: "defer", reason: "transient" };
 	}
 	if (outcome.kind === "retry") {
 		await deps.repo.clearBackfill(article.id);
-		return emptyReport(await remainingBefore(), {
+		return emptyReport(await remainingNow(), {
 			error: outcome.reason,
 			results: [{ id: article.id, slug: article.slug, status: "blocked", reason: outcome.reason }],
 		});
 	}
 	if (outcome.kind !== "updated") {
+		const attempts = (job?.attempts ?? 0) + 1;
+		const terminal = outcome.kind === "terminal" || attempts >= MAX_ATTEMPTS;
 		const reason = outcome.reason || "unprocessable_source";
-		await deps.repo.failBackfill(article.id, reason, nowIso);
+		await deps.repo.deferBackfill(
+			article.id,
+			terminal ? reason : reason,
+			nowIso,
+			terminal ? "" : laterIso(now, RETRY_MS),
+			job?.pending ?? "",
+			attempts,
+		);
 		console.error(JSON.stringify({
-			message: "ai-news backfill skipped",
+			message: terminal ? "ai-news backfill skipped" : "ai-news backfill deferred",
 			slug: article.slug,
 			reason,
+			attempts,
 		}));
 		return {
 			updated: 0,
 			skipped: 0,
-			failed: 1,
-			remaining: await remainingBefore(),
-			results: [{ id: article.id, slug: article.slug, status: "failed", reason }],
+			failed: terminal ? 1 : 0,
+			remaining: await remainingNow(),
+			results: [{ id: article.id, slug: article.slug, status: terminal ? "failed" : "blocked", reason }],
 		};
 	}
-	const credit = article.imageCredit;
-	const sourceUrl = article.imageSourceUrl;
 	await deps.repo.updateLeadImage(article.id, {
 		imageKey: outcome.lead.imageKey,
 		imageCommit: outcome.lead.imageCommit,
 		imageType: outcome.lead.imageType,
-		imageCredit: credit,
-		imageSourceUrl: sourceUrl,
+		imageCredit: article.imageCredit,
+		imageSourceUrl: article.imageSourceUrl,
 		updatedAt: nowIso,
 	});
-	await deps.repo.clearBackfill(article.id);
+	if (outcome.pending) {
+		await deps.repo.deferBackfill(article.id, "pending", nowIso, nowIso, outcome.pending, 0);
+	} else {
+		await deps.repo.clearBackfill(article.id);
+	}
 	const previous = article.imageKey;
-	if (previous && previous !== outcome.lead.imageKey && isGitHubImagePath(previous)) {
+	if (previous && previous !== outcome.lead.imageKey && isGitHubImagePath(previous) && !previous.endsWith(PRIMARY_RESIZE.suffix)) {
 		await deleteImageFile(token, previous, fetchImpl);
 	}
 	return {
 		updated: 1,
 		skipped: 0,
 		failed: 0,
-		remaining: await remainingBefore(),
-		results: [{ id: article.id, slug: article.slug, status: "updated", reason: "" }],
+		remaining: await remainingNow(),
+		results: [{ id: article.id, slug: article.slug, status: "updated", reason: outcome.pending ? "pending" : "" }],
 	};
 }
 

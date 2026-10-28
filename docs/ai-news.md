@@ -308,9 +308,11 @@ curl -sS https://3aik.com/ai-news/api/ingest/meta \
 
 ### POST /ai-news/api/ingest/backfill
 
-Regenerates the five WebP crops for one article per call. Cloudflare resizes the publisher URL or the stored jsDelivr file (`cf.image`, cover crop, WebP). The Worker does not decode the original. The same bearer as ingest. This route does not count against the hourly ingest cap. A body limit above 1 is ignored.
+Resizes one crop of one article per call. Cloudflare does the crop (`cf.image`, cover, WebP). The Worker does not decode the original. The same bearer as ingest. This route does not count against the hourly ingest cap. A body limit above 1 is ignored. The hourly cron also runs one crop when `GITHUB_IMAGES_TOKEN` is set.
 
-Each attempt is recorded in `article_image_backfill` before the resize. A crashed call leaves `reason` `started` and that article is not picked again. A source that cannot be resized is stored with a reason (`no_source`, `unprocessable_source`, `resize_too_large`, `resize_incomplete`, `github_commit_failed`) and `remaining` drops. `resize_unavailable` and `github_rate_limit` do not flag the article. The response is HTTP 503 with `error` set, and the loop should stop. The Worker creates the table on the first call. `migrations/0009_ai_news_image_backfill.sql` is the same statement.
+Ingest stores an uploaded or downloaded file as-is when it is at most 1 MB. It does not crop inside the post. A larger publisher URL is kept and resized here later. The post still returns 201 if the picture cannot be stored.
+
+A call records `article_image_backfill` with `retry_after` an hour ahead before the resize, so a crashed call is skipped by the loop and picked up by cron. `resize_incomplete`, `resize_too_large`, `github_commit_failed`, and `transient` use the same delay, for at most 5 attempts. `no_source` and `unprocessable_source` stay out of the queue. `resize_unavailable` and `github_rate_limit` return HTTP 503 and do not flag the article. The Worker creates the table and adds `retry_after`, `attempts`, and `pending` on the first call. `migrations/0009_ai_news_image_backfill.sql` matches that table.
 
 Repeat until `remaining` is 0. Stop if the body contains `"error"`.
 
