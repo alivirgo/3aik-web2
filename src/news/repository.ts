@@ -6,6 +6,7 @@ import { loadD1StatsReport } from "./d1-stats";
 import { writeNewsEvent } from "./events";
 import { continentLabel, emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, saltToHex, summarizePageViews } from "./pageviews";
 import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
+import { canonicalLeadKey } from "./lead";
 import { isCategory, wordCount } from "./text";
 
 export interface NewsRepository {
@@ -30,6 +31,10 @@ export interface NewsRepository {
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
+	/** Newest articles whose lead is not a finished 1600px 16:9 set. */
+	listForBackfill(limit: number): Promise<StoredArticle[]>;
+	countForBackfill(): Promise<number>;
+	updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void>;
 	listRecentSourceUrls(limit: number): Promise<string[]>;
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
 	consumeIngest(bucket: string, limit: number): Promise<boolean>;
@@ -401,13 +406,74 @@ export class D1NewsRepository implements NewsRepository {
 	}
 
 	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
+		const canonical = canonicalLeadKey(imageKey) ?? imageKey;
 		const row = await this.db
-			.prepare("SELECT image_type FROM articles WHERE image_key = ? AND image_commit = ? LIMIT 1")
-			.bind(imageKey, imageCommit)
+			.prepare("SELECT image_key, image_type FROM articles WHERE image_commit = ? AND image_key IN (?, ?) LIMIT 1")
+			.bind(imageCommit, imageKey, canonical)
 			.first<Record<string, unknown>>();
 		const record = asRecord(row);
 		const contentType = record ? readString(record, "image_type") : "";
-		return contentType ? { contentType } : null;
+		const storedKey = record ? readString(record, "image_key") : "";
+		if (!contentType || !storedKey) return null;
+		if (storedKey === imageKey) return { contentType };
+		if (storedKey === canonical && canonical.endsWith("-16x9.webp")) return { contentType: "image/webp" };
+		return null;
+	}
+
+	async listForBackfill(limit: number): Promise<StoredArticle[]> {
+		try {
+			return await this.rows(
+				`SELECT {{columns}} FROM articles
+				 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')
+				 ORDER BY published_at DESC LIMIT ?`,
+				limit,
+			);
+		} catch (error) {
+			if (!missingColumn(error)) throw error;
+			return this.rows(
+				`SELECT {{columns}} FROM articles
+				 WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'
+				 ORDER BY published_at DESC LIMIT ?`,
+				limit,
+			);
+		}
+	}
+
+	async countForBackfill(): Promise<number> {
+		try {
+			const row = await this.db
+				.prepare(
+					`SELECT COUNT(*) AS n FROM articles
+					 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')`,
+				)
+				.first<Record<string, unknown>>();
+			return Number(asRecord(row)?.n) || 0;
+		} catch (error) {
+			if (!missingColumn(error)) throw error;
+			const row = await this.db
+				.prepare("SELECT COUNT(*) AS n FROM articles WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'")
+				.first<Record<string, unknown>>();
+			return Number(asRecord(row)?.n) || 0;
+		}
+	}
+
+	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {
+		try {
+			await this.db
+				.prepare(
+					`UPDATE articles
+					 SET image_key = ?, image_commit = ?, image_type = ?, image_credit = ?, image_source_url = ?, updated_at = ?
+					 WHERE id = ?`,
+				)
+				.bind(image.imageKey, image.imageCommit, image.imageType, image.imageCredit, image.imageSourceUrl, image.updatedAt, id)
+				.run();
+		} catch (error) {
+			if (!missingColumn(error)) throw error;
+			await this.db
+				.prepare("UPDATE articles SET image_key = ?, image_commit = ?, image_type = ?, updated_at = ? WHERE id = ?")
+				.bind(image.imageKey, image.imageCommit, image.imageType, image.updatedAt, id)
+				.run();
+		}
 	}
 
 	async listRecentSourceUrls(limit: number): Promise<string[]> {
@@ -1039,8 +1105,34 @@ export class MemoryNewsRepository implements NewsRepository {
 	}
 
 	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
-		const article = this.articles.find((entry) => entry.imageKey === imageKey && entry.imageCommit === imageCommit);
-		return article?.imageType ? { contentType: article.imageType } : null;
+		const direct = this.articles.find((entry) => entry.imageKey === imageKey && entry.imageCommit === imageCommit);
+		if (direct?.imageType) return { contentType: direct.imageType };
+		const canonical = canonicalLeadKey(imageKey);
+		if (!canonical || canonical === imageKey) return null;
+		const primary = this.articles.find((entry) => entry.imageKey === canonical && entry.imageCommit === imageCommit);
+		return primary?.imageType ? { contentType: "image/webp" } : null;
+	}
+
+	async listForBackfill(limit: number): Promise<StoredArticle[]> {
+		return this.articles
+			.filter((article) => !article.imageKey.endsWith("-16x9.webp") && (article.imageKey || article.imageSourceUrl))
+			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+			.slice(0, limit);
+	}
+
+	async countForBackfill(): Promise<number> {
+		return this.articles.filter((article) => !article.imageKey.endsWith("-16x9.webp") && (article.imageKey || article.imageSourceUrl)).length;
+	}
+
+	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {
+		const article = this.articles.find((entry) => entry.id === id);
+		if (!article) return;
+		article.imageKey = image.imageKey;
+		article.imageCommit = image.imageCommit;
+		article.imageType = image.imageType;
+		article.imageCredit = image.imageCredit;
+		article.imageSourceUrl = image.imageSourceUrl;
+		article.updatedAt = image.updatedAt;
 	}
 
 	async listRecentSourceUrls(limit: number): Promise<string[]> {

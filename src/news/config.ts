@@ -67,8 +67,10 @@ export const ACCURACY_DISCLAIMER =
 	"3aik.com takes no responsibility for the accuracy of news. Readers should verify claims with the linked original sources.";
 /** One calm line on an article, and the only disclosure on index pages. */
 export const ASSIST_LINE = "Written with AI assistance from cited reporting.";
-/** Publisher and upload image cap. PNG, JPEG, and WebP are stored only at or under 1 MB. */
+/** Publisher and upload image cap. Stored crops stay at or under 1 MB. */
 export const SOURCE_IMAGE_MAX_BYTES = 1_000_000;
+/** Download cap for a publisher original before it is cropped into WebP variants. */
+export const LEAD_DOWNLOAD_MAX_BYTES = 8_000_000;
 
 export const CATEGORY_LABEL: Record<Category, string> = {
 	ai: "AI",

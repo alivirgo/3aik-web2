@@ -270,7 +270,18 @@ function scheduleAnalytics(ctx: ExecutionContext | undefined, request: Request, 
 }
 
 export async function handleNewsRequest(request: Request, env: Env, override: NewsRequestDeps = {}, ctx?: ExecutionContext): Promise<Response> {
-	const earlyPath = normalizePath(new URL(request.url).pathname);
+	const requestUrl = new URL(request.url);
+	const rawPath = requestUrl.pathname;
+	if (
+		(request.method === "GET" || request.method === "HEAD")
+		&& rawPath.startsWith("/ai-news/")
+		&& rawPath.length > 1
+		&& rawPath.endsWith("/")
+	) {
+		const stripped = rawPath.replace(/\/+$/, "") || "/ai-news";
+		return redirectResponse(`${siteOrigin(env, request)}${stripped}${requestUrl.search}`);
+	}
+	const earlyPath = normalizePath(rawPath);
 	if (ingestApiPath(earlyPath)) {
 		return handleIngestRequest(request, env, {
 			repo: resolveRepo(env, override),
@@ -345,7 +356,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const count = await countArticles(repo);
 			const pages = Math.max(1, Math.ceil(count / SITEMAP_PAGE_SIZE));
 			const requested = sitemapPage ? Number(sitemapPage[1]) : 0;
-			if (!sitemapPage && pages > 1) {
+			if (!sitemapPage) {
 				return xmlResponse(request, renderSitemapIndex(origin, pages), "application/xml; charset=utf-8");
 			}
 			const index = requested === 0 ? 1 : requested;

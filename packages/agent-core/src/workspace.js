@@ -475,6 +475,13 @@ export class LocalWorkspace {
   }
 
   async verify() {
+    // Walked files are realpath'd. Keep the root on that same path so Windows
+    // 8.3 temp directories and symlinks still produce workspace-relative names.
+    const canonical = await realpath(this.root);
+    if (isSensitivePath(canonical)) {
+      throw new SafetyError("A secret or credential directory cannot be used as the workspace root.", { code: "sensitive_workspace" });
+    }
+    this.root = canonical;
     const info = await stat(this.root);
     if (!info.isDirectory()) throw new AgentError("Workspace root is not a directory.", { code: "invalid_workspace" });
     return this.root;

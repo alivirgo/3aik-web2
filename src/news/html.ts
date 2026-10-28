@@ -8,7 +8,9 @@ import {
 	PUBLISHER_NAME,
 	SITE_NAME,
 } from "./config";
+import { AI_NEWS_CSS_PATH } from "./css-asset";
 import { readerImageUrl } from "./github-images";
+import { leadView, schemaImages } from "./lead";
 import { pageHref } from "./paging";
 import type { Category, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
@@ -21,6 +23,7 @@ import {
 	readingLabel,
 	readingMinutes,
 	relativeTime,
+	sentenceCaseHeadline,
 	stripEditorialDashes,
 } from "./text";
 
@@ -72,7 +75,7 @@ export function authorInitials(name: string): string {
 }
 
 function visibleTitle(title: string): string {
-	return stripEditorialDashes(title);
+	return sentenceCaseHeadline(stripEditorialDashes(title));
 }
 
 function categoryHref(origin: string, category: Category): string {
@@ -99,6 +102,11 @@ interface PageOptions {
 	ogType?: string;
 	image?: string;
 	imageAlt?: string;
+	imageWidth?: number;
+	imageHeight?: number;
+	imageMime?: string;
+	/** Bare headline for og:title and twitter:title. The document title can keep the site name. */
+	socialTitle?: string;
 	jsonLd?: unknown[];
 	publishedAt?: string;
 	modifiedAt?: string;
@@ -131,8 +139,15 @@ export interface NewsHtml {
 export function renderPage(options: PageOptions): NewsHtml {
 	const description = stripEditorialDashes(options.description);
 	const title = stripEditorialDashes(options.title);
+	const socialTitle = stripEditorialDashes(options.socialTitle ?? title);
+	const imageSize = options.image && options.imageWidth && options.imageHeight
+		? `<meta property="og:image:width" content="${options.imageWidth}">
+<meta property="og:image:height" content="${options.imageHeight}">
+${options.imageMime ? `<meta property="og:image:type" content="${escapeHtml(options.imageMime)}">` : ""}`
+		: "";
 	const imageTags = options.image
 		? `<meta property="og:image" content="${escapeHtml(options.image)}">
+${imageSize}
 <meta property="og:image:alt" content="${escapeHtml(options.imageAlt ?? "")}">
 <meta name="twitter:image" content="${escapeHtml(options.image)}">
 <meta name="twitter:image:alt" content="${escapeHtml(options.imageAlt ?? "")}">`
@@ -160,12 +175,12 @@ ${options.next ? `<link rel="next" href="${escapeHtml(options.next)}">` : ""}
 <meta name="robots" content="${escapeHtml(options.robots ?? "index,follow,max-image-preview:large")}">
 <meta property="og:site_name" content="${SITE_NAME}">
 <meta property="og:type" content="${escapeHtml(options.ogType ?? "website")}">
-<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:title" content="${escapeHtml(socialTitle)}">
 <meta property="og:description" content="${escapeHtml(description)}">
 <meta property="og:url" content="${escapeHtml(options.canonical)}">
 <meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="${options.image ? "summary_large_image" : "summary"}">
-<meta name="twitter:title" content="${escapeHtml(title)}">
+<meta name="twitter:title" content="${escapeHtml(socialTitle)}">
 <meta name="twitter:description" content="${escapeHtml(description)}">
 ${imageTags}
 ${published}
@@ -174,7 +189,7 @@ ${tags}
 <link rel="alternate" type="application/rss+xml" title="${SITE_NAME}" href="${options.origin}/ai-news/feed.xml">
 <link rel="alternate" type="application/atom+xml" title="${SITE_NAME}" href="${options.origin}/ai-news/atom.xml">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/ai-news.css">
+<link rel="stylesheet" href="${AI_NEWS_CSS_PATH}">
 ${scriptTags}
 ${ADSENSE_SCRIPT}
 </head>
@@ -256,16 +271,17 @@ export function articleImage(origin: string, article: StoredArticle): { src: str
 	return { src: stored, external: false };
 }
 
-function heroImg(article: StoredArticle, image: string): string {
-	return `<img src="${escapeHtml(image)}" alt="${escapeHtml(article.imageAlt)}" width="1600" height="900" loading="eager" fetchpriority="high" decoding="async">`;
-}
-
-function thumbImg(article: StoredArticle, image: string): string {
-	return `<img src="${escapeHtml(image)}" alt="${escapeHtml(article.imageAlt)}" width="240" height="160" loading="lazy" decoding="async">`;
-}
-
-function cardImg(article: StoredArticle, image: string): string {
-	return `<img src="${escapeHtml(image)}" alt="${escapeHtml(article.imageAlt)}" width="640" height="360" loading="lazy" decoding="async">`;
+function pictureTag(origin: string, article: StoredArticle, role: "hero" | "card" | "thumb"): string {
+	const legacy = articleImage(origin, article);
+	if (!legacy) return "";
+	const alt = escapeHtml(article.imageAlt);
+	const view = leadView(origin, article.imageKey, article.imageCommit, role);
+	const loading = role === "hero" ? `loading="eager" fetchpriority="high" decoding="async"` : `loading="lazy" decoding="async"`;
+	if (view) {
+		return `<img src="${escapeHtml(view.src)}" srcset="${escapeHtml(view.srcset)}" alt="${alt}" width="${view.width}" height="${view.height}" ${loading}>`;
+	}
+	const size = role === "hero" ? `width="1600" height="900"` : role === "card" ? `width="640" height="360"` : `width="240" height="160"`;
+	return `<img src="${escapeHtml(legacy.src)}" alt="${alt}" ${size} ${loading}>`;
 }
 
 function latestList(origin: string, articles: StoredArticle[], now: number): string {
@@ -277,8 +293,9 @@ function latestList(origin: string, articles: StoredArticle[], now: number): str
 }
 
 function sideStory(origin: string, article: StoredArticle, now: number): string {
-	const image = articleImage(origin, article)?.src ?? "";
-	const media = image ? `<a class="thumb" href="${articleHref(origin, article.slug)}">${thumbImg(article, image)}</a>` : "";
+	const media = pictureTag(origin, article, "thumb")
+		? `<a class="thumb" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, "thumb")}</a>`
+		: "";
 	return `<article class="side">
 ${media}
 <div>
@@ -290,8 +307,9 @@ ${kickerLink(origin, article.category)}
 }
 
 function storyCard(origin: string, article: StoredArticle, now: number): string {
-	const image = articleImage(origin, article)?.src ?? "";
-	const media = image ? `<a class="card-media" href="${articleHref(origin, article.slug)}">${cardImg(article, image)}</a>` : "";
+	const media = pictureTag(origin, article, "card")
+		? `<a class="card-media" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, "card")}</a>`
+		: "";
 	return `<article class="card">
 ${media}
 <div class="card-body">
@@ -314,8 +332,9 @@ function sectionBand(origin: string, category: Category, articles: StoredArticle
 function frontPage(origin: string, articles: StoredArticle[], now: number): string {
 	const lead = articles[0];
 	if (!lead) return "";
-	const image = articleImage(origin, lead)?.src ?? "";
-	const media = image ? `<a class="lead-media" href="${articleHref(origin, lead.slug)}">${heroImg(lead, image)}</a>` : "";
+	const media = pictureTag(origin, lead, "hero")
+		? `<a class="lead-media" href="${articleHref(origin, lead.slug)}">${pictureTag(origin, lead, "hero")}</a>`
+		: "";
 	const stackItems = articles.slice(1, 5);
 	const stack = stackItems.length
 		? stackItems.map((article) => sideStory(origin, article, now)).join("")
@@ -412,7 +431,12 @@ export function renderIndex(origin: string, articles: StoredArticle[], listing: 
 		prev: neighbors.prev,
 		next: neighbors.next,
 		footerNote: ASSIST_LINE,
-		body: `${front}${list}${renderPager(base, listing)}`,
+		image: `${origin}/ai-news-og.png`,
+		imageAlt: SITE_NAME,
+		imageWidth: 1200,
+		imageHeight: 630,
+		imageMime: "image/png",
+		body: `<h1 class="visually-hidden">${escapeHtml(SITE_NAME)}</h1>${front}${list}${renderPager(base, listing)}`,
 		jsonLd: [{
 			"@context": "https://schema.org",
 			"@type": "CollectionPage",
@@ -514,8 +538,6 @@ ${list}`;
 }
 
 export function renderArticle(origin: string, article: StoredArticle, latest: StoredArticle[] = []): NewsHtml {
-	const author = authorById(article.authorId);
-	const name = author?.name ?? "Desk persona";
 	const canonical = articleHref(origin, article.slug);
 	const image = articleImage(origin, article)?.src ?? "";
 	const title = visibleTitle(article.title);
@@ -542,10 +564,12 @@ export function renderArticle(origin: string, article: StoredArticle, latest: St
 	const prose = renderBodyHtml(paragraphsFromBody(article.bodyText), allow);
 	const now = Date.now();
 	const credit = article.imageCredit.trim();
+	const discover = schemaImages(origin, article.imageKey, article.imageCommit);
 	const socialImage = image || `${origin}/og.png`;
 	const socialAlt = image ? article.imageAlt : `${SITE_NAME}`;
-	const hero = image
-		? `<figure class="hero">${heroImg(article, image)}${credit ? `<figcaption>${escapeHtml(credit)}</figcaption>` : ""}</figure>`
+	const heroTag = pictureTag(origin, article, "hero");
+	const hero = heroTag
+		? `<figure class="hero">${heroTag}${credit ? `<figcaption>${escapeHtml(credit)}</figcaption>` : ""}</figure>`
 		: "";
 	const others = latest.filter((item) => item.slug !== article.slug).slice(0, 8);
 	const minutes = readingMinutes(article.bodyText);
@@ -577,25 +601,32 @@ ${latestList(origin, others, now)}
 		"@type": "NewsArticle",
 		headline: title,
 		description: article.description,
-		image: [socialImage],
+		image: discover ?? [{ "@type": "ImageObject", url: socialImage }],
 		datePublished: article.publishedAt,
 		dateModified: article.updatedAt,
 		timeRequired: `PT${minutes}M`,
 		articleSection: CATEGORY_LABEL[article.category],
 		keywords: article.tags.join(", "),
-		author: {
+		author: [{
 			"@type": "Organization",
-			name,
-			description: "Not a real person.",
+			name: "3aik News Desk",
 			url: `${origin}/ai-news/about`,
-		},
+		}],
 		creditText: ASSIST_LINE,
 		disclaimer: ASSIST_LINE,
 		publisher: {
-			"@type": "Organization",
-			name: PUBLISHER_NAME,
+			"@type": "NewsMediaOrganization",
+			name: SITE_NAME,
 			url: `${origin}/ai-news/about`,
-			logo: { "@type": "ImageObject", url: `${origin}/icon-512.png` },
+			logo: {
+				"@type": "ImageObject",
+				url: `${origin}/icon-512.png`,
+				width: 512,
+				height: 512,
+			},
+			publishingPrinciples: `${origin}/ai-news/editorial-policy`,
+			correctionsPolicy: `${origin}/ai-news/corrections`,
+			ethicsPolicy: `${origin}/ai-news/editorial-policy`,
 		},
 		mainEntityOfPage: { "@type": "WebPage", "@id": canonical },
 		url: canonical,
@@ -606,15 +637,6 @@ ${latestList(origin, others, now)}
 			publisher: { "@type": "Organization", name: source.outlet },
 		})),
 	};
-	const faqLd = {
-		"@context": "https://schema.org",
-		"@type": "FAQPage",
-		mainEntity: article.faq.map((item) => ({
-			"@type": "Question",
-			name: item.question,
-			acceptedAnswer: { "@type": "Answer", text: item.answer },
-		})),
-	};
 	return renderPage({
 		origin,
 		title: `${title} | ${SITE_NAME}`,
@@ -622,17 +644,22 @@ ${latestList(origin, others, now)}
 		canonical,
 		body,
 		ogType: "article",
-		image: socialImage,
+		socialTitle: title,
+		image: discover ? discover[0]?.url ?? socialImage : socialImage,
 		imageAlt: socialAlt,
+		imageWidth: discover ? 1600 : undefined,
+		imageHeight: discover ? 900 : undefined,
+		imageMime: discover ? "image/webp" : undefined,
 		publishedAt: article.publishedAt,
 		modifiedAt: article.updatedAt,
 		section: CATEGORY_LABEL[article.category],
 		tags: article.tags,
 		navCurrent: article.category,
-		jsonLd: [newsLd, trail.json, faqLd],
+		jsonLd: [newsLd, trail.json],
 	});
 }
 
+// TODO: ownership and legal entity details are waiting on the owner. Do not invent a name, address, or phone.
 export function renderAbout(origin: string): NewsHtml {
 	const canonical = `${origin}/ai-news/about`;
 	const roster = AUTHORS.map((author) => `<li><span class="avatar" aria-hidden="true">${escapeHtml(authorInitials(author.name))}</span><div><a href="${authorHref(origin, author.id)}">${escapeHtml(author.name)}</a> <span>${escapeHtml(CATEGORY_LABEL[author.category])} · ${escapeHtml(author.beat)}</span><p>${escapeHtml(author.bio)}</p></div></li>`).join("");
@@ -811,6 +838,7 @@ ${reach}
 	});
 }
 
+// TODO: ownership and legal entity details are waiting on the owner. Do not invent a name, address, or phone.
 export function renderContact(origin: string, email: string): NewsHtml {
 	const canonical = `${origin}/ai-news/contact`;
 	const trail = crumbs(origin, [

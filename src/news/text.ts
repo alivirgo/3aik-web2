@@ -195,6 +195,19 @@ export function sentencesOf(input: string): string[] {
 		.filter((sentence) => sentence.length > 0);
 }
 
+export const SLUG_MAX = 70;
+
+/** Cut a slug on a hyphen so a new URL stays within `max` characters. */
+export function cutSlug(slug: string, max = SLUG_MAX): string {
+	const clean = slug.replace(/^-+|-+$/g, "");
+	if (!clean) return "story";
+	if (clean.length <= max) return clean;
+	const sliced = clean.slice(0, max).replace(/-+$/g, "");
+	const boundary = sliced.lastIndexOf("-");
+	if (boundary >= 12) return sliced.slice(0, boundary);
+	return sliced || "story";
+}
+
 export function slugify(input: string): string {
 	const slug = input
 		.normalize("NFKD")
@@ -202,10 +215,40 @@ export function slugify(input: string): string {
 		.toLowerCase()
 		.replace(/&/g, " and ")
 		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 80)
-		.replace(/-+$/g, "");
-	return slug || "story";
+		.replace(/^-+|-+$/g, "");
+	return cutSlug(slug, SLUG_MAX);
+}
+
+/** Collision suffix stays inside the 70 character slug cap. */
+export function uniqueSlug(base: string, suffix: string): string {
+	const extra = `-${suffix}`;
+	return `${cutSlug(base, Math.max(12, SLUG_MAX - extra.length))}${extra}`;
+}
+
+function keepHeadlineToken(token: string): boolean {
+	const letters = token.replace(/[^A-Za-z]/g, "");
+	if (!letters) return true;
+	if (!/[a-z]/.test(letters)) {
+		if (letters === "I") return true;
+		return letters.length >= 2 && letters.length <= 6;
+	}
+	if (/[a-z][A-Z]/.test(token) || /[A-Z]{2,}/.test(token)) return true;
+	return false;
+}
+
+/**
+ * Sentence case for new and displayed headlines. Acronyms and internal capitals
+ * such as OpenAI, iPhone, and GPT-5 stay as written.
+ */
+export function sentenceCaseHeadline(input: string): string {
+	const clean = input.replace(/\s+/g, " ").trim();
+	if (!clean) return clean;
+	return clean.split(" ").map((token, index) => {
+		if (keepHeadlineToken(token)) return token;
+		const lower = token.toLowerCase();
+		if (index !== 0) return lower;
+		return lower.replace(/[a-z]/, (char) => char.toUpperCase());
+	}).join(" ");
 }
 
 const TRACKING_PARAMS = new Set([

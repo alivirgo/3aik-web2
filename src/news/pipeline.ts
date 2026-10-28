@@ -18,25 +18,23 @@ import {
 	textCallBudget,
 	textTimeoutMs,
 	wallBudgetMs,
+	MAX_IMAGE_BYTES,
 	type NewsEnv,
 } from "./config";
 import { fetchStories } from "./feeds";
 import { indexNowPublishUrls, pingIndexNow } from "./indexnow";
 import {
 	GITHUB_DELETE_PACE_MS,
-	GITHUB_IMAGE_MAX_BYTES,
 	MAX_GITHUB_DELETES_PER_RUN,
-	commitImageFile,
 	deleteImageFile,
-	extensionForMime,
-	githubImagePath,
 	isGitHubImagePath,
 } from "./github-images";
+import { filesForStoredImage, persistLeadVariants } from "./lead";
 import { buildArticlePrompt, generateDraftText, generateIllustration, isNeuronCap, parseArticleDraft, withTimeout, type ModelBudget } from "./model";
 import { assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
 import type { ArticleDraft, AuthorPersona, Category, RelatedLink, SourceRef, StoredArticle, StoryItem } from "./types";
-import { detectImageType, imageLimitReason, slugify, stripEditorialDashes, tokenJaccard } from "./text";
+import { detectImageType, sentenceCaseHeadline, slugify, stripEditorialDashes, tokenJaccard, uniqueSlug } from "./text";
 
 const ATTEMPTS = 3;
 
@@ -192,7 +190,7 @@ async function draftStory(
 			console.log(JSON.stringify({ message: "ai-news draft rejected", attempt, reasons: verdict.reasons }));
 			continue;
 		}
-		return { ok: true, draft, model };
+		return { ok: true, draft: { ...draft, title: sentenceCaseHeadline(draft.title) }, model };
 	}
 	return { ok: false, tried, reason: sawContentFailure ? "quality" : "content" };
 }
@@ -249,20 +247,18 @@ async function storeIllustration(
 		return EMPTY_PICTURE;
 	}
 	const detected = detectImageType(image.bytes);
-	const extension = detected ? extensionForMime(detected.mime) : null;
-	const path = extension ? githubImagePath(publishedAt, slug, extension, imageSuffix) : null;
-	if (!detected || !path || imageLimitReason(image.bytes) || image.bytes.byteLength > GITHUB_IMAGE_MAX_BYTES) {
+	if (!detected || image.bytes.byteLength <= 0 || image.bytes.byteLength > MAX_IMAGE_BYTES) {
 		console.error(JSON.stringify({ message: "ai-news image skipped", reason: "type-or-size", model: image.model }));
 		return { ...EMPTY_PICTURE, model: image.model };
 	}
-	const committed = await commitImageFile(token, path, image.bytes, deps.fetchImpl ?? fetch);
-	if (!committed.ok || !committed.commitSha) return { ...EMPTY_PICTURE, model: image.model, pauseWrites: committed.pause };
+	const stored = await persistLeadVariants(token, publishedAt, slug, imageSuffix, image.bytes, deps.fetchImpl ?? fetch);
+	if (!stored.imageKey) return { ...EMPTY_PICTURE, model: image.model, pauseWrites: stored.pause };
 	return {
-		imageKey: path,
-		imageCommit: committed.commitSha,
-		imageType: detected.mime,
+		imageKey: stored.imageKey,
+		imageCommit: stored.imageCommit,
+		imageType: stored.imageType,
 		model: image.model,
-		pauseWrites: committed.pause,
+		pauseWrites: stored.pause,
 	};
 }
 
@@ -287,19 +283,25 @@ async function pruneDesk(deps: PublishDependencies, nowIso: string): Promise<boo
 	let paused = false;
 	let removed = 0;
 	for (const row of expired) {
-		const needsGithub = Boolean(token && isGitHubImagePath(row.imageKey));
-		if (needsGithub && githubDeletes >= MAX_GITHUB_DELETES_PER_RUN) break;
+		const files = token ? filesForStoredImage(row.imageKey).filter((path) => isGitHubImagePath(path)) : [];
+		if (files.length && githubDeletes + files.length > MAX_GITHUB_DELETES_PER_RUN) break;
 		await deps.repo.deleteArticle(row.id);
 		removed += 1;
-		if (!needsGithub) continue;
-		if (githubDeletes > 0) await pace(GITHUB_DELETE_PACE_MS);
-		const result = await deleteImageFile(token, row.imageKey, deps.fetchImpl ?? fetch);
-		githubDeletes += 1;
-		if (result.pause) {
-			paused = true;
+		let retryAfterMs: number | null = null;
+		for (const path of files) {
+			if (githubDeletes > 0) await pace(GITHUB_DELETE_PACE_MS);
+			const result = await deleteImageFile(token, path, deps.fetchImpl ?? fetch);
+			githubDeletes += 1;
+			if (result.pause) {
+				paused = true;
+				retryAfterMs = result.retryAfterMs;
+				break;
+			}
+		}
+		if (paused) {
 			console.error(JSON.stringify({
 				message: "ai-news retention paused",
-				retryAfterMs: result.retryAfterMs,
+				retryAfterMs,
 				deleted: removed,
 			}));
 			break;
@@ -386,7 +388,7 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 			const id = crypto.randomUUID();
 			const imageSuffix = id.slice(0, 8);
 			let slug = slugify(drafted.draft.title);
-			if (await deps.repo.hasSlug(slug)) slug = `${slug}-${imageSuffix}`;
+			if (await deps.repo.hasSlug(slug)) slug = uniqueSlug(slug, imageSuffix);
 			const picture = await storeIllustration(deps, drafted.draft.imagePrompt, slug, imageSuffix, nowIso, budget, githubWritesPaused);
 			if (picture.pauseWrites) githubWritesPaused = true;
 			const article: StoredArticle = {
@@ -415,7 +417,11 @@ export async function runPublishCycle(deps: PublishDependencies): Promise<Publis
 			try {
 				await deps.repo.insert(article);
 			} catch (error) {
-				if (picture.imageKey) await deleteImageFile(deps.env.GITHUB_IMAGES_TOKEN?.trim() ?? "", picture.imageKey, deps.fetchImpl ?? fetch);
+				if (picture.imageKey) {
+					for (const path of filesForStoredImage(picture.imageKey)) {
+						await deleteImageFile(deps.env.GITHUB_IMAGES_TOKEN?.trim() ?? "", path, deps.fetchImpl ?? fetch);
+					}
+				}
 				failures.push(story.url);
 				consecutiveFailures += 1;
 				await rememberFailure(deps.repo, deps.env, story.url, "insert", deps.now);

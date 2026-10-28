@@ -16,7 +16,7 @@ export const GITHUB_IMAGE_MAX_BYTES = 1_000_000;
 /** Leave headroom on the token's hourly budget. Further images in this tick are skipped. */
 const RATE_LIMIT_FLOOR = 20;
 
-const IMAGE_PATH = /^images\/\d{4}\/\d{2}\/[a-z0-9-]{1,80}\.(webp|jpg|png)$/;
+const IMAGE_PATH = /^images\/\d{4}\/\d{2}\/[a-z0-9-]{1,96}\.(webp|jpg|png)$/;
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const CDN_HOSTS = new Set(["cdn.jsdelivr.net", "fastly.jsdelivr.net"]);
 
