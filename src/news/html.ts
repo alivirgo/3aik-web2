@@ -275,7 +275,7 @@ function pictureTag(origin: string, article: StoredArticle, role: "hero" | "card
 	const legacy = articleImage(origin, article);
 	if (!legacy) return "";
 	const alt = escapeHtml(article.imageAlt);
-	const view = leadView(origin, article.imageKey, article.imageCommit, role);
+	const view = leadView(origin, article.imageKey, article.imageCommit, role, article.variantPending);
 	const loading = role === "hero" ? `loading="eager" fetchpriority="high" decoding="async"` : `loading="lazy" decoding="async"`;
 	if (view) {
 		return `<img src="${escapeHtml(view.src)}" srcset="${escapeHtml(view.srcset)}" alt="${alt}" width="${view.width}" height="${view.height}" ${loading}>`;
@@ -564,7 +564,7 @@ export function renderArticle(origin: string, article: StoredArticle, latest: St
 	const prose = renderBodyHtml(paragraphsFromBody(article.bodyText), allow);
 	const now = Date.now();
 	const credit = article.imageCredit.trim();
-	const discover = schemaImages(origin, article.imageKey, article.imageCommit);
+	const discover = schemaImages(origin, article.imageKey, article.imageCommit, article.variantPending);
 	const socialImage = image || `${origin}/og.png`;
 	const socialAlt = image ? article.imageAlt : `${SITE_NAME}`;
 	const heroTag = pictureTag(origin, article, "hero");

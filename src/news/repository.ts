@@ -31,6 +31,8 @@ export interface NewsRepository {
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
+	/** Pending crop list. Empty string means every crop is stored. Absent ids are unknown. */
+	variantPending(ids: string[]): Promise<Map<string, string>>;
 	/** Articles that can be resized now. Future retries and terminal failures are omitted. */
 	listForBackfill(limit: number, nowIso: string): Promise<StoredArticle[]>;
 	countForBackfill(nowIso: string): Promise<number>;
@@ -411,6 +413,30 @@ export class D1NewsRepository implements NewsRepository {
 		]);
 	}
 
+	async variantPending(ids: string[]): Promise<Map<string, string>> {
+		const unique = [...new Set(ids.filter(Boolean))].slice(0, 80);
+		const out = new Map<string, string>();
+		if (!unique.length) return out;
+		try {
+			await this.ensureBackfillTable();
+			const marks = unique.map(() => "?").join(", ");
+			const result = await this.db
+				.prepare(`SELECT article_id, reason, pending FROM article_image_backfill WHERE article_id IN (${marks})`)
+				.bind(...unique)
+				.all<Record<string, unknown>>();
+			for (const row of result.results ?? []) {
+				const id = readString(row, "article_id");
+				if (!id) continue;
+				const reason = readString(row, "reason");
+				const pending = readString(row, "pending");
+				out.set(id, reason === "ready" && !pending ? "" : pending);
+			}
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+		}
+		return out;
+	}
+
 	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
 		const canonical = canonicalLeadKey(imageKey) ?? imageKey;
 		const row = await this.db
@@ -543,7 +569,7 @@ export class D1NewsRepository implements NewsRepository {
 		await this.ensureBackfillTable();
 		const current = await this.readBackfill(articleId);
 		if (current?.retryAfter && current.retryAfter > updatedAt) return false;
-		if (current && !current.retryAfter && (current.reason === "no_source" || current.reason === "unprocessable_source") && !current.pending) {
+		if (current && !current.retryAfter && !current.pending && (current.reason === "no_source" || current.reason === "unprocessable_source" || current.reason === "ready")) {
 			return false;
 		}
 		await this.db
@@ -1229,6 +1255,16 @@ export class MemoryNewsRepository implements NewsRepository {
 		this.articles = this.articles.filter((article) => article.id !== id);
 	}
 
+	async variantPending(ids: string[]): Promise<Map<string, string>> {
+		const out = new Map<string, string>();
+		for (const id of ids) {
+			const job = this.backfillJobs.get(id);
+			if (!job) continue;
+			out.set(id, job.reason === "ready" && !job.pending ? "" : job.pending);
+		}
+		return out;
+	}
+
 	async findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null> {
 		const direct = this.articles.find((entry) => entry.imageKey === imageKey && entry.imageCommit === imageCommit);
 		if (direct?.imageType) return { contentType: direct.imageType };
@@ -1243,7 +1279,7 @@ export class MemoryNewsRepository implements NewsRepository {
 	private eligibleForBackfill(article: StoredArticle, nowIso: string): boolean {
 		const job = this.backfillJobs.get(article.id);
 		if (job?.retryAfter && job.retryAfter > nowIso) return false;
-		if (job && !job.retryAfter && (job.reason === "no_source" || job.reason === "unprocessable_source") && !job.pending) return false;
+		if (job && !job.retryAfter && !job.pending && (job.reason === "no_source" || job.reason === "unprocessable_source" || job.reason === "ready")) return false;
 		if (job?.retryAfter && job.retryAfter <= nowIso) return true;
 		if (job && !job.retryAfter && ["resize_incomplete", "resize_too_large", "github_commit_failed", "started", "transient"].includes(job.reason)) {
 			return true;
@@ -1271,7 +1307,7 @@ export class MemoryNewsRepository implements NewsRepository {
 	async holdBackfill(articleId: string, updatedAt: string, retryAfter: string): Promise<boolean> {
 		const current = this.backfillJobs.get(articleId);
 		if (current?.retryAfter && current.retryAfter > updatedAt) return false;
-		if (current && !current.retryAfter && (current.reason === "no_source" || current.reason === "unprocessable_source") && !current.pending) {
+		if (current && !current.retryAfter && !current.pending && (current.reason === "no_source" || current.reason === "unprocessable_source" || current.reason === "ready")) {
 			return false;
 		}
 		this.backfillJobs.set(articleId, {

@@ -15,6 +15,7 @@ import {
 	renderNotFound,
 } from "./html";
 import { loadPublicImage, parseMediaRequest } from "./github-images";
+import { canonicalLeadKey } from "./lead";
 import { handleIndexNowSubmit, isIndexNowSubmitPath } from "./indexnow";
 import { handleIngestRequest, ingestApiPath } from "./ingest";
 import { beaconSource, handleCollectRequest, isNewsCollectPath } from "./collect";
@@ -136,6 +137,17 @@ function logReadError(path: string, error: unknown): void {
 		path,
 		error: error instanceof Error ? error.message : String(error),
 	}));
+}
+
+async function withVariantHints(repo: NewsRepository | null, articles: StoredArticle[]): Promise<StoredArticle[]> {
+	if (!repo || !articles.length) return articles;
+	try {
+		const pending = await repo.variantPending(articles.map((article) => article.id));
+		return articles.map((article) => pending.has(article.id) ? { ...article, variantPending: pending.get(article.id) } : article);
+	} catch (error) {
+		logReadError("variants", error);
+		return articles;
+	}
 }
 
 async function loadRecent(repo: NewsRepository | null, limit: number, category?: Category, offset = 0): Promise<StoredArticle[]> {
@@ -337,7 +349,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const total = await countArticles(repo);
 			const listing = listingFromQuery(url.searchParams.get("page"), total);
 			if (!listing) return await publicNotFoundResponse(request, origin);
-			const articles = await loadRecent(repo, LIST_PAGE_SIZE, undefined, listing.offset);
+			const articles = await withVariantHints(repo, await loadRecent(repo, LIST_PAGE_SIZE, undefined, listing.offset));
 			return await htmlResponse(request, renderIndex(origin, articles, listing), 200, "public, max-age=60");
 		}
 		if (path === "/ai-news/about") return await htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
@@ -417,11 +429,24 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				const headers = securityHeaders("text/plain; charset=utf-8", "no-store", IMAGE_CSP);
 				return new Response(request.method === "HEAD" ? null : "Not found\n", { status: 404, headers });
 			}
+			let substituted = false;
+			if (!stored) {
+				const canonical = canonicalLeadKey(media.repoPath);
+				if (canonical && canonical !== media.repoPath) {
+					try {
+						stored = await loadPublicImage(canonical, media.commitSha, fetchImpl);
+						substituted = Boolean(stored);
+					} catch (error) {
+						logReadError(path, error);
+					}
+				}
+			}
 			if (!stored) {
 				const headers = securityHeaders("text/plain; charset=utf-8", "no-store", IMAGE_CSP);
 				return new Response("Not found\n", { status: 404, headers });
 			}
-			const headers = securityHeaders(stored.contentType, "public, max-age=31536000, immutable", IMAGE_CSP);
+			const cache = substituted ? "public, max-age=300" : "public, max-age=31536000, immutable";
+			const headers = securityHeaders(stored.contentType, cache, IMAGE_CSP);
 			return new Response(stored.bytes, { status: 200, headers });
 		}
 
@@ -441,7 +466,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				const total = await countArticles(repo, category);
 				const listing = listingFromQuery(url.searchParams.get("page"), total);
 				if (!listing) return await publicNotFoundResponse(request, origin);
-				const articles = await loadRecent(repo, LIST_PAGE_SIZE, category, listing.offset);
+				const articles = await withVariantHints(repo, await loadRecent(repo, LIST_PAGE_SIZE, category, listing.offset));
 				return await htmlResponse(request, renderCategory(origin, category, articles, listing), 200, "public, max-age=60");
 			}
 		}
@@ -460,7 +485,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const total = await countAuthor(repo, authorId);
 			const listing = listingFromQuery(url.searchParams.get("page"), total);
 			if (!listing) return await publicNotFoundResponse(request, origin);
-			const articles = await loadByAuthor(repo, authorId, LIST_PAGE_SIZE, listing.offset);
+			const articles = await withVariantHints(repo, await loadByAuthor(repo, authorId, LIST_PAGE_SIZE, listing.offset));
 			const page = renderAuthor(origin, authorId, articles, listing);
 			if (!page) return await publicNotFoundResponse(request, origin);
 			return await htmlResponse(request, page, 200, "public, max-age=120");
@@ -478,8 +503,9 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				}
 			}
 			if (!article) return await publicNotFoundResponse(request, origin);
-			const latest = await loadRecent(repo, 8);
-			return await htmlResponse(request, renderArticle(origin, article, latest), 200, "public, max-age=120");
+			const latest = await withVariantHints(repo, await loadRecent(repo, 8));
+			const [hinted] = await withVariantHints(repo, [article]);
+			return await htmlResponse(request, renderArticle(origin, hinted ?? article, latest), 200, "public, max-age=120");
 		}
 
 		return await publicNotFoundResponse(request, origin);

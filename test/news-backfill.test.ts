@@ -84,6 +84,8 @@ describe("discover backfill", () => {
 		expect(repo.articles[0]?.imageCredit).toBe("Image: The Verge");
 		expect(repo.articles[1]?.imageKey).toBe("images/2026/10/older-note.jpg");
 		expect(widths).toEqual([1600]);
+		expect(repo.backfillJobs.get("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.pending).toContain("-16x9-1200.webp");
+		expect(repo.backfillJobs.get("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.pending).toContain("-16x9-800.webp");
 		expect(puts).toHaveLength(1);
 		expect(puts[0]).toContain(repo.articles[0]?.imageKey);
 		const next = await backfillLeads(

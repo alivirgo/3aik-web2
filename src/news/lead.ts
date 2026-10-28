@@ -126,22 +126,47 @@ export interface LeadView {
 	srcset: string;
 }
 
+const OPTIONAL_SUFFIXES = ["-16x9-1200.webp", "-16x9-800.webp", "-4x3.webp", "-1x1.webp"] as const;
+
 function variantUrl(origin: string, imageKey: string, imageCommit: string, suffix: string): string | null {
 	if (!isDiscoverLeadKey(imageKey)) return null;
 	const stem = imageKey.slice(0, -PRIMARY_SUFFIX.length);
 	return readerImageUrl(origin, `${stem}${suffix}`, imageCommit);
 }
 
-/** Hero, card, and thumb URLs for a finished Discover set. Legacy files stay exact. */
-export function leadView(origin: string, imageKey: string, imageCommit: string, role: "hero" | "card" | "thumb"): LeadView | null {
+/**
+ * Suffixes that are safe to put in srcset. `pending` undefined means we have
+ * not confirmed the crops, so only the stored 16:9 file is advertised.
+ * An empty string means every crop is in storage.
+ */
+export function readyVariantSuffixes(pending: string | undefined): Set<string> {
+	if (pending === undefined) return new Set();
+	const missing = new Set(pending.split(",").map((part) => part.trim()).filter(Boolean));
+	return new Set(OPTIONAL_SUFFIXES.filter((suffix) => !missing.has(suffix)));
+}
+
+/** Hero, card, and thumb URLs. Legacy files stay exact. Missing crops are omitted. */
+export function leadView(
+	origin: string,
+	imageKey: string,
+	imageCommit: string,
+	role: "hero" | "card" | "thumb",
+	pending?: string,
+): LeadView | null {
 	if (!isDiscoverLeadKey(imageKey)) return null;
 	const full = readerImageUrl(origin, imageKey, imageCommit);
-	const mid = variantUrl(origin, imageKey, imageCommit, "-16x9-1200.webp");
-	const small = variantUrl(origin, imageKey, imageCommit, "-16x9-800.webp");
-	if (!full || !mid || !small) return null;
-	const srcset = `${small} 800w, ${mid} 1200w, ${full} 1600w`;
-	if (role === "thumb") return { src: small, width: 800, height: 450, srcset };
-	if (role === "card") return { src: mid, width: 1200, height: 675, srcset };
+	if (!full) return null;
+	const ready = readyVariantSuffixes(pending);
+	const small = ready.has("-16x9-800.webp") ? variantUrl(origin, imageKey, imageCommit, "-16x9-800.webp") : null;
+	const mid = ready.has("-16x9-1200.webp") ? variantUrl(origin, imageKey, imageCommit, "-16x9-1200.webp") : null;
+	const parts = [
+		small ? `${small} 800w` : "",
+		mid ? `${mid} 1200w` : "",
+		`${full} 1600w`,
+	].filter(Boolean);
+	const srcset = parts.join(", ");
+	if (role === "thumb" && small) return { src: small, width: 800, height: 450, srcset };
+	if (role === "card" && mid) return { src: mid, width: 1200, height: 675, srcset };
 	return { src: full, width: 1600, height: 900, srcset };
 }
 
@@ -152,17 +177,17 @@ export interface SchemaImage {
 	height: number;
 }
 
-export function schemaImages(origin: string, imageKey: string, imageCommit: string): SchemaImage[] | null {
+export function schemaImages(origin: string, imageKey: string, imageCommit: string, pending?: string): SchemaImage[] | null {
 	if (!isDiscoverLeadKey(imageKey)) return null;
 	const wide = readerImageUrl(origin, imageKey, imageCommit);
-	const four = variantUrl(origin, imageKey, imageCommit, "-4x3.webp");
-	const square = variantUrl(origin, imageKey, imageCommit, "-1x1.webp");
-	if (!wide || !four || !square) return null;
-	return [
-		{ "@type": "ImageObject", url: wide, width: 1600, height: 900 },
-		{ "@type": "ImageObject", url: four, width: 1600, height: 1200 },
-		{ "@type": "ImageObject", url: square, width: 1200, height: 1200 },
-	];
+	if (!wide) return null;
+	const images: SchemaImage[] = [{ "@type": "ImageObject", url: wide, width: 1600, height: 900 }];
+	const ready = readyVariantSuffixes(pending);
+	const four = ready.has("-4x3.webp") ? variantUrl(origin, imageKey, imageCommit, "-4x3.webp") : null;
+	const square = ready.has("-1x1.webp") ? variantUrl(origin, imageKey, imageCommit, "-1x1.webp") : null;
+	if (four) images.push({ "@type": "ImageObject", url: four, width: 1600, height: 1200 });
+	if (square) images.push({ "@type": "ImageObject", url: square, width: 1200, height: 1200 });
+	return images;
 }
 
 export function mediaContentUrl(origin: string, imageKey: string, imageCommit: string): string | null {
