@@ -360,7 +360,9 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const listing = listingFromQuery(url.searchParams.get("page"), total);
 			if (!listing) return await publicNotFoundResponse(request, origin);
 			const articles = await withVariantHints(repo, await loadRecent(repo, LIST_PAGE_SIZE, undefined, listing.offset));
-			return await htmlResponse(request, renderIndex(origin, articles, listing, await readMap(repo, articles)), 200, "public, max-age=60");
+			const older = listing.page > 1 ? [] : await withVariantHints(repo, await loadRecent(repo, 80, undefined, LIST_PAGE_SIZE));
+			const reads = await readMap(repo, [...articles, ...older]);
+			return await htmlResponse(request, renderIndex(origin, articles, listing, reads, older), 200, "public, max-age=60");
 		}
 		if (path === "/ai-news/about") return await htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/disclaimer") return await htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");

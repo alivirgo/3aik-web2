@@ -377,7 +377,9 @@ describe("magazine pages", () => {
 		expect(latest).not.toContain("/article/short-bulletin");
 		expect(latest).toContain("extra-");
 		expect(html).not.toContain('class="story-index"');
-		expect(html).toContain(">See all</a>");
+		expect(html).toContain('class="more-stories"');
+		expect(html).toContain(">More stories</h2>");
+		expect(html).toContain('class="thumb"');
 	});
 
 	it("renders the article with a hero, sources, a calm note, and plain share links", async () => {
@@ -427,7 +429,7 @@ describe("magazine pages", () => {
 		const category = await handleNewsRequest(new Request("https://3aik.test/ai-news/ai"), env, { repo });
 		const categoryHtml = await category.text();
 		expect(categoryHtml).toContain('<a href="https://3aik.com/ai-news/ai" aria-current="page">AI</a>');
-		expect(categoryHtml).toContain('class="section-row"');
+		expect(categoryHtml).toContain('class="section-row');
 		expect(categoryHtml).toContain("More stories will show up here as the desk publishes.");
 		const emptyTech = await handleNewsRequest(new Request("https://3aik.test/ai-news/technology"), env, { repo });
 		expect(await emptyTech.text()).toContain("No Technology stories are published yet.");

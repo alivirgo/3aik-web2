@@ -306,13 +306,20 @@ function pictureTag(origin: string, article: StoredArticle, role: "hero" | "card
 	return `<img src="${escapeHtml(legacy.src)}" alt="${alt}" ${size} ${loading}>`;
 }
 
+function placeholderTag(origin: string, role: "hero" | "card" | "thumb"): string {
+	const size = role === "thumb" ? `width="120" height="90"` : `width="1200" height="630"`;
+	const loading = role === "hero" ? `loading="eager" fetchpriority="high" decoding="async"` : `loading="lazy" decoding="async"`;
+	return `<img class="brand-fallback" src="${origin}/ai-news-og.png" alt="" ${size} ${loading}>`;
+}
+
+function framedMedia(origin: string, article: StoredArticle, role: "hero" | "card" | "thumb", className: string): string {
+	return `<a class="${className}" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, role) || placeholderTag(origin, role)}</a>`;
+}
+
 function latestList(origin: string, articles: StoredArticle[], now: number): string {
 	if (!articles.length) return `<p class="rail-empty">No other stories yet.</p>`;
 	const items = articles.map((article) => {
-		const media = pictureTag(origin, article, "thumb");
-		const thumb = media
-			? `<a class="latest-thumb" href="${articleHref(origin, article.slug)}">${media}</a>`
-			: "";
+		const thumb = framedMedia(origin, article, "thumb", "latest-thumb");
 		return `<li>${thumb}<div class="latest-copy"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></div></li>`;
 	}).join("");
 	return `<ol class="latest-list">${items}</ol>`;
@@ -334,9 +341,7 @@ function cardBlurb(article: StoredArticle): string {
 }
 
 function sideStory(origin: string, article: StoredArticle, now: number, reads = 0): string {
-	const media = pictureTag(origin, article, "thumb")
-		? `<a class="thumb" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, "thumb")}</a>`
-		: "";
+	const media = framedMedia(origin, article, "thumb", "thumb");
 	return `<article class="side">
 ${media}
 <div>
@@ -350,9 +355,7 @@ ${badges(article, now, reads)}
 }
 
 function storyCard(origin: string, article: StoredArticle, now: number, reads = 0): string {
-	const media = pictureTag(origin, article, "card")
-		? `<a class="card-media" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, "card")}</a>`
-		: "";
+	const media = framedMedia(origin, article, "card", "card-media");
 	return `<article class="card">
 ${media}
 <div class="card-body">
@@ -368,11 +371,12 @@ ${badges(article, now, reads)}
 function sectionBand(origin: string, category: Category, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>, seeAll = true): string {
 	if (!articles.length) return "";
 	const href = categoryHref(origin, category);
-	const cards = articles.slice(0, 4).map((article) => storyCard(origin, article, now, reads?.get(article.slug) ?? 0)).join("");
+	const shown = articles.slice(0, 4);
+	const cards = shown.map((article) => storyCard(origin, article, now, reads?.get(article.slug) ?? 0)).join("");
 	const more = seeAll ? `<a class="see-all" href="${href}">See all</a>` : "";
 	return `<section class="band">
 <header class="band-head"><h2 class="section-label"><a href="${href}">${CATEGORY_LABEL[category]}</a></h2>${more}</header>
-<div class="section-row">${cards}</div>
+<div class="section-row cards-${shown.length}">${cards}</div>
 </section>`;
 }
 
@@ -382,7 +386,7 @@ function moreStories(origin: string, articles: StoredArticle[], now: number, rea
 	return `<section class="more-stories"><h2 class="section-label">More stories</h2><div class="section-row">${cards}</div></section>`;
 }
 
-function frontPage(origin: string, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>): string {
+function frontPage(origin: string, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>, older: StoredArticle[] = []): string {
 	const lead = articles[0];
 	if (!lead) return "";
 	const used = new Set([lead.slug]);
@@ -402,7 +406,7 @@ function frontPage(origin: string, articles: StoredArticle[], now: number, reads
 	const latestItems = articles.filter((article) => !used.has(article.slug)).slice(0, 6);
 	for (const article of latestItems) used.add(article.slug);
 	const bands = CATEGORIES.map((category) => {
-		const rows = articles.filter((article) => !used.has(article.slug) && visibleCategory(article, now) === category).slice(0, 4);
+		const rows = older.filter((article) => !used.has(article.slug) && visibleCategory(article, now) === category).slice(0, 4);
 		for (const article of rows) used.add(article.slug);
 		return sectionBand(origin, category, rows, now, reads);
 	}).join("");
@@ -507,12 +511,12 @@ function leadPreload(origin: string, article: StoredArticle | undefined): PageOp
 	return { href: legacy.src };
 }
 
-export function renderIndex(origin: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }, reads?: ReadonlyMap<string, number>): NewsHtml {
+export function renderIndex(origin: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }, reads?: ReadonlyMap<string, number>, older: StoredArticle[] = []): NewsHtml {
 	const base = `${origin}/ai-news`;
 	const canonical = pageHref(base, listing.page);
 	const description = "AI-assisted news on AI, technology, finance, fashion, showbiz, crime, and sports, rewritten from credible outlets and linked back to them.";
 	const now = Date.now();
-	const front = listing.page <= 1 && articles.length ? frontPage(origin, articles, now, reads) : "";
+	const front = listing.page <= 1 && articles.length ? frontPage(origin, articles, now, reads, older) : "";
 	const later = listing.page > 1 && articles.length ? moreStories(origin, articles, now, reads) : "";
 	const list = articles.length
 		? `${front}${later}`

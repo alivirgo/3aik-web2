@@ -384,7 +384,9 @@ body.desk {
 
 .desk .thumb {
   width: 6rem;
-  flex: none;
+  height: 4.5rem;
+  min-width: 6rem;
+  flex: 0 0 6rem;
   border-radius: 0.95rem;
   overflow: hidden;
   aspect-ratio: 4 / 3;
@@ -508,7 +510,9 @@ body.desk {
 
 .desk .latest-thumb {
   width: 6rem;
-  flex: none;
+  height: 4.5rem;
+  min-width: 6rem;
+  flex: 0 0 6rem;
   border-radius: 0.7rem;
 }
 
@@ -539,7 +543,10 @@ body.desk {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0.9rem;
+  align-items: stretch;
 }
+
+.desk .section-row.cards-1 { grid-template-columns: minmax(0, 1fr); }
 
 .desk .card {
   min-width: 0;
@@ -947,7 +954,9 @@ body.desk {
   .desk .stack { padding-top: 0.2rem; grid-column: 2; grid-row: 1 / span 2; }
   .desk .latest { grid-column: 3; grid-row: 1; }
   .desk .most-read { grid-column: 3; grid-row: 2; align-self: start; }
-  .desk .side .thumb { width: 7.5rem; }
+  .desk .side .thumb { width: 7.5rem; height: 5.625rem; min-width: 7.5rem; flex: 0 0 7.5rem; }
+  .desk .section-row.cards-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .desk .section-row.cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .desk .section-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
   .desk .article-layout {
     display: grid;

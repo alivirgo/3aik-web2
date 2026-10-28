@@ -47,6 +47,8 @@ export interface NewsRepository {
 	deferBackfill(articleId: string, reason: string, updatedAt: string, retryAfter: string, pending: string, attempts: number): Promise<void>;
 	clearBackfill(articleId: string): Promise<void>;
 	updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void>;
+	/** Rewrite a stored headline. The slug stays the same. */
+	updateTitle(id: string, title: string): Promise<void>;
 	listRecentSourceUrls(limit: number): Promise<string[]>;
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
 	consumeIngest(bucket: string, limit: number): Promise<boolean>;
@@ -698,6 +700,10 @@ export class D1NewsRepository implements NewsRepository {
 	async clearBackfill(articleId: string): Promise<void> {
 		await this.ensureBackfillTable();
 		await this.db.prepare("DELETE FROM article_image_backfill WHERE article_id = ?").bind(articleId).run();
+	}
+
+	async updateTitle(id: string, title: string): Promise<void> {
+		await this.db.prepare("UPDATE articles SET title = ? WHERE id = ?").bind(title, id).run();
 	}
 
 	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {
@@ -1480,6 +1486,11 @@ export class MemoryNewsRepository implements NewsRepository {
 
 	async clearBackfill(articleId: string): Promise<void> {
 		this.backfillJobs.delete(articleId);
+	}
+
+	async updateTitle(id: string, title: string): Promise<void> {
+		const article = this.articles.find((entry) => entry.id === id);
+		if (article) article.title = title;
 	}
 
 	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {

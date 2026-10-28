@@ -233,6 +233,32 @@ export function sentenceCaseHeadline(input: string): string {
 	return input.replace(/\s+/g, " ").trim();
 }
 
+function casingWorthKeeping(token: string): boolean {
+	const letters = token.replace(/[^A-Za-z]/g, "");
+	if (!letters || letters === letters.toLowerCase()) return false;
+	if (letters === letters.toUpperCase() && letters.length > 4) return false;
+	return true;
+}
+
+/**
+ * Restore letters in a stored headline from cited source titles.
+ * A word changes only when the same word appears there with useful capitals.
+ * The slug is not touched.
+ */
+export function restoreTitleCasing(title: string, sourceTitles: string[]): string {
+	const known = new Map<string, string>();
+	for (const source of sourceTitles) {
+		for (const raw of source.split(/\s+/)) {
+			const core = raw.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "");
+			if (!casingWorthKeeping(core)) continue;
+			const key = core.toLowerCase();
+			if (!known.has(key)) known.set(key, core);
+		}
+	}
+	if (!known.size) return title;
+	return title.replace(/[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)*/g, (word) => known.get(word.toLowerCase()) ?? word);
+}
+
 const TRACKING_PARAMS = new Set([
 	"utm_source",
 	"utm_medium",

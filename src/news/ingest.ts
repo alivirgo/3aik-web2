@@ -28,6 +28,7 @@ import {
 	detectImageType,
 	isCategory,
 	normalizeSourceUrl,
+	restoreTitleCasing,
 	sentenceCaseHeadline,
 	slugify,
 	stripHtml,
@@ -50,11 +51,12 @@ export interface IngestDeps {
 	now?: Date;
 }
 
-export function ingestApiPath(pathname: string): "post" | "meta" | "backfill" | null {
+export function ingestApiPath(pathname: string): "post" | "meta" | "backfill" | "restore-titles" | null {
 	const path = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 	if (path === "/ai-news/api/ingest") return "post";
 	if (path === "/ai-news/api/ingest/meta") return "meta";
 	if (path === "/ai-news/api/ingest/backfill") return "backfill";
+	if (path === "/ai-news/api/ingest/restore-titles") return "restore-titles";
 	return null;
 }
 
@@ -778,7 +780,48 @@ export async function handleIngestRequest(request: Request, env: NewsEnv, deps: 
 		if (request.method !== "POST") return methodNotAllowed(["POST"]);
 		return backfillResponse(request, env, deps);
 	}
+	if (kind === "restore-titles") {
+		if (request.method !== "POST") return methodNotAllowed(["POST"]);
+		return restoreTitlesResponse(request, deps);
+	}
 	return json({ error: "not_found" }, 404);
+}
+
+async function restoreTitlesResponse(request: Request, deps: IngestDeps): Promise<Response> {
+	const repo = deps.repo;
+	if (!repo) return json({ error: "unavailable" }, 503);
+	const raw = await readBodyCapped(new Response(request.body), 20_000);
+	if (raw == null) return reasons(["body_too_large"]);
+	let apply = false;
+	let limit = 25;
+	let offset = 0;
+	if (raw.trim()) {
+		try {
+			const body = JSON.parse(raw) as { apply?: unknown; limit?: unknown; offset?: unknown };
+			apply = body.apply === true;
+			if (typeof body.limit === "number" && Number.isFinite(body.limit)) limit = Math.min(40, Math.max(1, Math.floor(body.limit)));
+			if (typeof body.offset === "number" && Number.isFinite(body.offset)) offset = Math.max(0, Math.floor(body.offset));
+		} catch {
+			return reasons(["invalid_json"]);
+		}
+	}
+	const batch = await repo.listRecent(limit, undefined, offset);
+	const samples: Array<{ slug: string; from: string; to: string }> = [];
+	let changed = 0;
+	for (const article of batch) {
+		const next = restoreTitleCasing(article.title, article.sources.map((source) => source.title));
+		if (next === article.title) continue;
+		changed += 1;
+		if (samples.length < 8) samples.push({ slug: article.slug, from: article.title, to: next });
+		if (apply) await repo.updateTitle(article.id, next);
+	}
+	return json({
+		scanned: batch.length,
+		changed,
+		applied: apply,
+		next_offset: offset + batch.length,
+		samples,
+	}, 200);
 }
 
 async function backfillResponse(request: Request, env: NewsEnv, deps: IngestDeps): Promise<Response> {
