@@ -57,9 +57,11 @@ describe("discover eligibility", () => {
 		expect(html).toContain('name="robots" content="index,follow,max-image-preview:large"');
 		expect(html).toContain(`rel="canonical" href="${canonical}"`);
 		expect(html).toContain('width="1600" height="900"');
-		expect(html).toContain("800w");
-		expect(html).toContain("1200w");
 		expect(html).toContain("1600w");
+		expect(html).not.toContain("-16x9-800.webp");
+		expect(html).not.toContain("-16x9-1200.webp");
+		expect(html).not.toContain("-4x3.webp");
+		expect(html).not.toContain("-1x1.webp");
 		expect(html).toContain('property="og:image:width" content="1600"');
 		expect(html).toContain('property="og:image:height" content="900"');
 		expect(html).toContain('property="og:image:type" content="image/webp"');
@@ -78,13 +80,58 @@ describe("discover eligibility", () => {
 		expect(news.publisher.name).toBe("3aik News");
 		expect(news.publisher.logo).toMatchObject({ width: 512, height: 512 });
 		expect(news.isBasedOn[0].url).toBe("https://www.theverge.com/story");
-		expect(news.image).toHaveLength(3);
-		for (const image of news.image) {
-			expect(image["@type"]).toBe("ImageObject");
-			expect(image.width).toBeGreaterThanOrEqual(1200);
-			expect(image.height).toBeGreaterThan(0);
-		}
+		expect(news.image).toHaveLength(1);
+		expect(news.image[0]["@type"]).toBe("ImageObject");
+		expect(news.image[0].width).toBeGreaterThanOrEqual(1200);
 		expect(news.image[0]).toMatchObject({ width: 1600, height: 900 });
+	});
+
+	it("advertises 800 and 1200 crops only after they are stored", async () => {
+		const repo = new MemoryNewsRepository();
+		const stored = article();
+		repo.articles.push(stored);
+		repo.backfillJobs.set(stored.id, { reason: "ready", retryAfter: "", pending: "", attempts: 0 });
+		const response = await handleNewsRequest(
+			new Request("https://3aik.test/ai-news/article/short-bulletin"),
+			{ AI_NEWS_SITE_ORIGIN: "https://3aik.com" },
+			{ repo },
+		);
+		const html = await response.text();
+		expect(html).toContain("-16x9-800.webp 800w");
+		expect(html).toContain("-16x9-1200.webp 1200w");
+		expect(html).toContain("-16x9.webp 1600w");
+		const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((match) => JSON.parse(match[1] ?? ""));
+		const news = blocks.find((block) => block["@type"] === "NewsArticle");
+		expect(news.image).toHaveLength(3);
+		expect(news.image.map((image: { url: string }) => image.url).join("\n")).toContain("-4x3.webp");
+		expect(news.image.map((image: { url: string }) => image.url).join("\n")).toContain("-1x1.webp");
+	});
+
+	it("serves the stored 16:9 file when a deferred crop is requested", async () => {
+		const webp = Uint8Array.from([
+			0x52, 0x49, 0x46, 0x46, 0x0c, 0x00, 0x00, 0x00,
+			0x57, 0x45, 0x42, 0x50, 0x00, 0x00, 0x00, 0x00,
+		]);
+		const repo = new MemoryNewsRepository();
+		const stored = article();
+		repo.articles.push(stored);
+		const primary = `https://cdn.jsdelivr.net/gh/alivirgo/3aik-ai-news-images@${COMMIT}/${stored.imageKey}`;
+		const fetchImpl = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url === primary) return new Response(webp, { status: 200, headers: { "content-type": "image/webp" } });
+			return new Response("missing", { status: 404 });
+		};
+		const small = stored.imageKey.replace("-16x9.webp", "-16x9-800.webp");
+		const response = await handleNewsRequest(
+			new Request(`https://3aik.test/ai-news/media/${COMMIT}/${small}`),
+			{ AI_NEWS_SITE_ORIGIN: "https://3aik.com" },
+			{ repo, fetchImpl: fetchImpl as typeof fetch },
+		);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toBe("image/webp");
+		expect(response.headers.get("cache-control")).toContain("max-age=300");
+		expect(response.headers.get("cache-control")).not.toContain("immutable");
+		expect(new Uint8Array(await response.arrayBuffer())).toEqual(webp);
 	});
 
 	it("keeps the home page bytes identical", async () => {

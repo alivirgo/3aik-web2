@@ -81,6 +81,11 @@ export interface StoredArticle {
 	imageKey: string;
 	/** Git commit that contains imageKey. Empty when the article has no picture. */
 	imageCommit: string;
+	/**
+	 * Crop files not in storage yet. Undefined means unknown (advertise only the
+	 * stored file). An empty string means every Discover crop exists.
+	 */
+	variantPending?: string;
 	imageAlt: string;
 	imageType: string;
 	/** Caption such as "Image: WWD". Empty when the picture is a generated illustration. */

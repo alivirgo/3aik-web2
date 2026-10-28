@@ -247,7 +247,7 @@ export async function backfillLeads(
 	if (outcome.pending) {
 		await deps.repo.deferBackfill(article.id, "pending", nowIso, nowIso, outcome.pending, 0);
 	} else {
-		await deps.repo.clearBackfill(article.id);
+		await deps.repo.deferBackfill(article.id, "ready", nowIso, "", "", 0);
 	}
 	const previous = article.imageKey;
 	if (previous && previous !== outcome.lead.imageKey && isGitHubImagePath(previous) && !previous.endsWith(PRIMARY_RESIZE.suffix)) {
