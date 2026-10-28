@@ -159,12 +159,16 @@ export function leadView(
 	const ready = readyVariantSuffixes(pending);
 	const small = ready.has("-16x9-800.webp") ? variantUrl(origin, imageKey, imageCommit, "-16x9-800.webp") : null;
 	const mid = ready.has("-16x9-1200.webp") ? variantUrl(origin, imageKey, imageCommit, "-16x9-1200.webp") : null;
+	const four = ready.has("-4x3.webp") ? variantUrl(origin, imageKey, imageCommit, "-4x3.webp") : null;
+	const square = ready.has("-1x1.webp") ? variantUrl(origin, imageKey, imageCommit, "-1x1.webp") : null;
 	const parts = [
 		small ? `${small} 800w` : "",
 		mid ? `${mid} 1200w` : "",
 		`${full} 1600w`,
 	].filter(Boolean);
 	const srcset = parts.join(", ");
+	if (role === "thumb" && square) return { src: square, width: 1200, height: 1200, srcset: `${square} 1200w` };
+	if (role === "card" && four) return { src: four, width: 1600, height: 1200, srcset: `${four} 1600w` };
 	if (role === "thumb" && small) return { src: small, width: 800, height: 450, srcset };
 	if (role === "card" && mid) return { src: mid, width: 1200, height: 675, srcset };
 	return { src: full, width: 1600, height: 900, srcset };

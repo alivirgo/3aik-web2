@@ -276,8 +276,9 @@ JSON fields:
 | --- | --- |
 | `title` | 20 to 110 characters |
 | `dek` or `summary` | 90 to 170 characters |
-| `category` | `ai`, `tech` (stored as `technology`), `fashion`, or `showbiz` |
-| `author_slug` | One of the 24 persona ids, and that persona's category must match |
+| `category` | `ai`, `tech` (stored as `technology`), `fashion`, `showbiz`, `finance`, `crime`, `sports`, or `breaking` |
+| `section` | Required when `category` is `breaking`. One of `ai`, `technology`, `fashion`, `showbiz`, `finance`, `crime`, `sports`. The story stays on Breaking for 6 hours, then reads as this section. The article URL does not change |
+| `author_slug` | A persona id. The persona's category must match `category`, or `section` when the category is `breaking` |
 | `body_markdown` or `html` | Paragraphs. Stored as plain text in `body_text`, same as the pipeline. 400 to 1100 words, 5 to 10 paragraphs |
 | `key_points` | 3 to 5 items, 8 to 40 words each |
 | `faq` | Exactly 3 `{ "question", "answer" }`. Question ends with `?`. Answer is 20 to 90 words |
@@ -289,7 +290,21 @@ JSON fields:
 
 The gate rejects em dashes, en dashes used as clause breaks, `---` and spaced `--`, slop words, an 8-word copy of the source title or fetched page, a missing outlet name, and (for fashion and showbiz) an unattributed dispute. A slug or source URL already on the desk returns 409 before those quality reasons, so a retry is not reported as a bad draft. `GET /ai-news/api/ingest/meta` returns the persona list, categories, those limits, and recent source URLs.
 
-A wide PNG, JPEG, or WebP is cropped to WebP and committed to `alivirgo/3aik-ai-news-images` with `GITHUB_IMAGES_TOKEN`. Each stored file stays at or under 1 MB. A lead under 1200px wide, a missing token, or a failed commit still returns 201 and publishes with no picture. The page does not hotlink a publisher URL.
+A file of at most 1 MB is stored as-is. A larger publisher URL is kept for a later crop. The post still returns 201 when the picture cannot be stored. The page does not hotlink a publisher URL.
+
+Breaking example:
+
+```json
+{
+  "title": "A filing moves the week's money story",
+  "dek": "The outlet reported a narrow filing. This brief stays inside that filing and does not add a price target.",
+  "category": "breaking",
+  "section": "finance",
+  "author_slug": "leah-okoye",
+  "body_markdown": "Paragraphs here.",
+  "sources": [{ "url": "https://example.com/filing", "publisher": "Example", "title": "Filing note" }]
+}
+```
 
 ```sh
 IMG=$(base64 -w 0 photo.jpg)

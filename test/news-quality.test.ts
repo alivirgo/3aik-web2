@@ -185,16 +185,19 @@ describe("quality gate", () => {
 });
 
 describe("authors and prompts", () => {
-	it("keeps 24 personas with fixed category counts and honest bios", () => {
-		expect(AUTHORS).toHaveLength(24);
+	it("keeps the persona roster with fixed category counts and honest bios", () => {
+		expect(AUTHORS).toHaveLength(27);
 		expect(authorsIn("ai")).toHaveLength(8);
 		expect(authorsIn("technology")).toHaveLength(6);
 		expect(authorsIn("fashion")).toHaveLength(5);
 		expect(authorsIn("showbiz")).toHaveLength(5);
+		expect(authorsIn("finance")).toHaveLength(1);
+		expect(authorsIn("crime")).toHaveLength(1);
+		expect(authorsIn("sports")).toHaveLength(1);
 		const ids = new Set(AUTHORS.map((author) => author.id));
-		expect(ids.size).toBe(24);
+		expect(ids.size).toBe(27);
 		const lines = new Set(AUTHORS.map((author) => author.relatedLine("Older piece", "https://3aik.com/ai-news/article/older")));
-		expect(lines.size).toBe(24);
+		expect(lines.size).toBe(27);
 		for (const author of AUTHORS) {
 			expect(author.bio).toContain("not a real person");
 			expect(author.bio.toLowerCase()).toContain("not a job");

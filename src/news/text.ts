@@ -343,6 +343,23 @@ export function readingLabel(text: string): string {
 	return `${readingMinutes(text)} min read`;
 }
 
+/** Short relative time for the visible byline, such as "2h ago". */
+export function relativeCompact(iso: string, now = Date.now()): string {
+	const then = Date.parse(iso);
+	if (!Number.isFinite(then)) return "now";
+	const elapsed = Math.max(0, now - then);
+	if (elapsed < 60_000) return "now";
+	const minutes = Math.floor(elapsed / 60_000);
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	if (days < 7) return `${days}d ago`;
+	const weeks = Math.floor(days / 7);
+	if (weeks < 5) return `${weeks}w ago`;
+	return relativeTime(iso, now);
+}
+
 /** Relative time for a published timestamp. `now` is injectable so tests stay stable. */
 export function relativeTime(iso: string, now = Date.now()): string {
 	const then = Date.parse(iso);
@@ -371,8 +388,9 @@ export function jsonForScript(value: unknown): string {
 	return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
-export function isCategory(value: string): value is "ai" | "technology" | "fashion" | "showbiz" {
-	return value === "ai" || value === "technology" || value === "fashion" || value === "showbiz";
+export function isCategory(value: string): value is "ai" | "technology" | "fashion" | "showbiz" | "finance" | "crime" | "sports" | "breaking" {
+	return value === "ai" || value === "technology" || value === "fashion" || value === "showbiz"
+		|| value === "finance" || value === "crime" || value === "sports" || value === "breaking";
 }
 
 const IMAGE_SIGNATURES = {

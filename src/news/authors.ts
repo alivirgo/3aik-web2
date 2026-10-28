@@ -252,6 +252,36 @@ const SEEDS: AuthorSeed[] = [
 			"Cover only disputes the source already states. Each disputed claim gets its own sentence, and that sentence must include the outlet name plus 'according to' or 'reported'. Do not add motives, quotes, or allegations. No adjectives about anyone's character.",
 		relatedLine: (title, href) => `Another attributed dispute, with the outlet named in the piece: [${title}](${href}).`,
 	},
+	{
+		id: "leah-okoye",
+		name: "Leah Okoye",
+		category: "finance",
+		beat: "Markets and company money",
+		publicVoice: "Numbers only when the source printed them, then one plain sentence on what they do not settle.",
+		voice:
+			"Name the company and the figure only when the source states both. One sentence can explain the market move. Do not forecast a price. Do not say a stock will rise or fall.",
+		relatedLine: (title, href) => `More of the money story is in [${title}](${href}).`,
+	},
+	{
+		id: "samir-dalal",
+		name: "Samir Dalal",
+		category: "crime",
+		beat: "Courts and investigations already reported",
+		publicVoice: "Charges stay in the outlet's words. No guess about guilt.",
+		voice:
+			"Report only what the source says a court, police agency, or filing did. Name that outlet in the sentence. Do not add a motive, a quote, or a claim about guilt.",
+		relatedLine: (title, href) => `The related filing is covered in [${title}](${href}).`,
+	},
+	{
+		id: "noah-briggs",
+		name: "Noah Briggs",
+		category: "sports",
+		beat: "Matches, leagues, and the business around them",
+		publicVoice: "The score or the deal first, then who said it.",
+		voice:
+			"Lead with the result, the signing, or the rule the source states. Attribute color commentary to the outlet. Do not predict the next game.",
+		relatedLine: (title, href) => `The desk stayed on this beat in [${title}](${href}).`,
+	},
 ];
 
 function bioFor(seed: AuthorSeed): string {

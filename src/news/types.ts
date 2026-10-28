@@ -1,4 +1,7 @@
-export const CATEGORIES = ["ai", "technology", "fashion", "showbiz"] as const;
+export const CATEGORIES = ["ai", "technology", "fashion", "showbiz", "finance", "crime", "sports", "breaking"] as const;
+
+/** Sections a Breaking story can fall back to. Breaking itself is not a durable desk. */
+export const DURABLE_CATEGORIES = ["ai", "technology", "fashion", "showbiz", "finance", "crime", "sports"] as const;
 
 export type Category = (typeof CATEGORIES)[number];
 
@@ -70,6 +73,8 @@ export interface StoredArticle {
 	title: string;
 	description: string;
 	category: Category;
+	/** Durable desk for a Breaking story. Empty on every other category. */
+	section?: string;
 	tags: string[];
 	authorId: string;
 	bodyHtml: string;
