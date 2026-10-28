@@ -20,10 +20,7 @@ body.desk {
   --cat-fashion: #9a3412;
   --cat-showbiz: #6d28d9;
   margin: 0;
-  background:
-    radial-gradient(880px 360px at 0% -8%, rgba(124, 58, 237, 0.16), transparent 58%),
-    radial-gradient(720px 320px at 100% 0%, rgba(249, 115, 22, 0.18), transparent 52%),
-    var(--bg);
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--serif);
   font-size: 1.0625rem;
@@ -50,9 +47,7 @@ body.desk {
     --cat-technology: #93c5fd;
     --cat-fashion: #fdba74;
     --cat-showbiz: #d8b4fe;
-    background:
-      radial-gradient(900px 360px at 0% -10%, rgba(255, 138, 61, 0.08), transparent 50%),
-      var(--bg);
+    background: var(--bg);
   }
 }
 
@@ -95,13 +90,7 @@ body.desk {
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
-}
-
-.desk .top::before {
-  content: "";
-  display: block;
-  height: 0.28rem;
-  background: linear-gradient(90deg, #fb7185 0%, #f97316 30%, #7c3aed 68%, #14b8a6 100%);
+  border-top: 3px solid var(--accent);
 }
 
 .desk .topbar,
@@ -171,7 +160,7 @@ body.desk {
   width: 0.72rem;
   height: 1.45rem;
   border-radius: 0.42rem;
-  background: linear-gradient(180deg, #fb7185, #f97316 46%, #7c3aed);
+  background: var(--accent);
   flex: none;
 }
 
@@ -209,31 +198,38 @@ body.desk {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  padding: 0.4rem 0 0.7rem;
+  padding: 0.35rem 0 0.55rem;
+  scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
 
 .desk .sections::-webkit-scrollbar { display: none; }
 
 .desk .sections a {
-  color: #fff;
+  color: #161513;
   text-decoration: none;
   font-size: 0.92rem;
-  font-weight: 750;
-  min-height: 2.5rem;
+  font-weight: 700;
+  min-height: 2.75rem;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  padding: 0 0.95rem;
+  padding: 0 0.9rem;
   border-radius: 999px;
   white-space: nowrap;
-  background: var(--ink);
+  background: #eceff3;
+  scroll-snap-align: start;
 }
 
-.desk .sections a[href$="/ai"] { background: #0f766e; color: #fff; }
-.desk .sections a[href$="/technology"] { background: #1d4ed8; color: #fff; }
-.desk .sections a[href$="/fashion"] { background: #9a3412; color: #fff; }
-.desk .sections a[href$="/showbiz"] { background: #6d28d9; color: #fff; }
+.desk .sections a::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: none;
+}
 
 .desk .sections a[aria-current="page"] {
   outline: 2px solid var(--ink);
@@ -285,7 +281,8 @@ body.desk {
 
 .desk .lead-media,
 .desk .card-media,
-.desk .thumb {
+.desk .thumb,
+.desk .latest-thumb {
   display: block;
   position: relative;
   width: 100%;
@@ -298,7 +295,7 @@ body.desk {
   aspect-ratio: 16 / 9;
 }
 
-.desk .lead img, .desk .hero img, .desk .card img, .desk .thumb img {
+.desk .lead img, .desk .hero img, .desk .card img, .desk .thumb img, .desk .latest-thumb img {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -311,7 +308,8 @@ body.desk {
 
 .desk .lead-media img,
 .desk .card-media img,
-.desk .thumb img {
+.desk .thumb img,
+.desk .latest-thumb img {
   position: absolute;
   inset: 0;
   height: 100%;
@@ -389,7 +387,8 @@ body.desk {
 }
 
 .desk .card-media,
-.desk .thumb {
+.desk .thumb,
+.desk .latest-thumb {
   aspect-ratio: 4 / 3;
 }
 
@@ -411,7 +410,7 @@ body.desk {
   min-height: 280px;
 }
 
-.desk .card img, .desk .thumb img { aspect-ratio: 4 / 3; height: 100%; }
+.desk .card img, .desk .thumb img, .desk .latest-thumb img { aspect-ratio: 4 / 3; height: 100%; }
 
 .desk .meta, .desk .by, .desk .times {
   color: var(--muted);
@@ -493,13 +492,34 @@ body.desk {
 }
 
 .desk .latest-list li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  align-items: center;
   gap: 0.65rem;
-  padding: 0.7rem 0;
+  min-height: 2.75rem;
+  padding: 0.45rem 0;
   border-bottom: 1px solid var(--line);
   font-size: 0.95rem;
   line-height: 1.3;
+}
+
+.desk .latest-thumb {
+  width: 4.5rem;
+  flex: none;
+  border-radius: 0.55rem;
+}
+
+.desk .latest-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.12rem;
+}
+
+.desk .latest-copy a {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
 }
 
 .desk .latest-list time {
@@ -826,13 +846,34 @@ body.desk {
 .desk .deck { margin: 0 0 1.1rem; max-width: 42rem; color: var(--muted); font-size: 1.08rem; }
 
 @media (max-width: 719px) {
+  .desk .wrap { width: min(76rem, calc(100% - 1rem)); }
   .desk .nav-button { display: none; }
-
-  .desk .sections {
-    flex-wrap: nowrap;
-    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 2.4rem), transparent);
-    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 2.4rem), transparent);
+  .desk .topbar { padding-top: 0; }
+  .desk .brand { font-size: 1.35rem; margin: 0; }
+  .desk .brand::before { width: 0.42rem; height: 1rem; }
+  .desk .sections { flex-wrap: nowrap; padding: 0.1rem 0 0.4rem; }
+  .desk main { padding-top: 0; }
+  .desk .front { margin-top: 0.35rem; gap: 0; }
+  .desk .lead h2 { font-size: 1.7rem; padding: 0 0.85rem; }
+  .desk .lead .kicker { padding: 0.55rem 0.85rem 0; }
+  .desk .lead .dek, .desk .lead .byline { padding-left: 0.85rem; padding-right: 0.85rem; }
+  .desk .side { gap: 0.65rem; padding: 0.5rem 0; }
+  .desk .side .thumb { width: 4.75rem; }
+  .desk .side h3 { font-size: 1.02rem; margin: 0; }
+  .desk .side h3 a, .desk .card h3 a { display: flex; align-items: center; min-height: 2.75rem; }
+  .desk .side .card-tldr, .desk .card .card-tldr { display: none; }
+  .desk .card {
+    display: grid;
+    grid-template-columns: 5.25rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem;
   }
+  .desk .card-media { width: 5.25rem; border-radius: 0.55rem; }
+  .desk .card h3 { font-size: 1.02rem; margin: 0; }
+  .desk .card-body { padding: 0 0.15rem 0 0; }
+  .desk .band { margin-top: 1.15rem; }
+  .desk .section-row { gap: 0.5rem; }
 
   .desk .nav-toggle:focus-visible + .nav-button {
     outline: 3px solid var(--focus);
@@ -865,43 +906,41 @@ body.desk {
   .desk .rail { margin-top: 0; position: sticky; top: 5.5rem; }
 }
 
-.desk .sections a[href$="/finance"]::before,
-.desk .sections a[href$="/crime"]::before,
-.desk .sections a[href$="/sports"]::before,
-.desk .sections a[href$="/breaking"]::before,
-.desk .kicker[data-cat="finance"] a::before,
-.desk .kicker[data-cat="crime"] a::before,
-.desk .kicker[data-cat="sports"] a::before,
-.desk .kicker[data-cat="breaking"] a::before {
-  margin-right: 0.3rem;
+.desk .kicker a::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.35rem;
+  border-radius: 999px;
+  background: var(--accent);
+  vertical-align: -0.05rem;
 }
 
 .desk .sections a[href$="/ai"]::before,
-.desk .kicker[data-cat="ai"] a::before { content: "✦ "; }
+.desk .kicker[data-cat="ai"] a::before { background: #0f766e; }
 .desk .sections a[href$="/technology"]::before,
-.desk .kicker[data-cat="technology"] a::before { content: "⌁ "; }
+.desk .kicker[data-cat="technology"] a::before { background: #1d4ed8; }
 .desk .sections a[href$="/fashion"]::before,
-.desk .kicker[data-cat="fashion"] a::before { content: "◈ "; }
+.desk .kicker[data-cat="fashion"] a::before { background: #9a3412; }
 .desk .sections a[href$="/showbiz"]::before,
-.desk .kicker[data-cat="showbiz"] a::before { content: "♫ "; }
+.desk .kicker[data-cat="showbiz"] a::before { background: #6d28d9; }
 .desk .sections a[href$="/finance"]::before,
-.desk .kicker[data-cat="finance"] a::before { content: "◈ "; }
+.desk .kicker[data-cat="finance"] a::before { background: #c2410c; }
 .desk .sections a[href$="/crime"]::before,
-.desk .kicker[data-cat="crime"] a::before { content: "▣ "; }
+.desk .kicker[data-cat="crime"] a::before { background: #b91c1c; }
 .desk .sections a[href$="/sports"]::before,
-.desk .kicker[data-cat="sports"] a::before { content: "◉ "; }
-.desk .sections a[href$="/breaking"]::before,
-.desk .kicker[data-cat="breaking"] a::before { content: "● "; }
+.desk .kicker[data-cat="sports"] a::before { background: #047857; }
+.desk .sections a[href$="/breaking"]::before { background: #fff; }
+.desk .kicker[data-cat="breaking"] a::before { background: #be123c; }
 
-.desk .kicker[data-cat="finance"], .desk .kicker[data-cat="finance"] a { color: #b45309; }
-.desk .kicker[data-cat="crime"], .desk .kicker[data-cat="crime"] a { color: #b91c1c; }
-.desk .kicker[data-cat="sports"], .desk .kicker[data-cat="sports"] a { color: #047857; }
-.desk .kicker[data-cat="breaking"], .desk .kicker[data-cat="breaking"] a { color: #dc2626; }
+.desk .kicker[data-cat],
+.desk .kicker[data-cat] a { color: var(--ink); }
 
-.desk .sections a[href$="/finance"] { background: #c2410c; color: #fff; }
-.desk .sections a[href$="/crime"] { background: #b91c1c; color: #fff; }
-.desk .sections a[href$="/sports"] { background: #047857; color: #fff; }
-.desk .sections a[href$="/breaking"] { background: #be123c; color: #fff; }
+.desk .sections a[href$="/breaking"] {
+  background: #be123c;
+  color: #fff;
+}
 
 .desk .card, .desk .side, .desk .related-list li {
   transition: transform 160ms ease, filter 160ms ease;
@@ -930,8 +969,8 @@ body.desk {
 }
 
 .desk .badge-breaking { background: #be123c; color: #fff; }
-.desk .badge-hot { background: #c2410c; color: #fff; }
-.desk .badge-trend { background: #7c3aed; color: #fff; }
+.desk .badge-hot { background: #9a3412; color: #fff; }
+.desk .badge-trend { background: #3f3f46; color: #fff; }
 
 .desk .side .card-tldr { padding: 0; }
 .desk .card-tldr { margin: 0.15rem 0 0.35rem; color: var(--muted); font-family: var(--sans); font-size: 0.86rem; line-height: 1.4; }
