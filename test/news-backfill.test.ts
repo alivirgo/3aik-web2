@@ -77,15 +77,22 @@ describe("discover backfill", () => {
 		);
 		expect(report.updated).toBe(1);
 		expect(report.failed).toBe(0);
-		expect(report.remaining).toBe(1);
+		expect(report.remaining).toBe(2);
 		expect(report.results[0]?.slug).toBe("newer-note");
 		expect(repo.articles[0]?.imageKey).toMatch(/-16x9\.webp$/);
 		expect(repo.articles[0]?.imageType).toBe("image/webp");
 		expect(repo.articles[0]?.imageCredit).toBe("Image: The Verge");
 		expect(repo.articles[1]?.imageKey).toBe("images/2026/10/older-note.jpg");
-		expect(widths).toEqual([1600, 1200, 800, 1600, 1200]);
-		expect(puts).toHaveLength(5);
-		expect(puts[4]).toContain(repo.articles[0]?.imageKey);
+		expect(widths).toEqual([1600]);
+		expect(puts).toHaveLength(1);
+		expect(puts[0]).toContain(repo.articles[0]?.imageKey);
+		const next = await backfillLeads(
+			{ GITHUB_IMAGES_TOKEN: "token" },
+			{ repo, fetchImpl, now: new Date("2026-10-03T00:00:00.000Z") },
+		);
+		expect(next.updated).toBe(1);
+		expect(next.results[0]?.slug).toBe("newer-note");
+		expect(widths).toEqual([1600, 1200]);
 	});
 
 	it("flags an unreadable source once so remaining drains", async () => {
@@ -102,7 +109,7 @@ describe("discover backfill", () => {
 		expect(first.failed).toBe(1);
 		expect(first.remaining).toBe(1);
 		expect(first.results[0]).toMatchObject({ slug: "broken-note", status: "failed", reason: "unprocessable_source" });
-		expect(repo.backfillHolds.get("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toContain("unprocessable_source");
+		expect(repo.backfillJobs.get("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.reason).toBe("unprocessable_source");
 		const again = await backfillLeads(
 			{ GITHUB_IMAGES_TOKEN: "token" },
 			{ repo, fetchImpl: broken.fetchImpl, now: new Date("2026-10-03T00:00:00.000Z") },
@@ -110,6 +117,42 @@ describe("discover backfill", () => {
 		expect(again.results[0]?.slug).not.toBe("broken-note");
 		expect(again.remaining).toBe(0);
 		expect(again.failed).toBe(1);
+	});
+
+	it("defers a partial crop for cron instead of blocking the queue", async () => {
+		const repo = new MemoryNewsRepository();
+		repo.articles.push(article("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "partial-note", "https://cdn.example/partial.jpg", "2026-10-02T00:00:00.000Z"));
+		let hits = 0;
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const url = String(input);
+			if (url.includes("api.github.com")) {
+				if (init?.method === "PUT") {
+					return new Response(JSON.stringify({ commit: { sha: SHA } }), {
+						status: 201,
+						headers: { "content-type": "application/json", "x-ratelimit-remaining": "4000" },
+					});
+				}
+				return new Response("missing", { status: 404 });
+			}
+			hits += 1;
+			if (hits === 1) return new Response(WEBP, { status: 200, headers: { "content-type": "image/webp" } });
+			return new Response("no", { status: 404 });
+		};
+		const now = new Date("2026-10-03T00:00:00.000Z");
+		const first = await backfillLeads({ GITHUB_IMAGES_TOKEN: "token" }, { repo, fetchImpl, now });
+		expect(first.updated).toBe(1);
+		expect(repo.articles[0]?.imageKey.endsWith("-16x9.webp")).toBe(true);
+		const second = await backfillLeads({ GITHUB_IMAGES_TOKEN: "token" }, { repo, fetchImpl, now });
+		expect(second.updated).toBe(0);
+		expect(second.failed).toBe(0);
+		expect(second.results[0]?.reason).toBe("resize_incomplete");
+		expect(second.remaining).toBe(0);
+		const later = await backfillLeads(
+			{ GITHUB_IMAGES_TOKEN: "token" },
+			{ repo, fetchImpl, now: new Date("2026-10-03T02:00:00.000Z") },
+		);
+		expect(later.results[0]?.slug).toBe("partial-note");
+		expect(repo.backfillJobs.get("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.retryAfter).not.toBe("");
 	});
 
 	it("does not flag the article when resizing is not applied", async () => {
@@ -123,7 +166,7 @@ describe("discover backfill", () => {
 		expect(report.error).toBe("resize_unavailable");
 		expect(report.failed).toBe(0);
 		expect(report.remaining).toBe(1);
-		expect(repo.backfillHolds.size).toBe(0);
+		expect(repo.backfillJobs.size).toBe(0);
 		expect(repo.articles[0]?.imageKey).toBe("images/2026/10/plain-note.jpg");
 	});
 });

@@ -26,6 +26,7 @@ import type { NewsHtml } from "./html";
 import { LIST_PAGE_SIZE, pageCount, pageHref, parsePageParam } from "./paging";
 import { D1NewsRepository, type NewsRepository, type NewsStatsOptions } from "./repository";
 import { handleNewsStatsRequest, isNewsStatsPath } from "./stats";
+import { backfillLeads } from "./backfill";
 import { runPublishCycle } from "./pipeline";
 import { renderAtom, renderLlmsTxt, renderNewsSitemap, renderRss, renderSitemap, renderSitemapIndex } from "./syndication";
 import type { Category, SitemapEntry, StoredArticle } from "./types";
@@ -509,6 +510,24 @@ export async function publishScheduled(env: Env, controller: ScheduledController
 			return;
 		}
 		await runPublishCycle({ env, repo, now });
+		if (env.GITHUB_IMAGES_TOKEN?.trim()) {
+			try {
+				const report = await backfillLeads(env, { repo, now });
+				console.log(JSON.stringify({
+					message: "ai-news backfill cron",
+					updated: report.updated,
+					failed: report.failed,
+					remaining: report.remaining,
+					error: report.error ?? "",
+					reason: report.results[0]?.reason ?? "",
+				}));
+			} catch (error) {
+				console.error(JSON.stringify({
+					message: "ai-news backfill cron failed",
+					error: error instanceof Error ? error.message : "backfill",
+				}));
+			}
+		}
 		return;
 	}
 	if (!publishingEnabled(env)) {

@@ -31,15 +31,14 @@ export interface NewsRepository {
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
-	/** Newest articles whose lead is not a finished 1600px 16:9 set and not already flagged. */
-	listForBackfill(limit: number): Promise<StoredArticle[]>;
-	countForBackfill(): Promise<number>;
-	/**
-	 * Remember that this article was attempted. A second hold returns false.
-	 * Flagged rows stay out of listForBackfill until clearBackfill.
-	 */
-	holdBackfill(articleId: string, updatedAt: string): Promise<boolean>;
-	failBackfill(articleId: string, reason: string, updatedAt: string): Promise<void>;
+	/** Articles that can be resized now. Future retries and terminal failures are omitted. */
+	listForBackfill(limit: number, nowIso: string): Promise<StoredArticle[]>;
+	countForBackfill(nowIso: string): Promise<number>;
+	/** Hide the article until retryAfter. Returns false when a later retry is already scheduled. */
+	holdBackfill(articleId: string, updatedAt: string, retryAfter: string): Promise<boolean>;
+	readBackfill(articleId: string): Promise<{ reason: string; retryAfter: string; pending: string; attempts: number } | null>;
+	/** Retryable failure or the next variant. An empty retryAfter is terminal. */
+	deferBackfill(articleId: string, reason: string, updatedAt: string, retryAfter: string, pending: string, attempts: number): Promise<void>;
 	clearBackfill(articleId: string): Promise<void>;
 	updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void>;
 	listRecentSourceUrls(limit: number): Promise<string[]>;
@@ -431,33 +430,68 @@ export class D1NewsRepository implements NewsRepository {
 
 	private ensureBackfillTable(): Promise<void> {
 		if (!this.backfillTable) {
-			this.backfillTable = this.db
-				.prepare(
-					`CREATE TABLE IF NOT EXISTS article_image_backfill (
-						article_id TEXT PRIMARY KEY,
-						reason TEXT NOT NULL,
-						updated_at TEXT NOT NULL
-					)`,
-				)
-				.run()
-				.then(() => undefined)
-				.catch((error: unknown) => {
-					this.backfillTable = null;
-					throw error;
-				});
+			this.backfillTable = this.prepareBackfillTable().catch((error: unknown) => {
+				this.backfillTable = null;
+				throw error;
+			});
 		}
 		return this.backfillTable;
 	}
 
-	async listForBackfill(limit: number): Promise<StoredArticle[]> {
+	private async prepareBackfillTable(): Promise<void> {
+		await this.db
+			.prepare(
+				`CREATE TABLE IF NOT EXISTS article_image_backfill (
+					article_id TEXT PRIMARY KEY,
+					reason TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					retry_after TEXT NOT NULL DEFAULT '',
+					attempts INTEGER NOT NULL DEFAULT 0,
+					pending TEXT NOT NULL DEFAULT ''
+				)`,
+			)
+			.run();
+		for (const sql of [
+			"ALTER TABLE article_image_backfill ADD COLUMN retry_after TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE article_image_backfill ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE article_image_backfill ADD COLUMN pending TEXT NOT NULL DEFAULT ''",
+		]) {
+			try {
+				await this.db.prepare(sql).run();
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (!/duplicate column/i.test(message)) throw error;
+			}
+		}
+	}
+
+	private backfillWhere(nowIso: string): { sql: string; binds: string[] } {
+		const sql = `id IN (
+			SELECT a.id FROM articles a
+			LEFT JOIN article_image_backfill b ON b.article_id = a.id
+			WHERE (
+				b.article_id IS NULL
+				AND a.image_key NOT LIKE '%-16x9.webp'
+				AND (a.image_key != '' OR a.image_source_url != '')
+			) OR (
+				b.retry_after != '' AND b.retry_after <= ?
+			) OR (
+				IFNULL(b.retry_after, '') = ''
+				AND b.reason IN ('resize_incomplete', 'resize_too_large', 'github_commit_failed', 'started', 'transient')
+			) OR (
+				IFNULL(b.pending, '') != '' AND IFNULL(b.retry_after, '') <= ?
+			)
+		)`;
+		return { sql, binds: [nowIso, nowIso] };
+	}
+
+	async listForBackfill(limit: number, nowIso: string): Promise<StoredArticle[]> {
 		await this.ensureBackfillTable();
-		const exclude = "AND id NOT IN (SELECT article_id FROM article_image_backfill)";
+		const where = this.backfillWhere(nowIso);
 		try {
 			return await this.rows(
-				`SELECT {{columns}} FROM articles
-				 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')
-				 ${exclude}
-				 ORDER BY published_at DESC LIMIT ?`,
+				`SELECT {{columns}} FROM articles WHERE ${where.sql} ORDER BY published_at DESC LIMIT ?`,
+				...where.binds,
 				limit,
 			);
 		} catch (error) {
@@ -465,58 +499,81 @@ export class D1NewsRepository implements NewsRepository {
 			return this.rows(
 				`SELECT {{columns}} FROM articles
 				 WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'
-				 ${exclude}
 				 ORDER BY published_at DESC LIMIT ?`,
 				limit,
 			);
 		}
 	}
 
-	async countForBackfill(): Promise<number> {
+	async countForBackfill(nowIso: string): Promise<number> {
 		await this.ensureBackfillTable();
-		const exclude = "AND id NOT IN (SELECT article_id FROM article_image_backfill)";
+		const where = this.backfillWhere(nowIso);
 		try {
 			const row = await this.db
-				.prepare(
-					`SELECT COUNT(*) AS n FROM articles
-					 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')
-					 ${exclude}`,
-				)
+				.prepare(`SELECT COUNT(*) AS n FROM articles WHERE ${where.sql}`)
+				.bind(...where.binds)
 				.first<Record<string, unknown>>();
 			return Number(asRecord(row)?.n) || 0;
 		} catch (error) {
 			if (!missingColumn(error)) throw error;
 			const row = await this.db
-				.prepare(
-					`SELECT COUNT(*) AS n FROM articles
-					 WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'
-					 ${exclude}`,
-				)
+				.prepare("SELECT COUNT(*) AS n FROM articles WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'")
 				.first<Record<string, unknown>>();
 			return Number(asRecord(row)?.n) || 0;
 		}
 	}
 
-	async holdBackfill(articleId: string, updatedAt: string): Promise<boolean> {
+	async readBackfill(articleId: string): Promise<{ reason: string; retryAfter: string; pending: string; attempts: number } | null> {
 		await this.ensureBackfillTable();
-		try {
-			await this.db
-				.prepare("INSERT INTO article_image_backfill (article_id, reason, updated_at) VALUES (?, 'started', ?)")
-				.bind(articleId, updatedAt)
-				.run();
-			return true;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (/unique|constraint/i.test(message)) return false;
-			throw error;
-		}
+		const row = await this.db
+			.prepare("SELECT reason, retry_after, pending, attempts FROM article_image_backfill WHERE article_id = ?")
+			.bind(articleId)
+			.first<Record<string, unknown>>();
+		const record = asRecord(row);
+		if (!record) return null;
+		return {
+			reason: readString(record, "reason"),
+			retryAfter: readString(record, "retry_after"),
+			pending: readString(record, "pending"),
+			attempts: Number(record.attempts) || 0,
+		};
 	}
 
-	async failBackfill(articleId: string, reason: string, updatedAt: string): Promise<void> {
+	async holdBackfill(articleId: string, updatedAt: string, retryAfter: string): Promise<boolean> {
+		await this.ensureBackfillTable();
+		const current = await this.readBackfill(articleId);
+		if (current?.retryAfter && current.retryAfter > updatedAt) return false;
+		if (current && !current.retryAfter && (current.reason === "no_source" || current.reason === "unprocessable_source") && !current.pending) {
+			return false;
+		}
+		await this.db
+			.prepare(
+				`INSERT INTO article_image_backfill (article_id, reason, updated_at, retry_after, attempts, pending)
+				 VALUES (?, 'started', ?, ?, ?, ?)
+				 ON CONFLICT(article_id) DO UPDATE SET
+				   reason = 'started',
+				   updated_at = excluded.updated_at,
+				   retry_after = excluded.retry_after`,
+			)
+			.bind(articleId, updatedAt, retryAfter, current?.attempts ?? 0, current?.pending ?? "")
+			.run();
+		return true;
+	}
+
+	async deferBackfill(articleId: string, reason: string, updatedAt: string, retryAfter: string, pending: string, attempts: number): Promise<void> {
 		await this.ensureBackfillTable();
 		await this.db
-			.prepare("UPDATE article_image_backfill SET reason = ?, updated_at = ? WHERE article_id = ?")
-			.bind(reason, updatedAt, articleId)
+			.prepare(
+				`INSERT INTO article_image_backfill (article_id, reason, updated_at, retry_after, attempts, pending)
+				 VALUES (?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(article_id) DO UPDATE SET
+				   reason = excluded.reason,
+				   updated_at = excluded.updated_at,
+				   retry_after = excluded.retry_after,
+				   attempts = excluded.attempts,
+				   pending = excluded.pending`,
+			)
+			.bind(articleId, reason, updatedAt, retryAfter, attempts, pending)
 			.run();
 	}
 
@@ -1181,38 +1238,59 @@ export class MemoryNewsRepository implements NewsRepository {
 		return primary?.imageType ? { contentType: "image/webp" } : null;
 	}
 
-	/** article id -> reason. Present means backfill must not pick the article again. */
-	backfillHolds = new Map<string, string>();
+	backfillJobs = new Map<string, { reason: string; retryAfter: string; pending: string; attempts: number }>();
 
-	private eligibleForBackfill(article: StoredArticle): boolean {
-		return !article.imageKey.endsWith("-16x9.webp")
-			&& Boolean(article.imageKey || article.imageSourceUrl)
-			&& !this.backfillHolds.has(article.id);
+	private eligibleForBackfill(article: StoredArticle, nowIso: string): boolean {
+		const job = this.backfillJobs.get(article.id);
+		if (job?.retryAfter && job.retryAfter > nowIso) return false;
+		if (job && !job.retryAfter && (job.reason === "no_source" || job.reason === "unprocessable_source") && !job.pending) return false;
+		if (job?.retryAfter && job.retryAfter <= nowIso) return true;
+		if (job && !job.retryAfter && ["resize_incomplete", "resize_too_large", "github_commit_failed", "started", "transient"].includes(job.reason)) {
+			return true;
+		}
+		if (job?.pending && (!job.retryAfter || job.retryAfter <= nowIso)) return true;
+		if (job) return false;
+		return !article.imageKey.endsWith("-16x9.webp") && Boolean(article.imageKey || article.imageSourceUrl);
 	}
 
-	async listForBackfill(limit: number): Promise<StoredArticle[]> {
+	async listForBackfill(limit: number, nowIso: string): Promise<StoredArticle[]> {
 		return this.articles
-			.filter((article) => this.eligibleForBackfill(article))
+			.filter((article) => this.eligibleForBackfill(article, nowIso))
 			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
 			.slice(0, limit);
 	}
 
-	async countForBackfill(): Promise<number> {
-		return this.articles.filter((article) => this.eligibleForBackfill(article)).length;
+	async countForBackfill(nowIso: string): Promise<number> {
+		return this.articles.filter((article) => this.eligibleForBackfill(article, nowIso)).length;
 	}
 
-	async holdBackfill(articleId: string, updatedAt: string): Promise<boolean> {
-		if (this.backfillHolds.has(articleId)) return false;
-		this.backfillHolds.set(articleId, `started ${updatedAt}`);
+	async readBackfill(articleId: string): Promise<{ reason: string; retryAfter: string; pending: string; attempts: number } | null> {
+		return this.backfillJobs.get(articleId) ?? null;
+	}
+
+	async holdBackfill(articleId: string, updatedAt: string, retryAfter: string): Promise<boolean> {
+		const current = this.backfillJobs.get(articleId);
+		if (current?.retryAfter && current.retryAfter > updatedAt) return false;
+		if (current && !current.retryAfter && (current.reason === "no_source" || current.reason === "unprocessable_source") && !current.pending) {
+			return false;
+		}
+		this.backfillJobs.set(articleId, {
+			reason: "started",
+			retryAfter,
+			pending: current?.pending ?? "",
+			attempts: current?.attempts ?? 0,
+		});
+		void updatedAt;
 		return true;
 	}
 
-	async failBackfill(articleId: string, reason: string, updatedAt: string): Promise<void> {
-		this.backfillHolds.set(articleId, `${reason} ${updatedAt}`);
+	async deferBackfill(articleId: string, reason: string, updatedAt: string, retryAfter: string, pending: string, attempts: number): Promise<void> {
+		void updatedAt;
+		this.backfillJobs.set(articleId, { reason, retryAfter, pending, attempts });
 	}
 
 	async clearBackfill(articleId: string): Promise<void> {
-		this.backfillHolds.delete(articleId);
+		this.backfillJobs.delete(articleId);
 	}
 
 	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {

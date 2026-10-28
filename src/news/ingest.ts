@@ -1,11 +1,10 @@
 import { authorById, personaBriefs } from "./authors";
-import { backfillLeads, backfillLimit, storeGeneratedLead } from "./backfill";
+import { backfillLeads, backfillLimit } from "./backfill";
 import {
 	CATEGORY_LABEL,
 	COPY_WINDOW,
 	INGEST_IMAGE_MAX_BYTES,
 	INGEST_REQUESTS_PER_HOUR,
-	LEAD_DOWNLOAD_MAX_BYTES,
 	MAX_WORDS,
 	MIN_WORDS,
 	SIMILARITY_LIMIT,
@@ -14,8 +13,8 @@ import {
 	type NewsEnv,
 } from "./config";
 import { readBodyCapped, sameSiteHost } from "./feeds";
-import { GITHUB_IMAGE_MAX_BYTES, deleteImageFile } from "./github-images";
-import { filesForStoredImage, imageCandidates, leadWideEnough, persistLeadVariants } from "./lead";
+import { GITHUB_IMAGE_MAX_BYTES, commitImageFile, deleteImageFile, githubImagePath } from "./github-images";
+import { filesForStoredImage, imageCandidates } from "./lead";
 import { isBlockedHost, publicHttpsUrl } from "./net";
 import { indexNowPublishUrls, pingIndexNow } from "./indexnow";
 import { bearerToken, tokensMatch } from "./tokens";
@@ -401,6 +400,8 @@ interface FetchedImage {
 	bytes: Uint8Array;
 	mime: string;
 	finalUrl: string;
+	/** The publisher file is larger than GitHub will store. Keep the URL for a later resize. */
+	overflow?: boolean;
 }
 
 /** Fetch a publisher image. Redirects stay on public https. A failed fetch returns null. */
@@ -437,17 +438,17 @@ async function fetchPublisherImage(url: string, fetchImpl: typeof fetch): Promis
 			return null;
 		}
 		const declared = Number(response.headers.get("content-length") ?? "");
-		if (Number.isFinite(declared) && declared > LEAD_DOWNLOAD_MAX_BYTES) {
+		if (Number.isFinite(declared) && declared > GITHUB_IMAGE_MAX_BYTES) {
 			await response.body?.cancel().catch(() => undefined);
-			return null;
+			return { bytes: new Uint8Array(), mime: "", finalUrl: current, overflow: true };
 		}
 		const type = mediaType(response.headers.get("content-type"));
 		if (!SOURCE_IMAGE_TYPES.has(type)) {
 			await response.body?.cancel().catch(() => undefined);
 			return null;
 		}
-		const bytes = await readBytesCapped(response, LEAD_DOWNLOAD_MAX_BYTES);
-		if (!bytes) return null;
+		const bytes = await readBytesCapped(response, GITHUB_IMAGE_MAX_BYTES);
+		if (!bytes) return { bytes: new Uint8Array(), mime: "", finalUrl: current, overflow: true };
 		const detected = detectImageType(bytes);
 		const normalized = type === "image/jpg" ? "image/jpeg" : type;
 		if (!detected || detected.mime !== normalized) return null;
@@ -472,7 +473,7 @@ async function sourceRefs(sources: ParsedSource[], fetchImpl: typeof fetch): Pro
 	return { refs, reasons, html };
 }
 
-async function storeWideLead(
+async function storeOriginalLead(
 	env: NewsEnv,
 	bytes: Uint8Array,
 	slug: string,
@@ -481,12 +482,19 @@ async function storeWideLead(
 	fetchImpl: typeof fetch,
 ) {
 	const token = env.GITHUB_IMAGES_TOKEN?.trim() ?? "";
-	if (!token || !leadWideEnough(bytes)) return { imageKey: "", imageCommit: "", imageType: "", pause: false };
-	const stored = await persistLeadVariants(token, publishedAt, slug, suffix, bytes, fetchImpl);
-	if (!stored.imageKey) {
-		console.log(JSON.stringify({ message: "ai-news ingest image skipped", reason: token ? "crop-or-github" : "no-token" }));
+	const detected = detectImageType(bytes);
+	const extension = detected?.extension === "jpg" || detected?.extension === "png" || detected?.extension === "webp" ? detected.extension : null;
+	if (!token || !extension || bytes.byteLength > GITHUB_IMAGE_MAX_BYTES) {
+		return { imageKey: "", imageCommit: "", imageType: "", pause: false };
 	}
-	return stored;
+	const path = githubImagePath(publishedAt, slug, extension, suffix);
+	if (!path) return { imageKey: "", imageCommit: "", imageType: "", pause: false };
+	const wrote = await commitImageFile(token, path, bytes, fetchImpl);
+	if (!wrote.ok || !wrote.commitSha) {
+		console.log(JSON.stringify({ message: "ai-news ingest image skipped", reason: wrote.pause ? "github_pause" : "github" }));
+		return { imageKey: "", imageCommit: "", imageType: "", pause: wrote.pause };
+	}
+	return { imageKey: path, imageCommit: wrote.commitSha, imageType: detected?.mime ?? "application/octet-stream", pause: wrote.pause };
 }
 
 function qualityRules() {
@@ -514,14 +522,14 @@ function qualityRules() {
 			alt_words: { min: 8, max: 32 },
 			stored: ["image/jpeg", "image/png", "image/webp"],
 			stored_max_bytes: GITHUB_IMAGE_MAX_BYTES,
-			note: "Send image.data as base64 or a data URL. A lead under 1200px wide is not stored. A wide PNG, JPEG, or WebP is cropped to WebP at 1600x900, 1600x1200, and 1200x1200.",
+			note: "Send image.data as base64 or a data URL. The post stores that file as-is when it fits in 1 MB. WebP crops are queued and are not made inside this request.",
 			source_url: {
 				field: "image_source_url",
 				credit: "image_credit",
-				max_bytes: LEAD_DOWNLOAD_MAX_BYTES,
-				min_width: 1200,
+				max_bytes: GITHUB_IMAGE_MAX_BYTES,
+				min_width: 0,
 				accepted: ["image/jpeg", "image/png", "image/webp"],
-				note: "https URL of the publisher image. The desk tries the largest source version, then an illustration if the picture is still under 1200px wide. Private hosts are rejected.",
+				note: "https URL of the publisher image. A file larger than 1 MB is not downloaded. The URL is kept and a later resize stores the crops. Private hosts are rejected.",
 			},
 		},
 	};
@@ -654,30 +662,37 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 	let picture = { imageKey: "", imageCommit: "", imageType: "", pause: false };
 	let imageCredit = "";
 	let imageSourceUrl = "";
-	if (parsed.sourceImage) {
-		const pageUrl = loaded.refs[0]?.url ?? parsed.sourceImage.url;
-		for (const candidate of imageCandidates(parsed.sourceImage.url, loaded.html, pageUrl)) {
-			const fetched = await fetchPublisherImage(candidate, fetchImpl);
-			if (!fetched || !leadWideEnough(fetched.bytes)) continue;
-			const stored = await storeWideLead(env, fetched.bytes, slug, suffix, nowIso, fetchImpl);
-			if (stored.imageKey) {
-				picture = stored;
-				imageCredit = parsed.sourceImage.credit;
-				imageSourceUrl = fetched.finalUrl;
-				break;
+	try {
+		if (parsed.sourceImage) {
+			const pageUrl = loaded.refs[0]?.url ?? parsed.sourceImage.url;
+			let keptUrl = "";
+			for (const candidate of imageCandidates(parsed.sourceImage.url, loaded.html, pageUrl)) {
+				const fetched = await fetchPublisherImage(candidate, fetchImpl);
+				if (!fetched) continue;
+				if (fetched.overflow || !fetched.bytes.byteLength) {
+					keptUrl = fetched.finalUrl;
+					break;
+				}
+				const stored = await storeOriginalLead(env, fetched.bytes, slug, suffix, nowIso, fetchImpl);
+				if (stored.imageKey) {
+					picture = stored;
+					keptUrl = fetched.finalUrl;
+					break;
+				}
+				if (stored.pause) break;
 			}
-			if (stored.pause) break;
+			if (keptUrl) {
+				imageCredit = parsed.sourceImage.credit;
+				imageSourceUrl = keptUrl;
+			}
+		} else if (parsed.image) {
+			picture = await storeOriginalLead(env, parsed.image.bytes, slug, suffix, nowIso, fetchImpl);
 		}
-	} else if (parsed.image && leadWideEnough(parsed.image.bytes)) {
-		picture = await storeWideLead(env, parsed.image.bytes, slug, suffix, nowIso, fetchImpl);
-	}
-	if (!picture.imageKey) {
-		const illustrated = await storeGeneratedLead(env, draft.imagePrompt, nowIso, slug, suffix, fetchImpl);
-		if (illustrated.imageKey) {
-			picture = illustrated;
-			imageCredit = "";
-			imageSourceUrl = "";
-		}
+	} catch (error) {
+		console.error(JSON.stringify({
+			message: "ai-news ingest image skipped",
+			error: error instanceof Error ? error.message : String(error),
+		}));
 	}
 	const article: StoredArticle = {
 		id,
