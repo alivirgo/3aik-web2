@@ -770,3 +770,41 @@ describe("publish desks", () => {
 		expect(row).toEqual({ category: "breaking", section: "finance" });
 	});
 });
+
+describe("restore stored headline casing", () => {
+	it("dry-runs, then applies source capitals without changing the slug", async () => {
+		const state = desk();
+		state.repo.articles.push({
+			id: "title-1",
+			slug: "erin-note",
+			title: "A drama about erin patterson and london",
+			description: "A note.",
+			category: "showbiz",
+			tags: [],
+			authorId: "freya-moss",
+			bodyHtml: "",
+			bodyText: "The outlet reported a narrow note.",
+			keyPoints: [],
+			faq: [],
+			sources: [{ url: "https://example.com/erin", title: "Erin Patterson leaves London", outlet: "The Verge" }],
+			related: [],
+			imageKey: "",
+			imageCommit: "",
+			imageAlt: "",
+			imageType: "",
+			imageCredit: "",
+			imageSourceUrl: "",
+			publishedAt: NOW.toISOString(),
+			updatedAt: NOW.toISOString(),
+		});
+		const dry = await send(post({ limit: 10 }, TOKEN, "/ai-news/api/ingest/restore-titles"), state);
+		expect(dry.response.status).toBe(200);
+		expect(await dry.response.json()).toMatchObject({ scanned: 1, changed: 1, applied: false });
+		expect(state.repo.articles[0]?.title).toBe("A drama about erin patterson and london");
+		expect(state.repo.articles[0]?.slug).toBe("erin-note");
+		const applied = await send(post({ apply: true, limit: 10 }, TOKEN, "/ai-news/api/ingest/restore-titles"), state);
+		expect(applied.response.status).toBe(200);
+		expect(state.repo.articles[0]?.title).toBe("A drama about Erin Patterson and London");
+		expect(state.repo.articles[0]?.slug).toBe("erin-note");
+	});
+});

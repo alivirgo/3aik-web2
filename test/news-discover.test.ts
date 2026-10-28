@@ -10,7 +10,7 @@ import { handleNewsRequest } from "../src/news/routes";
 import { MemoryNewsRepository } from "../src/news/repository";
 import { renderRss } from "../src/news/syndication";
 import type { StoredArticle } from "../src/news/types";
-import { sentenceCaseHeadline, slugify } from "../src/news/text";
+import { restoreTitleCasing, sentenceCaseHeadline, slugify } from "../src/news/text";
 
 const root = resolve(import.meta.dirname, "..");
 const HOME_SHA = "66bc6bcf324cb48f618811968002a32852437e3302bd6e91de398a49d42f7ace";
@@ -174,7 +174,12 @@ describe("discover eligibility", () => {
 	});
 
 	it("normalizes headlines, rejects clickbait, and cuts new slugs on a word", () => {
-		expect(sentenceCaseHeadline("OpenAI Ships A New GPT-5 Model")).toBe("OpenAI ships a new GPT-5 model");
+		expect(sentenceCaseHeadline("OpenAI Ships A New GPT-5 Model")).toBe("OpenAI Ships A New GPT-5 Model");
+		expect(sentenceCaseHeadline("Erin Patterson in London")).toBe("Erin Patterson in London");
+		expect(restoreTitleCasing(
+			"Paramount+ orders six-part erin patterson drama with melanie lynskey",
+			["Erin Patterson series starring Melanie Lynskey"],
+		)).toBe("Paramount+ orders six-part Erin Patterson drama with Melanie Lynskey");
 		expect(clickbaitReason("You won't believe this launch")).toBe("clickbait");
 		expect(clickbaitReason("A shocking price cut lands")).toBe("clickbait");
 		expect(clickbaitReason("VENDOR POSTS A NOTE TODAY")).toBe("clickbait");
