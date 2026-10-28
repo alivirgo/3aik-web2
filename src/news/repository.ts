@@ -31,9 +31,16 @@ export interface NewsRepository {
 	expiredArticles(cutoffIso: string, limit: number): Promise<Array<{ id: string; imageKey: string }>>;
 	deleteArticle(id: string): Promise<void>;
 	findImage(imageKey: string, imageCommit: string): Promise<{ contentType: string } | null>;
-	/** Newest articles whose lead is not a finished 1600px 16:9 set. */
+	/** Newest articles whose lead is not a finished 1600px 16:9 set and not already flagged. */
 	listForBackfill(limit: number): Promise<StoredArticle[]>;
 	countForBackfill(): Promise<number>;
+	/**
+	 * Remember that this article was attempted. A second hold returns false.
+	 * Flagged rows stay out of listForBackfill until clearBackfill.
+	 */
+	holdBackfill(articleId: string, updatedAt: string): Promise<boolean>;
+	failBackfill(articleId: string, reason: string, updatedAt: string): Promise<void>;
+	clearBackfill(articleId: string): Promise<void>;
 	updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void>;
 	listRecentSourceUrls(limit: number): Promise<string[]>;
 	/** Hourly ingest counter stored in runtime_lock. True when this request is inside the cap. */
@@ -420,11 +427,36 @@ export class D1NewsRepository implements NewsRepository {
 		return null;
 	}
 
+	private backfillTable: Promise<void> | null = null;
+
+	private ensureBackfillTable(): Promise<void> {
+		if (!this.backfillTable) {
+			this.backfillTable = this.db
+				.prepare(
+					`CREATE TABLE IF NOT EXISTS article_image_backfill (
+						article_id TEXT PRIMARY KEY,
+						reason TEXT NOT NULL,
+						updated_at TEXT NOT NULL
+					)`,
+				)
+				.run()
+				.then(() => undefined)
+				.catch((error: unknown) => {
+					this.backfillTable = null;
+					throw error;
+				});
+		}
+		return this.backfillTable;
+	}
+
 	async listForBackfill(limit: number): Promise<StoredArticle[]> {
+		await this.ensureBackfillTable();
+		const exclude = "AND id NOT IN (SELECT article_id FROM article_image_backfill)";
 		try {
 			return await this.rows(
 				`SELECT {{columns}} FROM articles
 				 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')
+				 ${exclude}
 				 ORDER BY published_at DESC LIMIT ?`,
 				limit,
 			);
@@ -433,6 +465,7 @@ export class D1NewsRepository implements NewsRepository {
 			return this.rows(
 				`SELECT {{columns}} FROM articles
 				 WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'
+				 ${exclude}
 				 ORDER BY published_at DESC LIMIT ?`,
 				limit,
 			);
@@ -440,21 +473,56 @@ export class D1NewsRepository implements NewsRepository {
 	}
 
 	async countForBackfill(): Promise<number> {
+		await this.ensureBackfillTable();
+		const exclude = "AND id NOT IN (SELECT article_id FROM article_image_backfill)";
 		try {
 			const row = await this.db
 				.prepare(
 					`SELECT COUNT(*) AS n FROM articles
-					 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')`,
+					 WHERE image_key NOT LIKE '%-16x9.webp' AND (image_key != '' OR image_source_url != '')
+					 ${exclude}`,
 				)
 				.first<Record<string, unknown>>();
 			return Number(asRecord(row)?.n) || 0;
 		} catch (error) {
 			if (!missingColumn(error)) throw error;
 			const row = await this.db
-				.prepare("SELECT COUNT(*) AS n FROM articles WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'")
+				.prepare(
+					`SELECT COUNT(*) AS n FROM articles
+					 WHERE image_key != '' AND image_key NOT LIKE '%-16x9.webp'
+					 ${exclude}`,
+				)
 				.first<Record<string, unknown>>();
 			return Number(asRecord(row)?.n) || 0;
 		}
+	}
+
+	async holdBackfill(articleId: string, updatedAt: string): Promise<boolean> {
+		await this.ensureBackfillTable();
+		try {
+			await this.db
+				.prepare("INSERT INTO article_image_backfill (article_id, reason, updated_at) VALUES (?, 'started', ?)")
+				.bind(articleId, updatedAt)
+				.run();
+			return true;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (/unique|constraint/i.test(message)) return false;
+			throw error;
+		}
+	}
+
+	async failBackfill(articleId: string, reason: string, updatedAt: string): Promise<void> {
+		await this.ensureBackfillTable();
+		await this.db
+			.prepare("UPDATE article_image_backfill SET reason = ?, updated_at = ? WHERE article_id = ?")
+			.bind(reason, updatedAt, articleId)
+			.run();
+	}
+
+	async clearBackfill(articleId: string): Promise<void> {
+		await this.ensureBackfillTable();
+		await this.db.prepare("DELETE FROM article_image_backfill WHERE article_id = ?").bind(articleId).run();
 	}
 
 	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {
@@ -1113,15 +1181,38 @@ export class MemoryNewsRepository implements NewsRepository {
 		return primary?.imageType ? { contentType: "image/webp" } : null;
 	}
 
+	/** article id -> reason. Present means backfill must not pick the article again. */
+	backfillHolds = new Map<string, string>();
+
+	private eligibleForBackfill(article: StoredArticle): boolean {
+		return !article.imageKey.endsWith("-16x9.webp")
+			&& Boolean(article.imageKey || article.imageSourceUrl)
+			&& !this.backfillHolds.has(article.id);
+	}
+
 	async listForBackfill(limit: number): Promise<StoredArticle[]> {
 		return this.articles
-			.filter((article) => !article.imageKey.endsWith("-16x9.webp") && (article.imageKey || article.imageSourceUrl))
+			.filter((article) => this.eligibleForBackfill(article))
 			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
 			.slice(0, limit);
 	}
 
 	async countForBackfill(): Promise<number> {
-		return this.articles.filter((article) => !article.imageKey.endsWith("-16x9.webp") && (article.imageKey || article.imageSourceUrl)).length;
+		return this.articles.filter((article) => this.eligibleForBackfill(article)).length;
+	}
+
+	async holdBackfill(articleId: string, updatedAt: string): Promise<boolean> {
+		if (this.backfillHolds.has(articleId)) return false;
+		this.backfillHolds.set(articleId, `started ${updatedAt}`);
+		return true;
+	}
+
+	async failBackfill(articleId: string, reason: string, updatedAt: string): Promise<void> {
+		this.backfillHolds.set(articleId, `${reason} ${updatedAt}`);
+	}
+
+	async clearBackfill(articleId: string): Promise<void> {
+		this.backfillHolds.delete(articleId);
 	}
 
 	async updateLeadImage(id: string, image: { imageKey: string; imageCommit: string; imageType: string; imageCredit: string; imageSourceUrl: string; updatedAt: string }): Promise<void> {

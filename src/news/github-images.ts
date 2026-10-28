@@ -75,6 +75,12 @@ function jsDelivrUrl(repoPath: string, commitSha: string, host = "cdn.jsdelivr.n
 	return `https://${host}/gh/${IMAGE_REPO}@${commitSha}/${repoPath}`;
 }
 
+/** Public CDN URL for a stored file. Backfill resizes this instead of the Worker. */
+export function publicImageCdnUrl(repoPath: string, commitSha: string): string | null {
+	if (!isGitHubImagePath(repoPath) || !isCommitSha(commitSha)) return null;
+	return jsDelivrUrl(repoPath, commitSha);
+}
+
 function allowedCdnUrl(value: string, repoPath: string, commitSha: string): boolean {
 	let url: URL;
 	try {
