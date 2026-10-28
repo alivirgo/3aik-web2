@@ -310,7 +310,11 @@ function pictureTag(origin: string, article: StoredArticle, role: "hero" | "card
 function latestList(origin: string, articles: StoredArticle[], now: number): string {
 	if (!articles.length) return `<p class="rail-empty">No other stories yet.</p>`;
 	const items = articles.map((article) => {
-		return `<li><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></li>`;
+		const media = pictureTag(origin, article, "thumb");
+		const thumb = media
+			? `<a class="latest-thumb" href="${articleHref(origin, article.slug)}">${media}</a>`
+			: "";
+		return `<li>${thumb}<div class="latest-copy"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></div></li>`;
 	}).join("");
 	return `<ol class="latest-list">${items}</ol>`;
 }

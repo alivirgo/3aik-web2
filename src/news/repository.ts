@@ -122,7 +122,7 @@ function missingSchema(error: unknown): boolean {
 
 function missingColumn(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
-	return /no such column/i.test(message);
+	return /no such column|no column named/i.test(message);
 }
 
 export interface NewsStatsOptions {
@@ -152,16 +152,23 @@ export class D1NewsRepository implements NewsRepository {
 				base = ARTICLE_COLUMNS_LEGACY;
 			}
 		}
-		if (this.sectionColumn === null) {
-			try {
-				await this.db.prepare("SELECT section FROM articles LIMIT 1").first();
-				this.sectionColumn = true;
-			} catch (error) {
-				if (!missingColumn(error) && !missingSchema(error)) throw error;
-				this.sectionColumn = false;
-			}
+		const section = await this.ensureSectionColumn();
+		return section ? `${base}, section` : base;
+	}
+
+	/** Production D1 does not apply migrations on deploy. Add the column here. */
+	private async ensureSectionColumn(): Promise<boolean> {
+		if (this.sectionColumn !== null) return this.sectionColumn;
+		try {
+			await this.db.prepare("ALTER TABLE articles ADD COLUMN section TEXT NOT NULL DEFAULT ''").run();
+			this.sectionColumn = true;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (/duplicate column|already exists/i.test(message)) this.sectionColumn = true;
+			else if (missingSchema(error) || missingColumn(error)) this.sectionColumn = false;
+			else throw error;
 		}
-		return this.sectionColumn ? `${base}, section` : base;
+		return this.sectionColumn === true;
 	}
 
 	private async rows(sql: string, ...bindings: unknown[]): Promise<StoredArticle[]> {
@@ -408,14 +415,14 @@ export class D1NewsRepository implements NewsRepository {
 	}
 
 	async insert(article: StoredArticle): Promise<void> {
+		const withSection = await this.ensureSectionColumn();
 		const full = this.fullColumns !== false;
 		try {
-			await this.db.batch(this.insertBatch(article, full, true));
+			await this.db.batch(this.insertBatch(article, full, withSection));
 			if (full) this.fullColumns = true;
-			this.sectionColumn = true;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			if (missingColumn(error) && /section/i.test(message)) {
+			if (withSection && missingColumn(error) && /section/i.test(message)) {
 				this.sectionColumn = false;
 				await this.db.batch(this.insertBatch(article, full, false));
 				if (full) this.fullColumns = true;

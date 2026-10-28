@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { AUTHORS } from "../src/news/authors";
@@ -646,5 +647,126 @@ describe("publisher images", () => {
 		})), state);
 		expect(response.status).toBe(201);
 		expect(state.repo.articles).toHaveLength(1);
+	});
+});
+
+describe("publish desks", () => {
+	it("publishes finance, crime, sports, and a breaking story with a section", async () => {
+		const cases = [
+			{ category: "finance", author_slug: "leah-okoye", url: "https://example.com/finance-note" },
+			{ category: "crime", author_slug: "samir-dalal", url: "https://example.com/crime-note" },
+			{ category: "sports", author_slug: "noah-briggs", url: "https://example.com/sports-note" },
+			{ category: "breaking", section: "finance", author_slug: "leah-okoye", url: "https://example.com/breaking-desk" },
+		];
+		for (const item of cases) {
+			const sent = await send(post(articleFields({
+				category: item.category,
+				section: item.section,
+				author_slug: item.author_slug,
+				sources: [{ url: item.url, publisher: "The Verge", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
+			})));
+			expect(sent.response.status, item.category).toBe(201);
+			expect(sent.state.repo.articles[0]?.category).toBe(item.category);
+			if (item.section) expect(sent.state.repo.articles[0]?.section).toBe(item.section);
+		}
+	});
+
+	it("adds the section column when D1 has not applied the migration", async () => {
+		const sqlite = new DatabaseSync(":memory:");
+		sqlite.exec(`
+			CREATE TABLE articles (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL UNIQUE,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				category TEXT NOT NULL,
+				tags_json TEXT NOT NULL,
+				author_id TEXT NOT NULL,
+				body_html TEXT NOT NULL,
+				body_text TEXT NOT NULL,
+				key_points_json TEXT NOT NULL,
+				faq_json TEXT NOT NULL,
+				sources_json TEXT NOT NULL,
+				related_json TEXT NOT NULL,
+				image_key TEXT NOT NULL,
+				image_commit TEXT NOT NULL DEFAULT '',
+				image_alt TEXT NOT NULL,
+				image_type TEXT NOT NULL,
+				image_credit TEXT NOT NULL DEFAULT '',
+				image_source_url TEXT NOT NULL DEFAULT '',
+				published_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			);
+			CREATE TABLE article_sources (
+				source_url TEXT PRIMARY KEY,
+				article_id TEXT NOT NULL,
+				outlet TEXT NOT NULL,
+				source_title TEXT NOT NULL
+			);
+			CREATE TABLE author_stats (
+				author_id TEXT PRIMARY KEY,
+				publish_count INTEGER NOT NULL DEFAULT 0,
+				last_published_at TEXT
+			);
+			CREATE TABLE category_stats (
+				category TEXT PRIMARY KEY,
+				publish_count INTEGER NOT NULL DEFAULT 0,
+				last_published_at TEXT
+			);
+		`);
+		const prepare = (statement: string) => {
+			const run = (args: unknown[]) => {
+				const info = sqlite.prepare(statement).run(...(args as never[]));
+				return { meta: { changes: Number(info.changes ?? 0) } };
+			};
+			return {
+				bind(...values: unknown[]) {
+					return {
+						run: async () => run(values),
+						first: async () => sqlite.prepare(statement).get(...(values as never[])) ?? null,
+						all: async () => ({ results: sqlite.prepare(statement).all(...(values as never[])) }),
+					};
+				},
+				run: async () => run([]),
+				first: async () => sqlite.prepare(statement).get() ?? null,
+				all: async () => ({ results: sqlite.prepare(statement).all() }),
+			};
+		};
+		const db = {
+			prepare,
+			async batch(statements: Array<{ run: () => Promise<unknown> }>) {
+				const results = [];
+				for (const statement of statements) results.push(await statement.run());
+				return results;
+			},
+		};
+		const repo = new D1NewsRepository(db as unknown as D1Database);
+		const article: StoredArticle = {
+			id: "id-finance",
+			slug: "a-filing-moves-the-week",
+			title: "A filing moves the week",
+			description: "A filing note.",
+			category: "breaking",
+			section: "finance",
+			tags: ["desk"],
+			authorId: "leah-okoye",
+			bodyHtml: "",
+			bodyText: "The outlet reported a narrow filing.",
+			keyPoints: ["The outlet reported a narrow filing."],
+			faq: [],
+			sources: [{ url: "https://example.com/d1-filing", title: "Filing note", outlet: "Example" }],
+			related: [],
+			imageKey: "",
+			imageCommit: "",
+			imageAlt: "",
+			imageType: "",
+			imageCredit: "",
+			imageSourceUrl: "",
+			publishedAt: "2026-10-28T03:50:00.000Z",
+			updatedAt: "2026-10-28T03:50:00.000Z",
+		};
+		await repo.insert(article);
+		const row = sqlite.prepare("SELECT category, section FROM articles WHERE slug = ?").get(article.slug) as { category: string; section: string };
+		expect(row).toEqual({ category: "breaking", section: "finance" });
 	});
 });
