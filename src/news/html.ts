@@ -25,7 +25,6 @@ import {
 	readingMinutes,
 	relativeCompact,
 	relativeTime,
-	sentenceCaseHeadline,
 	stripEditorialDashes,
 } from "./text";
 
@@ -82,7 +81,7 @@ export function authorInitials(name: string): string {
 }
 
 function visibleTitle(title: string): string {
-	return sentenceCaseHeadline(stripEditorialDashes(title));
+	return stripEditorialDashes(title);
 }
 
 function categoryHref(origin: string, category: Category): string {
@@ -366,47 +365,73 @@ ${badges(article, now, reads)}
 </article>`;
 }
 
-function sectionBand(origin: string, category: Category, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>): string {
+function sectionBand(origin: string, category: Category, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>, seeAll = true): string {
 	if (!articles.length) return "";
+	const href = categoryHref(origin, category);
 	const cards = articles.slice(0, 4).map((article) => storyCard(origin, article, now, reads?.get(article.slug) ?? 0)).join("");
+	const more = seeAll ? `<a class="see-all" href="${href}">See all</a>` : "";
 	return `<section class="band">
-<h2 class="section-label"><a href="${categoryHref(origin, category)}">${CATEGORY_LABEL[category]}</a></h2>
+<header class="band-head"><h2 class="section-label"><a href="${href}">${CATEGORY_LABEL[category]}</a></h2>${more}</header>
 <div class="section-row">${cards}</div>
 </section>`;
+}
+
+function moreStories(origin: string, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>): string {
+	if (!articles.length) return "";
+	const cards = articles.map((article) => storyCard(origin, article, now, reads?.get(article.slug) ?? 0)).join("");
+	return `<section class="more-stories"><h2 class="section-label">More stories</h2><div class="section-row">${cards}</div></section>`;
 }
 
 function frontPage(origin: string, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>): string {
 	const lead = articles[0];
 	if (!lead) return "";
+	const used = new Set([lead.slug]);
+	const most = articles
+		.filter((article) => article.slug !== lead.slug && (reads?.get(article.slug) ?? 0) > 0)
+		.sort((left, right) => (reads?.get(right.slug) ?? 0) - (reads?.get(left.slug) ?? 0) || right.publishedAt.localeCompare(left.publishedAt))
+		.slice(0, 4);
+	for (const article of most) used.add(article.slug);
 	const media = pictureTag(origin, lead, "hero")
 		? `<a class="lead-media" href="${articleHref(origin, lead.slug)}">${pictureTag(origin, lead, "hero")}</a>`
 		: "";
-	const stackItems = articles.slice(1, 5);
+	const stackItems = articles.filter((article) => !used.has(article.slug)).slice(0, 4);
+	for (const article of stackItems) used.add(article.slug);
 	const stack = stackItems.length
 		? stackItems.map((article) => sideStory(origin, article, now, reads?.get(article.slug) ?? 0)).join("")
 		: `<p class="stack-empty">${STACK_NOTE}</p>`;
-	const bands = CATEGORIES.map((category) => sectionBand(
-		origin,
-		category,
-		articles.filter((article) => visibleCategory(article, now) === category),
-		now,
-		reads,
-	)).join("");
+	const latestItems = articles.filter((article) => !used.has(article.slug)).slice(0, 6);
+	for (const article of latestItems) used.add(article.slug);
+	const bands = CATEGORIES.map((category) => {
+		const rows = articles.filter((article) => !used.has(article.slug) && visibleCategory(article, now) === category).slice(0, 4);
+		for (const article of rows) used.add(article.slug);
+		return sectionBand(origin, category, rows, now, reads);
+	}).join("");
+	const rest = articles.filter((article) => !used.has(article.slug));
+	const leadReads = reads?.get(lead.slug) ?? 0;
+	const leadBadges = badges(lead, now, leadReads);
+	const leadMark = leadBadges || kickerLink(origin, visibleCategory(lead, now));
+	const mostBlock = most.length
+		? `<section class="most-read"><h2 class="section-label">Most read</h2>${latestList(origin, most, now)}</section>`
+		: "";
 	const note = articles.length < 5 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
+	const latestBlock = latestItems.length
+		? `<aside class="latest"><h2 class="section-label">Latest</h2>${latestList(origin, latestItems, now)}</aside>`
+		: `<aside class="latest"><h2 class="section-label">Latest</h2><p class="rail-empty">No other stories yet.</p></aside>`;
 	return `<div class="front">
 <article class="lead">
 ${media}
-${kickerLink(origin, lead.category)}
-${badges(lead, now, reads?.get(lead.slug) ?? 0)}
+${leadMark}
 <h2><a href="${articleHref(origin, lead.slug)}">${escapeHtml(visibleTitle(lead.title))}</a></h2>
 <p class="dek">${escapeHtml(stripEditorialDashes(lead.description))}</p>
 ${byline(origin, lead, now)}
 </article>
+${mostBlock}
 <div class="stack">${stack}</div>
-<aside class="latest"><h2 class="section-label">Latest</h2>${latestList(origin, articles.slice(0, 8), now)}</aside>
+${latestBlock}
 </div>
 ${note}
-${bands}`;
+${bands}
+${moreStories(origin, rest, now, reads)}`;
 }
 
 function storyLinks(origin: string, articles: StoredArticle[]): string {
@@ -488,8 +513,9 @@ export function renderIndex(origin: string, articles: StoredArticle[], listing: 
 	const description = "AI-assisted news on AI, technology, finance, fashion, showbiz, crime, and sports, rewritten from credible outlets and linked back to them.";
 	const now = Date.now();
 	const front = listing.page <= 1 && articles.length ? frontPage(origin, articles, now, reads) : "";
+	const later = listing.page > 1 && articles.length ? moreStories(origin, articles, now, reads) : "";
 	const list = articles.length
-		? `<section class="index-list"><h2 class="section-label">Stories</h2>${storyLinks(origin, articles)}</section>`
+		? `${front}${later}`
 		: `<p class="empty">No stories are published yet. The desk publishes on a schedule from public reporting by named outlets.</p>`;
 	const neighbors = listingNeighbors(base, listing);
 	const title = listing.page <= 1 ? SITE_NAME : `${SITE_NAME}, page ${listing.page}`;
@@ -507,7 +533,7 @@ export function renderIndex(origin: string, articles: StoredArticle[], listing: 
 		imageHeight: 630,
 		imageMime: "image/png",
 		preloadImage: listing.page <= 1 ? leadPreload(origin, articles[0]) : undefined,
-		body: `<h1 class="visually-hidden">${escapeHtml(SITE_NAME)}</h1>${front}${list}${renderPager(base, listing)}`,
+		body: `<h1 class="visually-hidden">${escapeHtml(SITE_NAME)}</h1>${list}${renderPager(base, listing)}`,
 		jsonLd: [{
 			"@context": "https://schema.org",
 			"@type": "CollectionPage",
@@ -529,7 +555,7 @@ export function renderCategory(origin: string, category: Category, articles: Sto
 		{ href: `${origin}/ai-news`, label: "News" },
 		{ href: base, label },
 	]);
-	const band = listing.page <= 1 ? sectionBand(origin, category, articles, now, reads) : "";
+	const band = listing.page <= 1 ? sectionBand(origin, category, articles, now, reads, false) : "";
 	const note = listing.page <= 1 && articles.length > 0 && articles.length < 5 && listing.pages <= 1 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
 	const list = articles.length
 		? `${band}${note}${storyLinks(origin, articles)}${renderPager(base, listing)}`

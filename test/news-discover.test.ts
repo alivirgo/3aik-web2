@@ -174,7 +174,8 @@ describe("discover eligibility", () => {
 	});
 
 	it("normalizes headlines, rejects clickbait, and cuts new slugs on a word", () => {
-		expect(sentenceCaseHeadline("OpenAI Ships A New GPT-5 Model")).toBe("OpenAI ships a new GPT-5 model");
+		expect(sentenceCaseHeadline("OpenAI Ships A New GPT-5 Model")).toBe("OpenAI Ships A New GPT-5 Model");
+		expect(sentenceCaseHeadline("Erin Patterson in London")).toBe("Erin Patterson in London");
 		expect(clickbaitReason("You won't believe this launch")).toBe("clickbait");
 		expect(clickbaitReason("A shocking price cut lands")).toBe("clickbait");
 		expect(clickbaitReason("VENDOR POSTS A NOTE TODAY")).toBe("clickbait");

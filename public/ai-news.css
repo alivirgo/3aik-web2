@@ -20,6 +20,9 @@ body.desk {
   --cat-fashion: #9a3412;
   --cat-showbiz: #6d28d9;
   margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--serif);
@@ -243,13 +246,14 @@ body.desk {
   margin: 0.45rem 0 0;
 }
 
-.desk main { padding: 0.4rem 0 2rem; }
+.desk main { flex: 1 0 auto; padding: 0.4rem 0 1.25rem; }
 
 .desk h1, .desk h2, .desk h3 {
   font-family: var(--sans);
   line-height: 1.05;
   font-weight: 800;
   letter-spacing: -0.045em;
+  text-transform: none;
 }
 
 .desk .front {
@@ -301,7 +305,7 @@ body.desk {
   min-width: 0;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  object-position: center;
+  object-position: center 30%;
   background: var(--accent-soft);
   display: block;
 }
@@ -379,7 +383,7 @@ body.desk {
 .desk .side h3 { margin: 0.1rem 0 0.3rem; font-size: 1.05rem; }
 
 .desk .thumb {
-  width: 7.5rem;
+  width: 6rem;
   flex: none;
   border-radius: 0.95rem;
   overflow: hidden;
@@ -503,9 +507,9 @@ body.desk {
 }
 
 .desk .latest-thumb {
-  width: 4.5rem;
+  width: 6rem;
   flex: none;
-  border-radius: 0.55rem;
+  border-radius: 0.7rem;
 }
 
 .desk .latest-copy {
@@ -548,7 +552,52 @@ body.desk {
 
 .desk .card-body { padding: 0.15rem 0.95rem 0; }
 
-.desk .card h3 { margin: 0.2rem 0 0.35rem; font-size: 1.28rem; }
+.desk .card {
+  height: 100%;
+}
+
+.desk .card h3 { margin: 0.2rem 0 0.35rem; font-size: 1.2rem; line-height: 1.25; }
+
+.desk .card h3 a {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  min-height: calc(1.25em * 3);
+}
+
+.desk .card .card-tldr {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: calc(1.4em * 2);
+}
+
+.desk .card .card-tldr:empty { display: none; min-height: 0; }
+
+.desk .band-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.desk .band-head .section-label { flex: 1; margin: 0; border-bottom: 0; padding-bottom: 0; }
+
+.desk .most-read { margin-top: 1.1rem; }
+
+.desk .see-all {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
 
 .desk .stack-empty, .desk .rail-empty, .desk .more, .desk .empty {
   color: var(--ink);
@@ -761,8 +810,8 @@ body.desk {
 
 .desk .site-foot {
   border-top: 1px solid var(--line);
-  margin-top: 2.5rem;
-  padding: 1.2rem 0 2.6rem;
+  margin-top: 1.5rem;
+  padding: 1rem 0 1.1rem;
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -858,18 +907,20 @@ body.desk {
   .desk .lead .kicker { padding: 0.55rem 0.85rem 0; }
   .desk .lead .dek, .desk .lead .byline { padding-left: 0.85rem; padding-right: 0.85rem; }
   .desk .side { gap: 0.65rem; padding: 0.5rem 0; }
-  .desk .side .thumb { width: 4.75rem; }
-  .desk .side h3 { font-size: 1.02rem; margin: 0; }
-  .desk .side h3 a, .desk .card h3 a { display: flex; align-items: center; min-height: 2.75rem; }
-  .desk .side .card-tldr, .desk .card .card-tldr { display: none; }
+  .desk .side .thumb { width: 6rem; }
+  .desk .side h3 { font-size: 1.02rem; line-height: 1.25; margin: 0; }
+  .desk .side h3 a { display: flex; align-items: center; min-height: 2.75rem; }
+  .desk .side .card-tldr { display: none; }
   .desk .card {
     display: grid;
-    grid-template-columns: 5.25rem minmax(0, 1fr);
+    grid-template-columns: 6rem minmax(0, 1fr);
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.35rem;
+    gap: 0.55rem;
+    padding: 0.45rem;
+    height: auto;
   }
-  .desk .card-media { width: 5.25rem; border-radius: 0.55rem; }
+  .desk .card-media { width: 6rem; border-radius: 0.7rem; }
+  .desk .card h3 a { min-height: 0; }
   .desk .card h3 { font-size: 1.02rem; margin: 0; }
   .desk .card-body { padding: 0 0.15rem 0 0; }
   .desk .band { margin-top: 1.15rem; }
@@ -892,8 +943,11 @@ body.desk {
     column-gap: 1.35rem;
     align-items: start;
   }
-  .desk .lead { border-radius: 1.5rem; }
-  .desk .stack { padding-top: 0.2rem; }
+  .desk .lead { border-radius: 1.5rem; grid-column: 1; grid-row: 1; }
+  .desk .stack { padding-top: 0.2rem; grid-column: 2; grid-row: 1 / span 2; }
+  .desk .latest { grid-column: 3; grid-row: 1; }
+  .desk .most-read { grid-column: 3; grid-row: 2; align-self: start; }
+  .desk .side .thumb { width: 7.5rem; }
   .desk .section-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
   .desk .article-layout {
     display: grid;

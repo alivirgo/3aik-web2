@@ -225,30 +225,12 @@ export function uniqueSlug(base: string, suffix: string): string {
 	return `${cutSlug(base, Math.max(12, SLUG_MAX - extra.length))}${extra}`;
 }
 
-function keepHeadlineToken(token: string): boolean {
-	const letters = token.replace(/[^A-Za-z]/g, "");
-	if (!letters) return true;
-	if (!/[a-z]/.test(letters)) {
-		if (letters === "I") return true;
-		return letters.length >= 2 && letters.length <= 6;
-	}
-	if (/[a-z][A-Z]/.test(token) || /[A-Z]{2,}/.test(token)) return true;
-	return false;
-}
-
 /**
- * Sentence case for new and displayed headlines. Acronyms and internal capitals
- * such as OpenAI, iPhone, and GPT-5 stay as written.
+ * Headlines keep the casing they were given. Proper nouns such as Erin Patterson
+ * and London must not be lowercased on the way in or on the way out.
  */
 export function sentenceCaseHeadline(input: string): string {
-	const clean = input.replace(/\s+/g, " ").trim();
-	if (!clean) return clean;
-	return clean.split(" ").map((token, index) => {
-		if (keepHeadlineToken(token)) return token;
-		const lower = token.toLowerCase();
-		if (index !== 0) return lower;
-		return lower.replace(/[a-z]/, (char) => char.toUpperCase());
-	}).join(" ");
+	return input.replace(/\s+/g, " ").trim();
 }
 
 const TRACKING_PARAMS = new Set([
@@ -292,43 +274,67 @@ export function clipWords(input: string, maxChars: number): string {
 	return `${(boundary > 40 ? sliced.slice(0, boundary) : sliced).trim()}...`;
 }
 
+/** Reader-facing clocks use Pakistan time, not the server zone and not UTC. */
+const NEWS_TIME_ZONE = "Asia/Karachi";
+
+function zonedDayKey(date: Date): string {
+	return new Intl.DateTimeFormat("en-CA", {
+		timeZone: NEWS_TIME_ZONE,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).format(date);
+}
+
+function clockInKarachi(date: Date): string {
+	const parts = new Intl.DateTimeFormat("en-US", {
+		timeZone: NEWS_TIME_ZONE,
+		hour: "numeric",
+		minute: "2-digit",
+		hour12: true,
+	}).formatToParts(date);
+	const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+	const period = pick("dayPeriod").toLowerCase().startsWith("a") ? "a.m." : "p.m.";
+	return `${pick("hour")}:${pick("minute")} ${period}`;
+}
+
 export function formatDate(iso: string): string {
 	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) return iso;
 	return new Intl.DateTimeFormat("en-US", {
-		timeZone: "UTC",
+		timeZone: NEWS_TIME_ZONE,
 		month: "long",
 		day: "numeric",
 		year: "numeric",
 	}).format(date);
 }
 
-/** Weekday dateline for the top bar. UTC so a render does not depend on the server zone. */
+/** Weekday dateline for the top bar, in Asia/Karachi. */
 export function formatDateline(now = Date.now()): { label: string; iso: string } {
 	const date = new Date(now);
-	const iso = Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+	if (Number.isNaN(date.getTime())) return { label: "", iso: "" };
 	const label = new Intl.DateTimeFormat("en-US", {
-		timeZone: "UTC",
+		timeZone: NEWS_TIME_ZONE,
 		weekday: "long",
 		month: "long",
 		day: "numeric",
 		year: "numeric",
 	}).format(date);
-	return { label, iso };
+	return { label, iso: zonedDayKey(date) };
 }
 
-/** Compact timestamp for the Latest column. */
+/** Compact timestamp for the Latest column, in Asia/Karachi. */
 export function formatTimestamp(iso: string, now = Date.now()): string {
 	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) return iso;
-	const hours = date.getUTCHours();
-	const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-	const suffix = hours >= 12 ? "p.m." : "a.m.";
-	const hour12 = hours % 12 || 12;
-	const clock = `${hour12}:${minutes} ${suffix}`;
-	const sameDay = new Date(now).toISOString().slice(0, 10) === date.toISOString().slice(0, 10);
+	const clock = clockInKarachi(date);
+	const sameDay = zonedDayKey(date) === zonedDayKey(new Date(now));
 	if (sameDay) return clock;
-	const day = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(date);
+	const day = new Intl.DateTimeFormat("en-US", {
+		timeZone: NEWS_TIME_ZONE,
+		month: "short",
+		day: "numeric",
+	}).format(date);
 	return `${day}, ${clock}`;
 }
 

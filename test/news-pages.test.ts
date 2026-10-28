@@ -319,8 +319,8 @@ describe("magazine pages", () => {
 		expect(relativeTime(published, at("2028-10-23T12:07:00.000Z"))).toBe("2 years ago");
 		expect(relativeTime("not-a-date", at(published))).toBe("recently");
 		expect(formatDateline(at("2026-10-24T03:00:00.000Z"))).toEqual({ label: "Saturday, October 24, 2026", iso: "2026-10-24" });
-		expect(formatTimestamp(published, at("2026-10-23T18:00:00.000Z"))).toBe("12:07 p.m.");
-		expect(formatTimestamp(published, at("2026-10-24T18:00:00.000Z"))).toBe("Oct 23, 12:07 p.m.");
+		expect(formatTimestamp(published, at("2026-10-23T18:00:00.000Z"))).toBe("5:07 p.m.");
+		expect(formatTimestamp(published, at("2026-10-24T18:00:00.000Z"))).toBe("Oct 23, 5:07 p.m.");
 	});
 
 	it("renders a lead, a side stack, a Latest column, and a short-list note", async () => {
@@ -349,8 +349,35 @@ describe("magazine pages", () => {
 		expect(html).toContain("October 23, 2026");
 		expect(html).toContain("More stories will show up here as the desk publishes.");
 		expect(html).not.toContain("No stories are published yet");
+		expect(html).not.toContain('class="story-index"');
 		expect(html).not.toContain("\u2014");
 		expect(withoutAdLoader(html)).not.toMatch(/<script[^>]+src=/i);
+	});
+
+	it("keeps a story out of Latest after the lead and preserves proper nouns", async () => {
+		const repo = new MemoryNewsRepository();
+		const lead = article();
+		lead.title = "Erin Patterson faces a London court";
+		const extras = Array.from({ length: 12 }, (_, index) => `n${index}`).map((name, index) => {
+			const story = article();
+			story.id = `33333333-3333-4333-8333-33333333333${index}`;
+			story.slug = `extra-${name}`;
+			story.title = `Melanie Lynskey note ${name}`;
+			story.publishedAt = new Date(Date.parse(publishedAt) - (index + 1) * 60 * 60 * 1000).toISOString();
+			story.updatedAt = story.publishedAt;
+			return story;
+		});
+		repo.articles.push(lead, ...extras);
+		const index = await handleNewsRequest(new Request("https://3aik.test/ai-news"), { AI_NEWS_SITE_ORIGIN: "https://3aik.com" }, { repo });
+		const html = await index.text();
+		expect(html).toContain("Erin Patterson faces a London court");
+		expect(html).not.toContain("erin patterson");
+		expect(html).not.toContain("Melanie lynskey");
+		const latest = html.split('class="latest"')[1]?.split("</aside>")[0] ?? "";
+		expect(latest).not.toContain("/article/short-bulletin");
+		expect(latest).toContain("extra-");
+		expect(html).not.toContain('class="story-index"');
+		expect(html).toContain(">See all</a>");
 	});
 
 	it("renders the article with a hero, sources, a calm note, and plain share links", async () => {
