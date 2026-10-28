@@ -7,10 +7,14 @@ import { writeNewsEvent } from "./events";
 import { continentLabel, emptyStatsReport, hexToSalt, normalizeEvent, rawRetentionCutoff, rememberDaySalt, saltToHex, summarizePageViews } from "./pageviews";
 import type { Category, DeskStats, SitemapEntry, StoredArticle, StoredRelated, StoredSource } from "./types";
 import { canonicalLeadKey } from "./lead";
+import { breakingCutoff, visibleCategory } from "./sections";
 import { isCategory, wordCount } from "./text";
 
+const readCountCache = new Map<string, { at: number; views: number }>();
+
 export interface NewsRepository {
-	listRecent(limit: number, category?: Category, offset?: number): Promise<StoredArticle[]>;
+	listRecent(limit: number, category?: Category, offset?: number, now?: Date): Promise<StoredArticle[]>;
+	readCounts(slugs: string[]): Promise<Map<string, number>>;
 	listByAuthor(authorId: string, limit: number, offset?: number): Promise<StoredArticle[]>;
 	getBySlug(slug: string): Promise<StoredArticle | null>;
 	getById(id: string): Promise<StoredArticle | null>;
@@ -98,6 +102,7 @@ export function articleFromRow(row: Record<string, unknown>): StoredArticle | nu
 		imageType: readString(row, "image_type"),
 		imageCredit: readString(row, "image_credit"),
 		imageSourceUrl: readString(row, "image_source_url"),
+		section: readString(row, "section"),
 		publishedAt: readString(row, "published_at"),
 		updatedAt: readString(row, "updated_at"),
 	};
@@ -130,18 +135,33 @@ export class D1NewsRepository implements NewsRepository {
 
 	constructor(private readonly db: D1Database, private readonly statsOptions: NewsStatsOptions = {}) {}
 
+	private sectionColumn: boolean | null = null;
+
 	private async articleColumns(): Promise<string> {
-		if (this.fullColumns === true) return ARTICLE_COLUMNS_FULL;
-		if (this.fullColumns === false) return ARTICLE_COLUMNS_LEGACY;
-		try {
-			await this.db.prepare("SELECT image_credit, image_source_url FROM articles LIMIT 1").first();
-			this.fullColumns = true;
-			return ARTICLE_COLUMNS_FULL;
-		} catch (error) {
-			if (!missingSchema(error)) throw error;
-			this.fullColumns = false;
-			return ARTICLE_COLUMNS_LEGACY;
+		let base: string;
+		if (this.fullColumns === true) base = ARTICLE_COLUMNS_FULL;
+		else if (this.fullColumns === false) base = ARTICLE_COLUMNS_LEGACY;
+		else {
+			try {
+				await this.db.prepare("SELECT image_credit, image_source_url FROM articles LIMIT 1").first();
+				this.fullColumns = true;
+				base = ARTICLE_COLUMNS_FULL;
+			} catch (error) {
+				if (!missingSchema(error)) throw error;
+				this.fullColumns = false;
+				base = ARTICLE_COLUMNS_LEGACY;
+			}
 		}
+		if (this.sectionColumn === null) {
+			try {
+				await this.db.prepare("SELECT section FROM articles LIMIT 1").first();
+				this.sectionColumn = true;
+			} catch (error) {
+				if (!missingColumn(error) && !missingSchema(error)) throw error;
+				this.sectionColumn = false;
+			}
+		}
+		return this.sectionColumn ? `${base}, section` : base;
 	}
 
 	private async rows(sql: string, ...bindings: unknown[]): Promise<StoredArticle[]> {
@@ -150,9 +170,32 @@ export class D1NewsRepository implements NewsRepository {
 		return (result.results ?? []).map((row) => articleFromRow(row)).filter((article): article is StoredArticle => Boolean(article));
 	}
 
-	async listRecent(limit: number, category?: Category, offset = 0): Promise<StoredArticle[]> {
+	private categoryClause(category: Category, now: Date): { sql: string; binds: unknown[] } {
+		const cutoff = breakingCutoff(now.getTime());
+		if (category === "breaking") {
+			return { sql: "category = 'breaking' AND published_at > ?", binds: [cutoff] };
+		}
+		return {
+			sql: "(category = ? OR (category = 'breaking' AND section = ? AND published_at <= ?))",
+			binds: [category, category, cutoff],
+		};
+	}
+
+	async listRecent(limit: number, category?: Category, offset = 0, now = new Date()): Promise<StoredArticle[]> {
 		const start = Math.max(0, offset);
-		if (category) {
+		if (!category) {
+			return this.rows(`SELECT {{columns}} FROM articles ORDER BY published_at DESC LIMIT ? OFFSET ?`, limit, start);
+		}
+		try {
+			const clause = this.categoryClause(category, now);
+			return await this.rows(
+				`SELECT {{columns}} FROM articles WHERE ${clause.sql} ORDER BY published_at DESC LIMIT ? OFFSET ?`,
+				...clause.binds,
+				limit,
+				start,
+			);
+		} catch (error) {
+			if (!missingColumn(error)) throw error;
 			return this.rows(
 				`SELECT {{columns}} FROM articles WHERE category = ? ORDER BY published_at DESC LIMIT ? OFFSET ?`,
 				category,
@@ -160,7 +203,6 @@ export class D1NewsRepository implements NewsRepository {
 				start,
 			);
 		}
-		return this.rows(`SELECT {{columns}} FROM articles ORDER BY published_at DESC LIMIT ? OFFSET ?`, limit, start);
 	}
 
 	async listByAuthor(authorId: string, limit: number, offset = 0): Promise<StoredArticle[]> {
@@ -238,7 +280,42 @@ export class D1NewsRepository implements NewsRepository {
 		return { authors: authorMap, categories: categoryMap };
 	}
 
-	private articleInsert(article: StoredArticle, full: boolean): D1PreparedStatement {
+	private articleInsert(article: StoredArticle, full: boolean, withSection = false): D1PreparedStatement {
+		const section = article.section ?? "";
+		if (withSection && full) {
+			return this.db
+				.prepare(
+					`INSERT INTO articles (
+						id, slug, title, description, category, tags_json, author_id, body_html, body_text,
+						key_points_json, faq_json, sources_json, related_json, image_key, image_commit, image_alt, image_type,
+						image_credit, image_source_url, section, published_at, updated_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.bind(
+					article.id,
+					article.slug,
+					article.title,
+					article.description,
+					article.category,
+					JSON.stringify(article.tags),
+					article.authorId,
+					article.bodyHtml,
+					article.bodyText,
+					JSON.stringify(article.keyPoints),
+					JSON.stringify(article.faq),
+					JSON.stringify(article.sources),
+					JSON.stringify(article.related),
+					article.imageKey,
+					article.imageCommit,
+					article.imageAlt,
+					article.imageType,
+					article.imageCredit,
+					article.imageSourceUrl,
+					section,
+					article.publishedAt,
+					article.updatedAt,
+				);
+		}
 		if (!full) {
 			return this.db
 				.prepare(
@@ -303,9 +380,9 @@ export class D1NewsRepository implements NewsRepository {
 			);
 	}
 
-	private insertBatch(article: StoredArticle, full: boolean): D1PreparedStatement[] {
+	private insertBatch(article: StoredArticle, full: boolean, withSection = false): D1PreparedStatement[] {
 		return [
-			this.articleInsert(article, full),
+			this.articleInsert(article, full, withSection),
 			...article.sources.map((source) =>
 				this.db
 					.prepare("INSERT INTO article_sources (source_url, article_id, outlet, source_title) VALUES (?, ?, ?, ?)")
@@ -333,12 +410,20 @@ export class D1NewsRepository implements NewsRepository {
 	async insert(article: StoredArticle): Promise<void> {
 		const full = this.fullColumns !== false;
 		try {
-			await this.db.batch(this.insertBatch(article, full));
+			await this.db.batch(this.insertBatch(article, full, true));
 			if (full) this.fullColumns = true;
+			this.sectionColumn = true;
 		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (missingColumn(error) && /section/i.test(message)) {
+				this.sectionColumn = false;
+				await this.db.batch(this.insertBatch(article, full, false));
+				if (full) this.fullColumns = true;
+				return;
+			}
 			if (!full || !missingSchema(error)) throw error;
 			this.fullColumns = false;
-			await this.db.batch(this.insertBatch(article, false));
+			await this.db.batch(this.insertBatch(article, false, false));
 		}
 	}
 
@@ -710,12 +795,65 @@ export class D1NewsRepository implements NewsRepository {
 		}
 	}
 
-	async countArticles(category?: Category): Promise<number> {
-		const row = category
-			? await this.db.prepare("SELECT COUNT(*) AS n FROM articles WHERE category = ?").bind(category).first<Record<string, unknown>>()
-			: await this.db.prepare("SELECT COUNT(*) AS n FROM articles").bind().first<Record<string, unknown>>();
-		const value = Number(row?.n);
-		return Number.isFinite(value) ? value : 0;
+	async countArticles(category?: Category, now = new Date()): Promise<number> {
+		if (!category) {
+			const row = await this.db.prepare("SELECT COUNT(*) AS n FROM articles").bind().first<Record<string, unknown>>();
+			const value = Number(row?.n);
+			return Number.isFinite(value) ? value : 0;
+		}
+		try {
+			const clause = this.categoryClause(category, now);
+			const row = await this.db
+				.prepare(`SELECT COUNT(*) AS n FROM articles WHERE ${clause.sql}`)
+				.bind(...clause.binds)
+				.first<Record<string, unknown>>();
+			const value = Number(row?.n);
+			return Number.isFinite(value) ? value : 0;
+		} catch (error) {
+			if (!missingColumn(error)) throw error;
+			const row = await this.db.prepare("SELECT COUNT(*) AS n FROM articles WHERE category = ?").bind(category).first<Record<string, unknown>>();
+			const value = Number(row?.n);
+			return Number.isFinite(value) ? value : 0;
+		}
+	}
+
+	async readCounts(slugs: string[]): Promise<Map<string, number>> {
+		const unique = [...new Set(slugs.filter(Boolean))].slice(0, 80);
+		const out = new Map<string, number>();
+		if (!unique.length) return out;
+		const now = Date.now();
+		const missing: string[] = [];
+		for (const slug of unique) {
+			const hit = readCountCache.get(slug);
+			if (hit && now - hit.at < 60_000) out.set(slug, hit.views);
+			else missing.push(slug);
+		}
+		if (!missing.length) return out;
+		const marks = missing.map(() => "?").join(", ");
+		try {
+			const result = await this.db
+				.prepare(`SELECT slug, SUM(views) AS views FROM stats_article_hour WHERE slug IN (${marks}) GROUP BY slug`)
+				.bind(...missing)
+				.all<Record<string, unknown>>();
+			const found = new Set<string>();
+			for (const row of result.results ?? []) {
+				const slug = readString(row, "slug");
+				const views = Number(row.views) || 0;
+				if (!slug) continue;
+				found.add(slug);
+				readCountCache.set(slug, { at: now, views });
+				out.set(slug, views);
+			}
+			for (const slug of missing) {
+				if (found.has(slug)) continue;
+				readCountCache.set(slug, { at: now, views: 0 });
+				out.set(slug, 0);
+			}
+		} catch (error) {
+			if (!missingSchema(error)) throw error;
+			for (const slug of missing) out.set(slug, 0);
+		}
+		return out;
 	}
 
 	async countByAuthor(authorId: string): Promise<number> {
@@ -1121,12 +1259,20 @@ export class MemoryNewsRepository implements NewsRepository {
 	private lockUntil = 0;
 	private rejections = new Map<string, { reason: string; expiresAt: string }>();
 
-	async listRecent(limit: number, category?: Category, offset = 0): Promise<StoredArticle[]> {
+	private reads = new Map<string, number>();
+
+	async listRecent(limit: number, category?: Category, offset = 0, now = new Date()): Promise<StoredArticle[]> {
 		const start = Math.max(0, offset);
 		return this.articles
-			.filter((article) => !category || article.category === category)
+			.filter((article) => !category || visibleCategory(article, now.getTime()) === category)
 			.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
 			.slice(start, start + limit);
+	}
+
+	async readCounts(slugs: string[]): Promise<Map<string, number>> {
+		const out = new Map<string, number>();
+		for (const slug of slugs) out.set(slug, this.reads.get(slug) ?? 0);
+		return out;
 	}
 
 	async listByAuthor(authorId: string, limit: number, offset = 0): Promise<StoredArticle[]> {
@@ -1228,8 +1374,8 @@ export class MemoryNewsRepository implements NewsRepository {
 			}));
 	}
 
-	async countArticles(category?: Category): Promise<number> {
-		return this.articles.filter((article) => !category || article.category === category).length;
+	async countArticles(category?: Category, now = new Date()): Promise<number> {
+		return this.articles.filter((article) => !category || visibleCategory(article, now.getTime()) === category).length;
 	}
 
 	async countByAuthor(authorId: string): Promise<number> {
@@ -1382,6 +1528,9 @@ export class MemoryNewsRepository implements NewsRepository {
 
 	async recordPageView(event: PageViewEvent): Promise<void> {
 		this.pageViews.push(event);
+		if (event.bot === 0 && event.slug && event.eventKind !== "404" && event.eventKind !== "feed") {
+			this.reads.set(event.slug, (this.reads.get(event.slug) ?? 0) + 1);
+		}
 	}
 
 	async pageViewReport(now: Date, query?: StatsQuery): Promise<NewsStatsReport> {

@@ -21,10 +21,12 @@ import { bearerToken, tokensMatch } from "./tokens";
 import { SLOP_PATTERNS, assessDraft } from "./quality";
 import type { NewsRepository } from "./repository";
 import type { ArticleDraft, Category, FaqItem, SourceRef, StoredArticle } from "./types";
+import { isDurableCategory } from "./sections";
 import { CATEGORIES } from "./types";
 import {
 	decodeEntities,
 	detectImageType,
+	isCategory,
 	normalizeSourceUrl,
 	sentenceCaseHeadline,
 	slugify,
@@ -92,7 +94,7 @@ function readString(record: Record<string, unknown>, ...keys: string[]): string 
 function categoryOf(raw: string): Category | null {
 	const value = raw.trim().toLowerCase();
 	if (value === "tech") return "technology";
-	if (value === "ai" || value === "technology" || value === "fashion" || value === "showbiz") return value;
+	if ((CATEGORIES as readonly string[]).includes(value)) return value as Category;
 	return null;
 }
 
@@ -179,6 +181,7 @@ interface ParsedIngest {
 	image: ParsedImage | null;
 	sourceImage: ParsedSourceImage | null;
 	category: Category | null;
+	section: string;
 	authorId: string | null;
 }
 
@@ -237,17 +240,21 @@ function readImage(record: Record<string, unknown>): { reasons: string[]; image:
 
 function parseIngest(value: unknown): ParsedIngest {
 	const problems: string[] = [];
-	if (!isRecord(value)) return { reasons: ["invalid_json"], draft: null, sources: [], image: null, sourceImage: null, category: null, authorId: null };
+	if (!isRecord(value)) return { reasons: ["invalid_json"], draft: null, sources: [], image: null, sourceImage: null, category: null, section: "", authorId: null };
 	const title = readString(value, "title");
 	const description = readString(value, "dek", "summary", "description");
 	const category = categoryOf(readString(value, "category"));
+	const sectionRaw = categoryOf(readString(value, "section", "subcategory"));
+	const section = sectionRaw && isDurableCategory(sectionRaw) ? sectionRaw : "";
 	const authorId = readString(value, "author_slug", "authorSlug");
 	if (!title) problems.push("title");
 	if (!description) problems.push("dek");
 	if (!category) problems.push("category");
+	if (category === "breaking" && !section) problems.push("section");
 	const author = authorId ? authorById(authorId) : null;
+	const authorDesk = category === "breaking" ? section : category;
 	if (!author) problems.push("author_slug");
-	else if (category && author.category !== category) problems.push("author_category");
+	else if (authorDesk && author.category !== authorDesk) problems.push("author_category");
 
 	const markdown = readString(value, "body_markdown", "bodyMarkdown");
 	const html = readString(value, "body_html", "html", "bodyHtml");
@@ -314,6 +321,7 @@ function parseIngest(value: unknown): ParsedIngest {
 		image: image.image,
 		sourceImage: sourceImage.sourceImage,
 		category,
+		section: category === "breaking" ? section : "",
 		authorId: author?.id ?? null,
 	};
 }
@@ -631,7 +639,8 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		if (await repo.hasSource(source.url)) conflicts.push({ field: "source_url", value: source.url });
 	}
 	if (conflicts.length) return json({ error: "duplicate", conflicts }, 409);
-	const recentArticles = await repo.listRecent(30, parsed.category);
+	const deskCategory = parsed.category === "breaking" && isCategory(parsed.section) ? parsed.section : parsed.category;
+	const recentArticles = await repo.listRecent(30, deskCategory ?? undefined);
 	const related = recentArticles
 		.map((article) => ({ article, score: tokenJaccard(draft.title, article.title) }))
 		.sort((left, right) => right.score - left.score || right.article.publishedAt.localeCompare(left.article.publishedAt))
@@ -648,7 +657,7 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 	const corpus = await repo.similarityCorpus(SIMILARITY_LIMIT);
 	const verdict = assessDraft({
 		draft,
-		category: parsed.category,
+		category: deskCategory ?? parsed.category ?? "ai",
 		sources: loaded.refs,
 		recent: corpus,
 		illustration: parsed.sourceImage || parsed.image ? "uploaded" : "none",
@@ -699,7 +708,8 @@ async function postArticle(request: Request, env: NewsEnv, deps: IngestDeps, now
 		slug,
 		title: draft.title,
 		description: draft.description,
-		category: parsed.category,
+		category: parsed.category ?? "ai",
+		section: parsed.section,
 		tags: draft.tags,
 		authorId: author.id,
 		bodyHtml: "",

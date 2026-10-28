@@ -160,6 +160,16 @@ async function loadRecent(repo: NewsRepository | null, limit: number, category?:
 	}
 }
 
+async function readMap(repo: NewsRepository | null, articles: StoredArticle[]): Promise<Map<string, number>> {
+	if (!repo || !articles.length) return new Map();
+	try {
+		return await repo.readCounts(articles.map((article) => article.slug));
+	} catch (error) {
+		logReadError("reads", error);
+		return new Map();
+	}
+}
+
 async function loadByAuthor(repo: NewsRepository | null, authorId: string, limit: number, offset: number): Promise<StoredArticle[]> {
 	if (!repo) return [];
 	try {
@@ -350,14 +360,14 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const listing = listingFromQuery(url.searchParams.get("page"), total);
 			if (!listing) return await publicNotFoundResponse(request, origin);
 			const articles = await withVariantHints(repo, await loadRecent(repo, LIST_PAGE_SIZE, undefined, listing.offset));
-			return await htmlResponse(request, renderIndex(origin, articles, listing), 200, "public, max-age=60");
+			return await htmlResponse(request, renderIndex(origin, articles, listing, await readMap(repo, articles)), 200, "public, max-age=60");
 		}
 		if (path === "/ai-news/about") return await htmlResponse(request, renderAbout(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/disclaimer") return await htmlResponse(request, renderDisclaimer(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/editorial-policy") return await htmlResponse(request, renderEditorialPolicy(origin), 200, "public, max-age=3600");
 		if (path === "/ai-news/corrections") return await htmlResponse(request, renderCorrections(origin, contactEmail(env)), 200, "public, max-age=3600");
 		if (path === "/ai-news/contact") return await htmlResponse(request, renderContact(origin, contactEmail(env)), 200, "public, max-age=3600");
-		const pagePath = /^\/ai-news(?:\/(ai|technology|fashion|showbiz|archive|author\/[a-z0-9-]{1,80}))?\/page\/([1-9]\d{0,4})$/.exec(path);
+		const pagePath = new RegExp(`^/ai-news(?:/(${CATEGORIES.join("|")}|archive|author/[a-z0-9-]{1,80}))?/page/([1-9]\\d{0,4})$`).exec(path);
 		if (pagePath) {
 			const section = pagePath[1] ?? "";
 			const page = Number(pagePath[2]);
@@ -450,7 +460,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			return new Response(stored.bytes, { status: 200, headers });
 		}
 
-		const feedMatch = /^\/ai-news\/(ai|technology|fashion|showbiz)\/(feed\.xml|atom\.xml)$/.exec(path);
+		const feedMatch = new RegExp(`^/ai-news/(${CATEGORIES.join("|")})/(feed\\.xml|atom\\.xml)$`).exec(path);
 		const feedCategory = feedMatch?.[1] ?? "";
 		if (feedMatch && isCategory(feedCategory)) {
 			const articles = await loadRecent(repo, FEED_ARTICLE_LIMIT, feedCategory);
@@ -467,7 +477,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 				const listing = listingFromQuery(url.searchParams.get("page"), total);
 				if (!listing) return await publicNotFoundResponse(request, origin);
 				const articles = await withVariantHints(repo, await loadRecent(repo, LIST_PAGE_SIZE, category, listing.offset));
-				return await htmlResponse(request, renderCategory(origin, category, articles, listing), 200, "public, max-age=60");
+				return await htmlResponse(request, renderCategory(origin, category, articles, listing, await readMap(repo, articles)), 200, "public, max-age=60");
 			}
 		}
 
@@ -486,7 +496,7 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			const listing = listingFromQuery(url.searchParams.get("page"), total);
 			if (!listing) return await publicNotFoundResponse(request, origin);
 			const articles = await withVariantHints(repo, await loadByAuthor(repo, authorId, LIST_PAGE_SIZE, listing.offset));
-			const page = renderAuthor(origin, authorId, articles, listing);
+			const page = renderAuthor(origin, authorId, articles, listing, await readMap(repo, articles));
 			if (!page) return await publicNotFoundResponse(request, origin);
 			return await htmlResponse(request, page, 200, "public, max-age=120");
 		}
@@ -505,7 +515,8 @@ async function buildNewsResponse(request: Request, env: Env, override: NewsReque
 			if (!article) return await publicNotFoundResponse(request, origin);
 			const latest = await withVariantHints(repo, await loadRecent(repo, 8));
 			const [hinted] = await withVariantHints(repo, [article]);
-			return await htmlResponse(request, renderArticle(origin, hinted ?? article, latest), 200, "public, max-age=120");
+			const shown = hinted ?? article;
+			return await htmlResponse(request, renderArticle(origin, shown, latest, await readMap(repo, [shown, ...latest])), 200, "public, max-age=120");
 		}
 
 		return await publicNotFoundResponse(request, origin);

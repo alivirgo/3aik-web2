@@ -77,6 +77,10 @@ export const CATEGORY_LABEL: Record<Category, string> = {
 	technology: "Technology",
 	fashion: "Fashion",
 	showbiz: "Showbiz",
+	finance: "Finance",
+	crime: "Crime",
+	sports: "Sports",
+	breaking: "Breaking",
 };
 
 export const CATEGORY_DECK: Record<Category, string> = {
@@ -84,6 +88,10 @@ export const CATEGORY_DECK: Record<Category, string> = {
 	technology: "Software, security, gadgets, energy, and the business around them.",
 	fashion: "Clothes, price, materials, and claims that credible outlets have already published.",
 	showbiz: "Film, television, music, and awards. Disputes stay attributed to the outlet that reported them.",
+	finance: "Markets, companies, and the money behind the week's other stories.",
+	crime: "Courts, investigations, and public safety, attributed to the outlet that reported them.",
+	sports: "Leagues, matches, and the business around the games.",
+	breaking: "Stories that just moved. After six hours each one lives in its own section.",
 };
 
 export interface FeedSource {

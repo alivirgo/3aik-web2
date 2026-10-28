@@ -169,9 +169,22 @@ describe("ingest auth", () => {
 
 describe("ingest validation and the quality gate", () => {
 	it("rejects a bad category, author, source list, and image before insert", async () => {
-		const category = await send(post(articleFields({ category: "sports" })));
+		const category = await send(post(articleFields({ category: "weather" })));
 		expect(category.response.status).toBe(422);
 		expect((await category.response.json() as { reasons: string[] }).reasons).toContain("category");
+
+		const bareBreaking = await send(post(articleFields({ category: "breaking", author_slug: "leah-okoye" })));
+		expect((await bareBreaking.response.json() as { reasons: string[] }).reasons).toContain("section");
+
+		const breaking = await send(post(articleFields({
+			category: "breaking",
+			section: "finance",
+			author_slug: "leah-okoye",
+			sources: [{ url: "https://example.com/breaking-filing", publisher: "The Verge", title: "Vendor posts a short Thursday bulletin", excerpt: EXCERPT }],
+		})));
+		expect(breaking.response.status).toBe(201);
+		expect(breaking.state.repo.articles[0]?.category).toBe("breaking");
+		expect(breaking.state.repo.articles[0]?.section).toBe("finance");
 
 		const author = await send(post(articleFields({ author_slug: "not-a-persona" })));
 		expect((await author.response.json() as { reasons: string[] }).reasons).toContain("author_slug");

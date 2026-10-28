@@ -5,7 +5,7 @@ import { ADSENSE_SCRIPT } from "../src/adsense";
 import worker from "../src/index";
 import { ACCURACY_DISCLAIMER, ASSIST_LINE } from "../src/news/config";
 import { AI_NEWS_CSS_PATH } from "../src/news/css-asset";
-import { authorInitials } from "../src/news/html";
+import { authorInitials, SHARE_SCRIPT } from "../src/news/html";
 import { handleNewsRequest, newsCacheRequest } from "../src/news/routes";
 import { scriptSourceHash } from "../src/news/responses";
 import { MemoryNewsRepository } from "../src/news/repository";
@@ -135,6 +135,7 @@ describe("news pages", () => {
 		const beacon = html.match(/<script>(\(function\(\)\{var meta=[\s\S]*?)<\/script><\/body>/);
 		const expected = [];
 		for (const source of ld) expected.push(await scriptSourceHash(source));
+		expected.push(await scriptSourceHash(SHARE_SCRIPT));
 		if (beacon?.[1]) expected.push(await scriptSourceHash(beacon[1]));
 		expect(hashes).toEqual(expected);
 		expect(csp).not.toContain(await scriptSourceHash("alert(1)"));
@@ -380,7 +381,9 @@ describe("magazine pages", () => {
 		expect(html).toContain('aria-label="Share this article"');
 		expect(html).toContain("https://x.com/intent/tweet?url=");
 		expect(html).toContain("https://www.linkedin.com/sharing/share-offsite/?url=");
-		expect(html).toContain("mailto:?subject=");
+		expect(html).toContain('aria-label="Share on WhatsApp"');
+		expect(html).toContain("data-copy=");
+		expect(html).toContain("data-native-share");
 		expect(html).toContain('rel="noopener noreferrer"');
 		expect(html).toContain('"timeRequired":"PT1M"');
 		expect(html).toContain('<a href="https://3aik.com/ai-news/ai" aria-current="page">AI</a>');

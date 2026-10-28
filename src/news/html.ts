@@ -11,6 +11,7 @@ import {
 import { AI_NEWS_CSS_PATH } from "./css-asset";
 import { readerImageUrl } from "./github-images";
 import { leadView, schemaImages } from "./lead";
+import { readLabel, visibleCategory } from "./sections";
 import { pageHref } from "./paging";
 import type { Category, StoredArticle } from "./types";
 import { CATEGORIES } from "./types";
@@ -22,11 +23,13 @@ import {
 	jsonForScript,
 	readingLabel,
 	readingMinutes,
+	relativeCompact,
 	relativeTime,
 	sentenceCaseHeadline,
 	stripEditorialDashes,
 } from "./text";
 
+export const SHARE_SCRIPT = `(()=>{const toast=document.querySelector("[data-toast]");let timer=0;const show=(text)=>{if(!toast)return;toast.textContent=text;toast.hidden=false;clearTimeout(timer);timer=setTimeout(()=>{toast.hidden=true;},1600);};document.addEventListener("click",(event)=>{const node=event.target instanceof Element?event.target.closest("[data-copy],[data-native-share]"):null;if(!node)return;if(node.hasAttribute("data-native-share")&&typeof navigator.share==="function"){event.preventDefault();navigator.share({title:node.getAttribute("data-title")||document.title,url:node.getAttribute("data-url")||location.href}).catch(()=>{});return;}if(node.hasAttribute("data-copy")){event.preventDefault();const url=node.getAttribute("data-copy")||location.href;const done=()=>show("Copied");if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(url).then(done,done);else done();}});})();`;
 const LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 const SHORT_LIST_NOTE = "More stories will show up here as the desk publishes. What is live so far is on this page.";
 const STACK_NOTE = "The next briefs will land in this column.";
@@ -37,6 +40,10 @@ const CHIP_LABEL: Record<Category, string> = {
 	technology: "Tech",
 	fashion: "Fashion",
 	showbiz: "Showbiz",
+	finance: "Finance",
+	crime: "Crime",
+	sports: "Sports",
+	breaking: "Breaking",
 };
 
 export function renderInline(text: string, allow: Set<string>): string {
@@ -105,6 +112,8 @@ interface PageOptions {
 	imageWidth?: number;
 	imageHeight?: number;
 	imageMime?: string;
+	/** LCP candidate. Preloaded so the browser can fetch it before CSS. */
+	preloadImage?: { href: string; srcset?: string; sizes?: string };
 	/** Bare headline for og:title and twitter:title. The document title can keep the site name. */
 	socialTitle?: string;
 	jsonLd?: unknown[];
@@ -123,12 +132,12 @@ export interface ListingPage {
 	pages: number;
 }
 
-function sectionNav(origin: string, current?: NavCurrent): string {
+function sectionNav(origin: string, current?: NavCurrent, label = "Sections", className = "sections"): string {
 	const mark = (key: NavCurrent) => (current === key ? ` aria-current="page"` : "");
 	const chips = CATEGORIES.map((category) => {
 		return `<a href="${categoryHref(origin, category)}"${mark(category)}>${CHIP_LABEL[category]}</a>`;
 	}).join("");
-	return `<nav class="sections" aria-label="Sections">${chips}</nav>`;
+	return `<nav class="${className}" aria-label="${escapeHtml(label)}">${chips}</nav>`;
 }
 
 export interface NewsHtml {
@@ -158,15 +167,20 @@ ${imageSize}
 		: "";
 	const section = options.section ? `<meta property="article:section" content="${escapeHtml(options.section)}">` : "";
 	const tags = (options.tags ?? []).map((tag) => `<meta property="article:tag" content="${escapeHtml(tag)}">`).join("\n");
-	const scripts = (options.jsonLd ?? []).map((entry) => jsonForScript(entry));
-	const scriptTags = scripts.map((source) => `<script type="application/ld+json">${source}</script>`).join("\n");
+	const jsonScripts = (options.jsonLd ?? []).map((entry) => jsonForScript(entry));
+	const scripts = [...jsonScripts, SHARE_SCRIPT];
+	const scriptTags = jsonScripts.map((source) => `<script type="application/ld+json">${source}</script>`).join("\n");
 	const dateline = formatDateline();
 	const aboutCurrent = options.navCurrent === "about" ? ` aria-current="page"` : "";
+	const preload = options.preloadImage
+		? `<link rel="preload" as="image" href="${escapeHtml(options.preloadImage.href)}"${options.preloadImage.srcset ? ` imagesrcset="${escapeHtml(options.preloadImage.srcset)}"` : ""}${options.preloadImage.sizes ? ` imagesizes="${escapeHtml(options.preloadImage.sizes)}"` : ""} fetchpriority="high">`
+		: "";
 	const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${preload}
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(description)}">
 <link rel="canonical" href="${escapeHtml(options.canonical)}">
@@ -191,9 +205,11 @@ ${tags}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="${AI_NEWS_CSS_PATH}">
 ${scriptTags}
+<script>${SHARE_SCRIPT}</script>
 ${ADSENSE_SCRIPT}
 </head>
 <body class="desk">
+<p class="toast" data-toast hidden>Copied</p>
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
 <div class="wrap">
@@ -202,6 +218,8 @@ ${ADSENSE_SCRIPT}
 <a href="${options.origin}/ai-news/about"${aboutCurrent}>About</a>
 </div>
 <a class="brand" href="${options.origin}/ai-news">3aik News</a>
+<input class="nav-toggle" id="sections-toggle" type="checkbox">
+<label class="nav-button" for="sections-toggle">Sections</label>
 ${sectionNav(options.origin, options.navCurrent)}
 </div>
 </header>
@@ -241,7 +259,7 @@ function crumbs(origin: string, items: Array<{ href?: string; label: string }>):
 }
 
 function kickerLink(origin: string, category: Category): string {
-	return `<p class="kicker"><a href="${categoryHref(origin, category)}">${CATEGORY_LABEL[category]}</a></p>`;
+	return `<p class="kicker" data-cat="${category}"><a href="${categoryHref(origin, category)}">${CATEGORY_LABEL[category]}</a></p>`;
 }
 
 function sourceLine(article: StoredArticle): string {
@@ -260,7 +278,7 @@ function byline(origin: string, article: StoredArticle, now: number): string {
 <span class="avatar" aria-hidden="true">${escapeHtml(authorInitials(name))}</span>
 <span class="byline-copy">
 <span class="by">By <a href="${authorHref(origin, article.authorId)}">${escapeHtml(name)}</a> · <a class="persona" href="${origin}/ai-news/about">AI persona</a></span>
-<span class="times"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time><span class="rel">${escapeHtml(relativeTime(article.publishedAt, now))}</span><span class="read">${escapeHtml(readingLabel(article.bodyText))}</span></span>
+<span class="times"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatDate(article.publishedAt))}</time><span class="rel">${escapeHtml(relativeCompact(article.publishedAt, now))}</span><span class="read">${escapeHtml(readingLabel(article.bodyText))}</span></span>
 </span>
 </p>`;
 }
@@ -277,8 +295,13 @@ function pictureTag(origin: string, article: StoredArticle, role: "hero" | "card
 	const alt = escapeHtml(article.imageAlt);
 	const view = leadView(origin, article.imageKey, article.imageCommit, role, article.variantPending);
 	const loading = role === "hero" ? `loading="eager" fetchpriority="high" decoding="async"` : `loading="lazy" decoding="async"`;
+	const sizes = role === "hero"
+		? `(min-width: 64rem) 46rem, 100vw`
+		: role === "card"
+			? `(min-width: 64rem) 18rem, (min-width: 40rem) 46vw, 100vw`
+			: `7.5rem`;
 	if (view) {
-		return `<img src="${escapeHtml(view.src)}" srcset="${escapeHtml(view.srcset)}" alt="${alt}" width="${view.width}" height="${view.height}" ${loading}>`;
+		return `<img src="${escapeHtml(view.src)}" srcset="${escapeHtml(view.srcset)}" sizes="${sizes}" alt="${alt}" width="${view.width}" height="${view.height}" ${loading}>`;
 	}
 	const size = role === "hero" ? `width="1600" height="900"` : role === "card" ? `width="640" height="360"` : `width="240" height="160"`;
 	return `<img src="${escapeHtml(legacy.src)}" alt="${alt}" ${size} ${loading}>`;
@@ -292,7 +315,22 @@ function latestList(origin: string, articles: StoredArticle[], now: number): str
 	return `<ol class="latest-list">${items}</ol>`;
 }
 
-function sideStory(origin: string, article: StoredArticle, now: number): string {
+function badges(article: StoredArticle, now: number, reads: number): string {
+	const live = visibleCategory(article, now);
+	const chips: string[] = [];
+	if (article.category === "breaking" && live === "breaking") chips.push(`<span class="badge badge-breaking">Breaking</span>`);
+	if (reads >= 1000) chips.push(`<span class="badge badge-hot">Hot</span>`);
+	else if (live !== "breaking" && now - Date.parse(article.publishedAt) < 6 * 60 * 60 * 1000) chips.push(`<span class="badge badge-trend">Trending</span>`);
+	return chips.length ? `<p class="badges">${chips.join("")}</p>` : "";
+}
+
+function cardBlurb(article: StoredArticle): string {
+	const point = article.keyPoints[0] ? stripEditorialDashes(article.keyPoints[0]) : "";
+	if (!point) return "";
+	return point.length > 110 ? `${point.slice(0, 107).trimEnd()}...` : point;
+}
+
+function sideStory(origin: string, article: StoredArticle, now: number, reads = 0): string {
 	const media = pictureTag(origin, article, "thumb")
 		? `<a class="thumb" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, "thumb")}</a>`
 		: "";
@@ -301,12 +339,14 @@ ${media}
 <div>
 ${kickerLink(origin, article.category)}
 <h3><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></h3>
-<p class="meta"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time> <span class="rel">${escapeHtml(relativeTime(article.publishedAt, now))}</span></p>
+${badges(article, now, reads)}
+<p class="card-tldr">${escapeHtml(cardBlurb(article))}</p>
+<p class="meta"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time> <span class="rel">${escapeHtml(relativeCompact(article.publishedAt, now))}</span> <span class="reads">${escapeHtml(readLabel(reads))}</span></p>
 </div>
 </article>`;
 }
 
-function storyCard(origin: string, article: StoredArticle, now: number): string {
+function storyCard(origin: string, article: StoredArticle, now: number, reads = 0): string {
 	const media = pictureTag(origin, article, "card")
 		? `<a class="card-media" href="${articleHref(origin, article.slug)}">${pictureTag(origin, article, "card")}</a>`
 		: "";
@@ -315,21 +355,23 @@ ${media}
 <div class="card-body">
 ${kickerLink(origin, article.category)}
 <h3><a href="${articleHref(origin, article.slug)}">${escapeHtml(visibleTitle(article.title))}</a></h3>
-<p class="meta"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time></p>
+${badges(article, now, reads)}
+<p class="card-tldr">${escapeHtml(cardBlurb(article))}</p>
+<p class="meta"><time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTimestamp(article.publishedAt, now))}</time> <span class="reads">${escapeHtml(readLabel(reads))}</span></p>
 </div>
 </article>`;
 }
 
-function sectionBand(origin: string, category: Category, articles: StoredArticle[], now: number): string {
+function sectionBand(origin: string, category: Category, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>): string {
 	if (!articles.length) return "";
-	const cards = articles.slice(0, 4).map((article) => storyCard(origin, article, now)).join("");
+	const cards = articles.slice(0, 4).map((article) => storyCard(origin, article, now, reads?.get(article.slug) ?? 0)).join("");
 	return `<section class="band">
 <h2 class="section-label"><a href="${categoryHref(origin, category)}">${CATEGORY_LABEL[category]}</a></h2>
 <div class="section-row">${cards}</div>
 </section>`;
 }
 
-function frontPage(origin: string, articles: StoredArticle[], now: number): string {
+function frontPage(origin: string, articles: StoredArticle[], now: number, reads?: ReadonlyMap<string, number>): string {
 	const lead = articles[0];
 	if (!lead) return "";
 	const media = pictureTag(origin, lead, "hero")
@@ -337,14 +379,21 @@ function frontPage(origin: string, articles: StoredArticle[], now: number): stri
 		: "";
 	const stackItems = articles.slice(1, 5);
 	const stack = stackItems.length
-		? stackItems.map((article) => sideStory(origin, article, now)).join("")
+		? stackItems.map((article) => sideStory(origin, article, now, reads?.get(article.slug) ?? 0)).join("")
 		: `<p class="stack-empty">${STACK_NOTE}</p>`;
-	const bands = CATEGORIES.map((category) => sectionBand(origin, category, articles.filter((article) => article.category === category), now)).join("");
+	const bands = CATEGORIES.map((category) => sectionBand(
+		origin,
+		category,
+		articles.filter((article) => visibleCategory(article, now) === category),
+		now,
+		reads,
+	)).join("");
 	const note = articles.length < 5 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
 	return `<div class="front">
 <article class="lead">
 ${media}
 ${kickerLink(origin, lead.category)}
+${badges(lead, now, reads?.get(lead.slug) ?? 0)}
 <h2><a href="${articleHref(origin, lead.slug)}">${escapeHtml(visibleTitle(lead.title))}</a></h2>
 <p class="dek">${escapeHtml(stripEditorialDashes(lead.description))}</p>
 ${byline(origin, lead, now)}
@@ -402,22 +451,39 @@ function listingNeighbors(base: string, listing: ListingPage): { prev?: string; 
 	};
 }
 
+function icon(path: string): string {
+	return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${path}"></path></svg>`;
+}
+
 function shareNav(canonical: string, title: string): string {
 	const url = encodeURIComponent(canonical);
 	const text = encodeURIComponent(title);
-	const email = `mailto:?subject=${text}&body=${encodeURIComponent(`${title} ${canonical}`)}`;
 	const tweet = `https://x.com/intent/tweet?url=${url}&text=${text}`;
 	const linkedin = `https://www.linkedin.com/sharing/share-offsite/?url=${url}`;
-	return `<h2>Share</h2>
-<nav class="share" aria-label="Share this article"><a href="${escapeHtml(canonical)}">Article link</a><a href="${escapeHtml(email)}">Email</a><a href="${escapeHtml(tweet)}" rel="noopener noreferrer">X</a><a href="${escapeHtml(linkedin)}" rel="noopener noreferrer">LinkedIn</a></nav>`;
+	const whatsapp = `https://wa.me/?text=${encodeURIComponent(`${title} ${canonical}`)}`;
+	const facebook = `https://www.facebook.com/sharer/sharer.php?u=${url}`;
+	const telegram = `https://t.me/share/url?url=${url}&text=${text}`;
+	const link = (href: string, label: string, glyph: string) =>
+		`<a class="share-btn" href="${escapeHtml(href)}" rel="noopener noreferrer" aria-label="${escapeHtml(label)}">${icon(glyph)}<span class="visually-hidden">${escapeHtml(label)}</span></a>`;
+	return `<h2 class="section-label">Share</h2>
+<nav class="share" aria-label="Share this article">${link(tweet, "Share on X", "M14.7 3h2.4l-5.2 6 6.1 8h-4.8l-3.8-4.9L5.4 17H3l5.6-6.4L2.8 3h4.9l3.4 4.5L14.7 3Zm-.8 12.6h1.3L6.2 4.3H4.8l9.1 11.3Z")}${link(whatsapp, "Share on WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.7-1.2A9 9 0 1 0 12 3Zm5.2 12.7c-.2.6-1.2 1.1-1.6 1.1-.4.1-.9.2-2.9-.6-2.4-1-4-3.5-4.1-3.6-.2-.2-1.3-1.7-1.3-3.2s.8-2.3 1.1-2.6c.3-.3.6-.4.8-.4h.6c.2 0 .4 0 .6.5.2.6.8 2 .8 2.1.1.2 0 .3-.2.5l-.4.4c-.1.1-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.4 2.4 1.5.3.1.5.1.6-.1l.5-.6c.1-.2.3-.2.5-.1.2 0 1.4.7 1.6.8.2.1.4.2.4.3.1.3 0 .8-.2 1.2Z")}${link(facebook, "Share on Facebook", "M14 9h3V6h-3c-2.2 0-4 1.8-4 4v2H8v3h2v7h3v-7h2.6l.4-3H13v-2c0-.6.4-1 1-1Z")}${link(linkedin, "Share on LinkedIn", "M6.5 9H4V20h2.5V9ZM5.2 4A1.6 1.6 0 1 0 5.2 7.2 1.6 1.6 0 0 0 5.2 4ZM20 20h-2.5v-5.6c0-1.6-.6-2.6-2-2.6-1 0-1.6.7-1.9 1.4-.1.2-.1.6-.1.9V20H11V9h2.4v1.5c.4-.7 1.3-1.8 3.2-1.8 2.3 0 4 1.5 4 4.8V20Z")}${link(telegram, "Share on Telegram", "M20.7 4.3 2.9 11.2c-1.2.5-1.2 1.1-.2 1.4l4.6 1.4 10.6-6.7c.5-.3 1-.1.6.2l-8.6 7.8-.3 4.6c.5 0 .7-.2 1-.5l2.3-2.2 4.7 3.5c.9.5 1.5.2 1.7-.8l3.1-14.8c.3-1.2-.5-1.8-1.5-1.4Z")}<button type="button" class="share-btn" data-copy="${escapeHtml(canonical)}" aria-label="Copy link">${icon("M8 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2M4 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z")}<span class="visually-hidden">Copy link</span></button><button type="button" class="share-btn" data-native-share data-url="${escapeHtml(canonical)}" data-title="${escapeHtml(title)}" aria-label="Share from this device">${icon("M12 3v10M8 7l4-4 4 4M5 14v5h14v-5")}<span class="visually-hidden">Share</span></button></nav>`;
 }
 
-export function renderIndex(origin: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml {
+function leadPreload(origin: string, article: StoredArticle | undefined): PageOptions["preloadImage"] {
+	if (!article) return undefined;
+	const view = leadView(origin, article.imageKey, article.imageCommit, "hero");
+	if (view) return { href: view.src, srcset: view.srcset, sizes: "(min-width: 64rem) 46rem, 100vw" };
+	const legacy = articleImage(origin, article);
+	if (!legacy) return undefined;
+	return { href: legacy.src };
+}
+
+export function renderIndex(origin: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }, reads?: ReadonlyMap<string, number>): NewsHtml {
 	const base = `${origin}/ai-news`;
 	const canonical = pageHref(base, listing.page);
-	const description = "AI-assisted news on AI, technology, fashion, and showbiz, rewritten from credible outlets and linked back to them.";
+	const description = "AI-assisted news on AI, technology, finance, fashion, showbiz, crime, and sports, rewritten from credible outlets and linked back to them.";
 	const now = Date.now();
-	const front = listing.page <= 1 && articles.length ? frontPage(origin, articles, now) : "";
+	const front = listing.page <= 1 && articles.length ? frontPage(origin, articles, now, reads) : "";
 	const list = articles.length
 		? `<section class="index-list"><h2 class="section-label">Stories</h2>${storyLinks(origin, articles)}</section>`
 		: `<p class="empty">No stories are published yet. The desk publishes on a schedule from public reporting by named outlets.</p>`;
@@ -436,6 +502,7 @@ export function renderIndex(origin: string, articles: StoredArticle[], listing: 
 		imageWidth: 1200,
 		imageHeight: 630,
 		imageMime: "image/png",
+		preloadImage: listing.page <= 1 ? leadPreload(origin, articles[0]) : undefined,
 		body: `<h1 class="visually-hidden">${escapeHtml(SITE_NAME)}</h1>${front}${list}${renderPager(base, listing)}`,
 		jsonLd: [{
 			"@context": "https://schema.org",
@@ -448,7 +515,7 @@ export function renderIndex(origin: string, articles: StoredArticle[], listing: 
 	});
 }
 
-export function renderCategory(origin: string, category: Category, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml {
+export function renderCategory(origin: string, category: Category, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }, reads?: ReadonlyMap<string, number>): NewsHtml {
 	const base = categoryHref(origin, category);
 	const canonical = pageHref(base, listing.page);
 	const label = CATEGORY_LABEL[category];
@@ -458,7 +525,7 @@ export function renderCategory(origin: string, category: Category, articles: Sto
 		{ href: `${origin}/ai-news`, label: "News" },
 		{ href: base, label },
 	]);
-	const band = listing.page <= 1 ? sectionBand(origin, category, articles, now) : "";
+	const band = listing.page <= 1 ? sectionBand(origin, category, articles, now, reads) : "";
 	const note = listing.page <= 1 && articles.length > 0 && articles.length < 5 && listing.pages <= 1 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
 	const list = articles.length
 		? `${band}${note}${storyLinks(origin, articles)}${renderPager(base, listing)}`
@@ -479,7 +546,7 @@ export function renderCategory(origin: string, category: Category, articles: Sto
 	});
 }
 
-export function renderAuthor(origin: string, authorId: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }): NewsHtml | null {
+export function renderAuthor(origin: string, authorId: string, articles: StoredArticle[], listing: ListingPage = { page: 1, pages: 1 }, reads?: ReadonlyMap<string, number>): NewsHtml | null {
 	const author = authorById(authorId);
 	if (!author) return null;
 	const base = authorHref(origin, author.id);
@@ -492,7 +559,7 @@ export function renderAuthor(origin: string, authorId: string, articles: StoredA
 		{ href: base, label: author.name },
 	]);
 	const cards = listing.page <= 1 && articles.length
-		? `<div class="section-row">${articles.slice(0, 4).map((article) => storyCard(origin, article, now)).join("")}</div>`
+		? `<div class="section-row">${articles.slice(0, 4).map((article) => storyCard(origin, article, now, reads?.get(article.slug) ?? 0)).join("")}</div>`
 		: "";
 	const note = listing.page <= 1 && articles.length > 0 && articles.length < 5 && listing.pages <= 1 ? `<p class="more">${SHORT_LIST_NOTE}</p>` : "";
 	const list = articles.length
@@ -537,7 +604,7 @@ ${list}`;
 	});
 }
 
-export function renderArticle(origin: string, article: StoredArticle, latest: StoredArticle[] = []): NewsHtml {
+export function renderArticle(origin: string, article: StoredArticle, latest: StoredArticle[] = [], reads?: ReadonlyMap<string, number>): NewsHtml {
 	const canonical = articleHref(origin, article.slug);
 	const image = articleImage(origin, article)?.src ?? "";
 	const title = visibleTitle(article.title);
@@ -549,8 +616,9 @@ export function renderArticle(origin: string, article: StoredArticle, latest: St
 		{ label: title },
 	]);
 	const points = article.keyPoints.map((point) => `<li>${escapeHtml(stripEditorialDashes(point))}</li>`).join("");
+	const why = article.keyPoints[0] ? stripEditorialDashes(article.keyPoints[0]) : "";
 	const faqs = article.faq
-		.map((item) => `<h3>${escapeHtml(stripEditorialDashes(item.question))}</h3><p>${escapeHtml(stripEditorialDashes(item.answer))}</p>`)
+		.map((item) => `<div class="faq-item"><h3>${escapeHtml(stripEditorialDashes(item.question))}</h3><p>${escapeHtml(stripEditorialDashes(item.answer))}</p></div>`)
 		.join("");
 	const relatedItems = article.related.length
 		? `<section class="related" aria-labelledby="related-heading"><h2 id="related-heading" class="section-label">Related</h2><ul class="related-list">${article.related
@@ -575,17 +643,19 @@ export function renderArticle(origin: string, article: StoredArticle, latest: St
 	const minutes = readingMinutes(article.bodyText);
 	const body = `<header class="story">
 ${trail.html}
-${kickerLink(origin, article.category)}
+${kickerLink(origin, visibleCategory(article, now))}
+${badges(article, now, reads?.get(article.slug) ?? 0)}
 <h1>${escapeHtml(title)}</h1>
 <p class="dek">${escapeHtml(dek)}</p>
 ${sourceLine(article)}
 ${byline(origin, article, now)}
+<p class="reads">${escapeHtml(readLabel(reads?.get(article.slug) ?? 0))}</p>
 <p class="assist">${escapeHtml(ASSIST_LINE)}</p>
 </header>
 ${hero}
 <div class="article-layout">
 <article class="story">
-<section class="tldr" aria-labelledby="tldr"><h2 id="tldr">TL;DR</h2><ul>${points}</ul></section>
+<section class="tldr" aria-labelledby="tldr"><h2 id="tldr">TL;DR</h2>${why ? `<blockquote class="why"><p class="why-label">Why it matters</p><p>${escapeHtml(why)}</p></blockquote>` : ""}<ul class="points">${points}</ul></section>
 <div class="prose">${prose}</div>
 <section class="faq" aria-labelledby="faq"><h2 id="faq">Questions</h2>${faqs}</section>
 ${relatedItems}
@@ -650,11 +720,12 @@ ${latestList(origin, others, now)}
 		imageWidth: discover ? 1600 : undefined,
 		imageHeight: discover ? 900 : undefined,
 		imageMime: discover ? "image/webp" : undefined,
+		preloadImage: leadPreload(origin, article),
 		publishedAt: article.publishedAt,
 		modifiedAt: article.updatedAt,
-		section: CATEGORY_LABEL[article.category],
+		section: CATEGORY_LABEL[visibleCategory(article, now)],
 		tags: article.tags,
-		navCurrent: article.category,
+		navCurrent: visibleCategory(article, now),
 		jsonLd: [newsLd, trail.json],
 	});
 }
@@ -675,7 +746,7 @@ export function renderAbout(origin: string): NewsHtml {
 <h2>What the check is</h2>
 <p>The automatic check is a set of desk rules applied before publishing. A draft must link at least one credible source, avoid copying that source's sentences, attribute sensitive claims, clear a length and sentence-variety bar, and avoid a list of stock phrases. The check is not a claim that a human reporter witnessed the event, and it is not a promise that the story is complete.</p>
 <h2>Personas are not real people</h2>
-<p>Twenty-four named author personas split the beats across AI, technology, fashion, and showbiz. Each persona has a fixed beat and a distinct voice. A bio describes that voice. It does not describe a degree, an employer, or a human career. Do not treat a persona as a real journalist.</p>
+<p>Named author personas split the beats across AI, technology, finance, fashion, showbiz, crime, and sports. Each persona has a fixed beat and a distinct voice. A bio describes that voice. It does not describe a degree, an employer, or a human career. Do not treat a persona as a real journalist.</p>
 <h2>Sources and disputes</h2>
 <p>Every article is built from at least one story already published by a configured outlet, then rewritten. The source is linked. Fashion and showbiz pieces repeat disputed claims only when that outlet reported them, and they attribute the claim. They do not add allegations about real people.</p>
 <h2>Pictures</h2>
